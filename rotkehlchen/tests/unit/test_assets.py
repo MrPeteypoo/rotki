@@ -3,12 +3,12 @@ import warnings as test_warnings
 import pytest
 from eth_utils import is_checksum_address
 
-from rotkehlchen.assets.asset import Asset, EthereumToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.typing import AssetType
-from rotkehlchen.assets.utils import get_or_create_ethereum_token, symbol_to_ethereum_token
+from rotkehlchen.assets.utils import get_or_create_evm_token, symbol_to_ethereum_token
 from rotkehlchen.constants.assets import A_DAI, A_USDT
-from rotkehlchen.constants.resolver import ethaddress_to_identifier
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind, ethaddress_to_identifier
 from rotkehlchen.errors import InputError, UnknownAsset
 from rotkehlchen.externalapis.coingecko import DELISTED_ASSETS, Coingecko
 from rotkehlchen.globaldb.handler import GlobalDBHandler
@@ -67,13 +67,13 @@ def test_asset_equals():
 
 
 def test_ethereum_tokens():
-    rdn_asset = EthereumToken('0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6')
-    assert rdn_asset.ethereum_address == '0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6'
+    rdn_asset = EvmToken('eip155:1/ERC20:0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6')
+    assert rdn_asset.evm_address == '0x255Aa6DF07540Cb5d3d297f0D0D4D84cb52bc8e6'
     assert rdn_asset.decimals == 18
-    assert rdn_asset.is_eth_token()
+    assert rdn_asset.is_evm_token()
 
     with pytest.raises(UnknownAsset):
-        EthereumToken('BTC')
+        EvmToken('eip155:1/ERC20:BTC')
 
 
 def test_cryptocompare_asset_support(cryptocompare):
@@ -196,9 +196,9 @@ def test_all_assets_json_tokens_address_is_checksummed():
 
         msg = (
             f'Ethereum token\'s {asset_data.name} ethereum address '
-            f'is not checksummed {asset_data.ethereum_address}'
+            f'is not checksummed {asset_data.evm_address}'
         )
-        assert is_checksum_address(asset_data.ethereum_address), msg
+        assert is_checksum_address(asset_data.evm_address), msg
 
 
 def test_asset_identifiers_are_unique_all_lowercased():
@@ -456,36 +456,44 @@ def test_asset_with_unknown_type_does_not_crash(asset_resolver):  # pylint: disa
 
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('force_reinitialize_asset_resolver', [True])
-def test_get_or_create_ethereum_token(globaldb, database):
+def test_get_or_create_evm_token(globaldb, database):
     cursor = globaldb._conn.cursor()
     assets_num = cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0]
-    assert A_DAI == get_or_create_ethereum_token(
+    assert A_DAI == get_or_create_evm_token(
         userdb=database,
         symbol='DAI',
         ethereum_address='0x6B175474E89094C44Da98b954EedeAC495271d0F',
+        chain=ChainID.ETHEREUM,
+        token_type=EvmTokenKind.ERC20,
     )
     # Try getting a DAI token of a different address. Shold add new token to DB
-    new_token = get_or_create_ethereum_token(
+    new_token = get_or_create_evm_token(
         userdb=database,
         symbol='DAI',
         ethereum_address='0xA379B8204A49A72FF9703e18eE61402FAfCCdD60',
+        chain=ChainID.ETHEREUM,
+        token_type=EvmTokenKind.ERC20,
     )
     assert cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0] == assets_num + 1
     assert new_token.symbol == 'DAI'
-    assert new_token.ethereum_address == '0xA379B8204A49A72FF9703e18eE61402FAfCCdD60'
+    assert new_token.evm_address == '0xA379B8204A49A72FF9703e18eE61402FAfCCdD60'
     # Try getting a symbol of normal chain with different address. Should add new token to DB
-    new_token = get_or_create_ethereum_token(
+    new_token = get_or_create_evm_token(
         userdb=database,
         symbol='DOT',
         ethereum_address='0xB179B8204A49672FF9703e18eE61402FAfCCdD60',
+        chain=ChainID.ETHEREUM,
+        token_type=EvmTokenKind.ERC20,
     )
     assert new_token.symbol == 'DOT'
-    assert new_token.ethereum_address == '0xB179B8204A49672FF9703e18eE61402FAfCCdD60'
+    assert new_token.evm_address == '0xB179B8204A49672FF9703e18eE61402FAfCCdD60'
     assert cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0] == assets_num + 2
     # Check that token with wrong symbol but existing address is returned
-    assert A_USDT == get_or_create_ethereum_token(
+    assert A_USDT == get_or_create_evm_token(
         userdb=database,
         symbol='ROFL',
         ethereum_address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
+        chain=ChainID.ETHEREUM,
+        token_type=EvmTokenKind.ERC20,
     )
     assert cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0] == assets_num + 2

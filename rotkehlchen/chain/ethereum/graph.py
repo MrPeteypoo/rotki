@@ -12,7 +12,7 @@ from typing_extensions import Literal
 from rotkehlchen.constants.timing import QUERY_RETRY_TIMES
 from rotkehlchen.errors import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, Timestamp
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -41,7 +41,7 @@ def format_query_indentation(querystr: str) -> str:
 def get_common_params(
         from_ts: Timestamp,
         to_ts: Timestamp,
-        address: ChecksumEthAddress,
+        address: ChecksumEvmAddress,
         address_type: Literal['Bytes!', 'String!'] = 'Bytes!',
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     param_types = {

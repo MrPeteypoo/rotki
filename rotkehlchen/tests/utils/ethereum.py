@@ -7,7 +7,7 @@ import gevent
 
 from rotkehlchen.chain.ethereum.manager import NodeName
 from rotkehlchen.chain.ethereum.structures import EthereumTxReceipt, EthereumTxReceiptLog
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.typing import string_to_evm_address
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.ethtx import DBEthTx
 from rotkehlchen.db.filtering import ETHTransactionsFilterQuery
@@ -150,8 +150,8 @@ def setup_ethereum_transactions_test(
         tx_hash=tx_hash1_b,
         timestamp=Timestamp(1630532276),
         block_number=13142218,
-        from_address=string_to_ethereum_address('0x443E1f9b1c866E54e914822B7d3d7165EdB6e9Ea'),
-        to_address=string_to_ethereum_address('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
+        from_address=string_to_evm_address('0x443E1f9b1c866E54e914822B7d3d7165EdB6e9Ea'),
+        to_address=string_to_evm_address('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
         value=int(10 * 10**18),
         gas=194928,
         gas_price=int(0.000000204 * 10**18),
@@ -165,8 +165,8 @@ def setup_ethereum_transactions_test(
         tx_hash=tx_hash2_b,
         timestamp=Timestamp(1631013757),
         block_number=13178342,
-        from_address=string_to_ethereum_address('0x442068F934BE670aDAb81242C87144a851d56d16'),
-        to_address=string_to_ethereum_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
+        from_address=string_to_evm_address('0x442068F934BE670aDAb81242C87144a851d56d16'),
+        to_address=string_to_evm_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
         value=0,
         gas=77373,
         gas_price=int(0.000000100314697497 * 10**18),
@@ -189,7 +189,7 @@ def setup_ethereum_transactions_test(
             EthereumTxReceiptLog(
                 log_index=295,
                 data=hexstring_to_bytes('0x0000000000000000000000000000000000000000000000008ac7230489e80000'),  # noqa: E501
-                address=string_to_ethereum_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+                address=string_to_evm_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
                 removed=False,
                 topics=[
                     hexstring_to_bytes('0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c'),  # noqa: E501
@@ -198,7 +198,7 @@ def setup_ethereum_transactions_test(
             ), EthereumTxReceiptLog(
                 log_index=296,
                 data=hexstring_to_bytes('0x0000000000000000000000000000000000000000000000008ac7230489e80000'),  # noqa: E501
-                address=string_to_ethereum_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
+                address=string_to_evm_address('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'),
                 removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),  # noqa: E501
@@ -208,7 +208,7 @@ def setup_ethereum_transactions_test(
             ), EthereumTxReceiptLog(
                 log_index=297,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000036ba1d53baeeda5ed20'),  # noqa: E501
-                address=string_to_ethereum_address('0x2a3bFF78B79A009976EeA096a51A948a3dC00e34'),
+                address=string_to_evm_address('0x2a3bFF78B79A009976EeA096a51A948a3dC00e34'),
                 removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),  # noqa: E501
@@ -218,13 +218,13 @@ def setup_ethereum_transactions_test(
             ), EthereumTxReceiptLog(
                 log_index=298,
                 data=hexstring_to_bytes('0x000000000000000000000000000000000000000000007b6ea033189ba7d047e30000000000000000000000000000000000000000000000140bc8194dd0f5e4be'),  # noqa: E501
-                address=string_to_ethereum_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
+                address=string_to_evm_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
                 removed=False,
                 topics=[hexstring_to_bytes('0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1')],  # noqa: E501
             ), EthereumTxReceiptLog(
                 log_index=299,
                 data=hexstring_to_bytes('0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008ac7230489e8000000000000000000000000000000000000000000000000036ba1d53baeeda5ed200000000000000000000000000000000000000000000000000000000000000000'),  # noqa: E501
-                address=string_to_ethereum_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
+                address=string_to_evm_address('0xcaA004418eB42cdf00cB057b7C9E28f0FfD840a5'),
                 removed=False,
                 topics=[
                     hexstring_to_bytes('0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822'),  # noqa: E501
@@ -243,7 +243,7 @@ def setup_ethereum_transactions_test(
             EthereumTxReceiptLog(
                 log_index=438,
                 data=hexstring_to_bytes('0x000000000000000000000000000000000000000000000000000000003b9deec6'),  # noqa: E501
-                address=string_to_ethereum_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
+                address=string_to_evm_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
                 removed=False,
                 topics=[
                     hexstring_to_bytes('0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'),  # noqa: E501

@@ -1,3 +1,4 @@
+import urllib
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
@@ -108,7 +109,7 @@ from rotkehlchen.api.v1.encoding import (
     XpubPatchSchema,
 )
 from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
-from rotkehlchen.assets.asset import Asset, EthereumToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.assets.typing import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.bitcoin.xpub import XpubData
@@ -128,7 +129,7 @@ from rotkehlchen.typing import (
     ApiSecret,
     AssetAmount,
     BlockchainAccountData,
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
     Eth2PubKey,
     ExternalService,
     ExternalServiceApiCredentials,
@@ -512,19 +513,19 @@ class EthereumAssetsResource(BaseResource):
         )
 
     @use_kwargs(get_schema, location='json_and_query')
-    def get(self, address: Optional[ChecksumEthAddress]) -> Response:
+    def get(self, address: Optional[ChecksumEvmAddress]) -> Response:
         return self.rest_api.get_custom_ethereum_tokens(address=address)
 
     @resource_parser.use_kwargs(make_edit_schema, location='json')
-    def put(self, token: EthereumToken) -> Response:
+    def put(self, token: EvmToken) -> Response:
         return self.rest_api.add_custom_ethereum_token(token=token)
 
     @resource_parser.use_kwargs(make_edit_schema, location='json')
-    def patch(self, token: EthereumToken) -> Response:
+    def patch(self, token: EvmToken) -> Response:
         return self.rest_api.edit_custom_ethereum_token(token=token)
 
     @use_kwargs(delete_schema, location='json')
-    def delete(self, address: ChecksumEthAddress) -> Response:
+    def delete(self, address: ChecksumEvmAddress) -> Response:
         return self.rest_api.delete_custom_ethereum_token(address)
 
 
@@ -1187,11 +1188,11 @@ class QueriedAddressesResource(BaseResource):
         return self.rest_api.get_queried_addresses_per_module()
 
     @use_kwargs(modify_schema, location='json')
-    def put(self, module: ModuleName, address: ChecksumEthAddress) -> Response:
+    def put(self, module: ModuleName, address: ChecksumEvmAddress) -> Response:
         return self.rest_api.add_queried_address_per_module(module=module, address=address)
 
     @use_kwargs(modify_schema, location='json')
-    def delete(self, module: ModuleName, address: ChecksumEthAddress) -> Response:
+    def delete(self, module: ModuleName, address: ChecksumEvmAddress) -> Response:
         return self.rest_api.remove_queried_address_per_module(module=module, address=address)
 
 
@@ -1793,7 +1794,7 @@ class AssetIconsResource(BaseResource):
     @use_kwargs(upload_schema, location='view_args_and_file')
     def post(self, asset: Asset, file: FileStorage) -> Response:
         with TemporaryDirectory() as temp_directory:
-            filename = file.filename if file.filename else f'{asset.identifier}.png'
+            filename = file.filename if file.filename else f'{urllib.parse.quote(asset.identifier, safe="")}.png'  # noqa: E501
             filepath = Path(temp_directory) / filename
             file.save(str(filepath))
             response = self.rest_api.upload_asset_icon(asset=asset, filepath=filepath)
@@ -1960,7 +1961,7 @@ class ERC20TokenInfo(BaseResource):
     get_schema = ERC20InfoSchema()
 
     @use_kwargs(get_schema, location='json_and_query')
-    def get(self, address: ChecksumEthAddress, async_query: bool) -> Response:
+    def get(self, address: ChecksumEvmAddress, async_query: bool) -> Response:
         return self.rest_api.get_token_information(address, async_query)
 
 
@@ -2034,7 +2035,7 @@ class AvalancheTransactionsResource(BaseResource):
     def get(
         self,
         async_query: bool,
-        address: Optional[ChecksumEthAddress],
+        address: Optional[ChecksumEvmAddress],
         from_timestamp: Timestamp,
         to_timestamp: Timestamp,
     ) -> Response:
@@ -2050,7 +2051,7 @@ class ERC20TokenInfoAVAX(BaseResource):
     get_schema = ERC20InfoSchema()
 
     @use_kwargs(get_schema, location='json_and_query')
-    def get(self, address: ChecksumEthAddress, async_query: bool) -> Response:
+    def get(self, address: ChecksumEvmAddress, async_query: bool) -> Response:
         return self.rest_api.get_avax_token_information(address, async_query)
 
 

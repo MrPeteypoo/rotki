@@ -58,6 +58,7 @@ from rotkehlchen.chain.ethereum.modules.yearn.vaults import (
 from rotkehlchen.chain.ethereum.structures import AaveEvent
 from rotkehlchen.chain.ethereum.trades import AMMTrade
 from rotkehlchen.chain.ethereum.typing import Eth2Deposit
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind
 from rotkehlchen.db.settings import DBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData, SingleDBAssetBalance
 from rotkehlchen.exchanges.data_structures import Trade
@@ -119,6 +120,8 @@ def _process_entry(entry: Any) -> Union[str, List[Any], Dict[str, Any], Any]:
             XpubData,
             Eth2Deposit,
             StakingEvent,
+            ChainID,
+            EvmTokenKind,
     )):
         return entry.serialize()
     if isinstance(entry, (

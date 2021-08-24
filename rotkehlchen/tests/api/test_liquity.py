@@ -3,7 +3,7 @@ import random
 import pytest
 import requests
 
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.typing import string_to_evm_address
 from rotkehlchen.constants.assets import A_ETH, A_LQTY, A_LUSD
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.api import (
@@ -13,10 +13,10 @@ from rotkehlchen.tests.utils.api import (
     wait_for_async_task_with_result,
 )
 
-LQTY_ADDR = string_to_ethereum_address('0x063c26fF1592688B73d8e2A18BA4C23654e2792E')
-LQTY_STAKING = string_to_ethereum_address('0x018565899A88f75E6edfEA0639183adF8c205641')
-LQTY_PROXY = string_to_ethereum_address('0x9476832d4687c14b2c1a04E2ee4693162a7340B6')
-ADDR_WITHOUT_TROVE = string_to_ethereum_address('0xA0446D8804611944F1B527eCD37d7dcbE442caba')
+LQTY_ADDR = string_to_evm_address('0x063c26fF1592688B73d8e2A18BA4C23654e2792E')
+LQTY_STAKING = string_to_evm_address('0x018565899A88f75E6edfEA0639183adF8c205641')
+LQTY_PROXY = string_to_evm_address('0x9476832d4687c14b2c1a04E2ee4693162a7340B6')
+ADDR_WITHOUT_TROVE = string_to_evm_address('0xA0446D8804611944F1B527eCD37d7dcbE442caba')
 
 liquity_mocked_historical_prices = {
     A_ETH: {
@@ -164,7 +164,7 @@ def test_staking_events(rotkehlchen_api_server):
     assert trove_stake['kind'] == 'stake'
     assert trove_stake['stake_after']['amount'] == trove_stake['stake_change']['amount']
     asset = trove_stake['stake_after']['asset']
-    assert asset == '_ceth_0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D'
+    assert asset == 'eip155:1/ERC20:0x6DEA81C8171D0bA574754EF6F8b412F2Ed88c54D'
     assert trove_stake['stake_after']['amount'] == '177.02'
     assert trove_stake['stake_operation'] == 'stake created'
     assert trove_stake['sequence_number'] == '51676'

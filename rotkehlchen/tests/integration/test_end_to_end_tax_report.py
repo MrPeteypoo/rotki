@@ -2,7 +2,7 @@ import pytest
 
 from rotkehlchen.constants.assets import A_BTC, A_ETH
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.constants.resolver import strethaddress_to_identifier
+from rotkehlchen.constants.resolver import ethaddress_to_identifier
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.accounting import accounting_history_process
@@ -611,7 +611,7 @@ def test_asset_and_price_not_found_in_history_processing(accountant):
 
     Regression for https://github.com/rotki/rotki/issues/432
     """
-    fgp_identifier = strethaddress_to_identifier('0xd9A8cfe21C232D485065cb62a96866799d4645f7')
+    fgp_identifier = ethaddress_to_identifier('0xd9A8cfe21C232D485065cb62a96866799d4645f7')
     bad_trades = [{
         'timestamp': 1492685761,
         'base_asset': fgp_identifier,

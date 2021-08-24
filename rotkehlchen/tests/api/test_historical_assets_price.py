@@ -4,7 +4,7 @@ from http import HTTPStatus
 import pytest
 import requests
 
-from rotkehlchen.assets.asset import EthereumToken
+from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.api import (
@@ -77,8 +77,8 @@ def test_get_historical_assets_price(rotkehlchen_api_server):
 
 
 def test_manual_historical_price(rotkehlchen_api_server, globaldb):
-    curv = EthereumToken('0xD533a949740bb3306d119CC777fa900bA034cd52')
-    curv_id = '_ceth_0xD533a949740bb3306d119CC777fa900bA034cd52'
+    curv = EvmToken('eip155:1/ERC20:0xD533a949740bb3306d119CC777fa900bA034cd52')
+    curv_id = curv.identifier
     # First test adding assets
     response = requests.put(
         api_url_for(

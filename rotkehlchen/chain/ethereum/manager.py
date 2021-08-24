@@ -26,7 +26,7 @@ from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
 from rotkehlchen.chain.ethereum.contracts import EthereumContract
 from rotkehlchen.chain.ethereum.graph import Graph
 from rotkehlchen.chain.ethereum.modules.eth2 import ETH2_DEPOSIT
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.typing import string_to_evm_address
 from rotkehlchen.chain.ethereum.utils import multicall_2
 from rotkehlchen.constants.ethereum import ERC20TOKEN_ABI, ETH_SCAN
 from rotkehlchen.errors import (
@@ -47,7 +47,7 @@ from rotkehlchen.serialization.deserialize import (
 )
 from rotkehlchen.serialization.serialize import process_result
 from rotkehlchen.typing import (
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
     EthereumTransaction,
     SupportedBlockchain,
     Timestamp,
@@ -91,7 +91,7 @@ def _query_web3_get_logs(
         filter_args: FilterParams,
         from_block: int,
         to_block: Union[int, Literal['latest']],
-        contract_address: ChecksumEthAddress,
+        contract_address: ChecksumEvmAddress,
         event_name: str,
         argument_filters: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
@@ -236,7 +236,7 @@ class EthereumManager():
         # Used by the transactions class. Can't be instantiated there since that is
         # stateless object and thus wouldn't persist.
         # Not really happy with this approach but well ...
-        self.tx_per_address: Dict[ChecksumEthAddress, int] = defaultdict(int)
+        self.tx_per_address: Dict[ChecksumEvmAddress, int] = defaultdict(int)
 
     def connected_to_any_web3(self) -> bool:
         return (
@@ -442,7 +442,7 @@ class EthereumManager():
 
     def get_historical_eth_balance(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             block_number: int,
     ) -> Optional[FVal]:
         """Attempts to get a historical eth balance from the local own node only.
@@ -478,7 +478,7 @@ class EthereumManager():
             return self.archive_connection
 
         balance = self.get_historical_eth_balance(
-            address=string_to_ethereum_address('0x50532e4Be195D1dE0c2E6DfA46D9ec0a4Fee6861'),
+            address=string_to_evm_address('0x50532e4Be195D1dE0c2E6DfA46D9ec0a4Fee6861'),
             block_number=87042,
         )
         self.archive_connection = balance is not None and balance == FVal('5.1063307')
@@ -511,7 +511,7 @@ class EthereumManager():
 
         return BlockNumber(block_number)
 
-    def get_eth_balance(self, account: ChecksumEthAddress) -> FVal:
+    def get_eth_balance(self, account: ChecksumEvmAddress) -> FVal:
         """Gets the balance of the given account in ETH
 
         May raise:
@@ -523,16 +523,16 @@ class EthereumManager():
 
     def get_multieth_balance(
             self,
-            accounts: List[ChecksumEthAddress],
+            accounts: List[ChecksumEvmAddress],
             call_order: Optional[Sequence[NodeName]] = None,
-    ) -> Dict[ChecksumEthAddress, FVal]:
+    ) -> Dict[ChecksumEvmAddress, FVal]:
         """Returns a dict with keys being accounts and balances in ETH
 
         May raise:
         - RemoteError if an external service such as Etherscan is queried and
           there is a problem with its query.
         """
-        balances: Dict[ChecksumEthAddress, FVal] = {}
+        balances: Dict[ChecksumEvmAddress, FVal] = {}
         log.debug(
             'Querying ethereum chain for ETH balance',
             eth_addresses=accounts,
@@ -575,7 +575,7 @@ class EthereumManager():
 
     def get_code(
             self,
-            account: ChecksumEthAddress,
+            account: ChecksumEvmAddress,
             call_order: Optional[Sequence[NodeName]] = None,
     ) -> str:
         return self.query(
@@ -584,7 +584,7 @@ class EthereumManager():
             account=account,
         )
 
-    def _get_code(self, web3: Optional[Web3], account: ChecksumEthAddress) -> str:
+    def _get_code(self, web3: Optional[Web3], account: ChecksumEvmAddress) -> str:
         """Gets the deployment bytecode at the given address
 
         May raise:
@@ -602,7 +602,7 @@ class EthereumManager():
             name: str,
             blockchain: Literal[SupportedBlockchain.ETHEREUM] = SupportedBlockchain.ETHEREUM,
             call_order: Optional[Sequence[NodeName]] = None,
-    ) -> Optional[ChecksumEthAddress]:
+    ) -> Optional[ChecksumEvmAddress]:
         ...
 
     @overload
@@ -623,7 +623,7 @@ class EthereumManager():
             name: str,
             blockchain: SupportedBlockchain = SupportedBlockchain.ETHEREUM,
             call_order: Optional[Sequence[NodeName]] = None,
-    ) -> Optional[Union[ChecksumEthAddress, HexStr]]:
+    ) -> Optional[Union[ChecksumEvmAddress, HexStr]]:
         return self.query(
             method=self._ens_lookup,
             call_order=call_order if call_order is not None else self.default_call_order(),
@@ -637,7 +637,7 @@ class EthereumManager():
             web3: Optional[Web3],
             name: str,
             blockchain: Literal[SupportedBlockchain.ETHEREUM],
-    ) -> Optional[ChecksumEthAddress]:
+    ) -> Optional[ChecksumEvmAddress]:
         ...
 
     @overload
@@ -658,7 +658,7 @@ class EthereumManager():
             web3: Optional[Web3],
             name: str,
             blockchain: SupportedBlockchain = SupportedBlockchain.ETHEREUM,
-    ) -> Optional[Union[ChecksumEthAddress, HexStr]]:
+    ) -> Optional[Union[ChecksumEvmAddress, HexStr]]:
         """Performs an ENS lookup and returns address if found else None
 
         TODO: currently web3.py 5.15.0 does not support multichain ENS domains
@@ -725,7 +725,7 @@ class EthereumManager():
 
     def _call_contract_etherscan(
             self,
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             abi: List,
             method_name: str,
             arguments: Optional[List[Any]] = None,
@@ -739,6 +739,7 @@ class EthereumManager():
         web3 = Web3()
         contract = web3.eth.contract(address=contract_address, abi=abi)
         input_data = contract.encodeABI(method_name, args=arguments if arguments else [])
+
         result = self.etherscan.eth_call(
             to_address=contract_address,
             input_data=input_data,
@@ -837,7 +838,7 @@ class EthereumManager():
 
     def call_contract(
             self,
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             abi: List,
             method_name: str,
             arguments: Optional[List[Any]] = None,
@@ -855,7 +856,7 @@ class EthereumManager():
     def _call_contract(
             self,
             web3: Optional[Web3],
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             abi: List,
             method_name: str,
             arguments: Optional[List[Any]] = None,
@@ -887,7 +888,7 @@ class EthereumManager():
 
     def get_logs(
             self,
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             abi: List,
             event_name: str,
             argument_filters: Dict[str, Any],
@@ -911,7 +912,7 @@ class EthereumManager():
     def _get_logs(
             self,
             web3: Optional[Web3],
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             abi: List,
             event_name: str,
             argument_filters: Dict[str, Any],
@@ -1097,7 +1098,7 @@ class EthereumManager():
                 pass
         return self._get_blocknumber_by_time_from_subgraph(ts)
 
-    def get_basic_contract_info(self, address: ChecksumEthAddress) -> Dict[str, Any]:
+    def get_basic_contract_info(self, address: ChecksumEvmAddress) -> Dict[str, Any]:
         """
         Query a contract address and return basic information as:
         - Decimals

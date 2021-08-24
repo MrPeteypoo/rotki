@@ -1,6 +1,7 @@
 import itertools
 import logging
 import shutil
+import urllib
 from pathlib import Path
 from typing import Optional, Set
 
@@ -194,7 +195,8 @@ class IconManager():
 
         Completely replaces what was there before
         """
+        asset_identifier = urllib.parse.quote(asset.identifier, safe='')
         shutil.copyfile(
             icon_path,
-            self.custom_icons_dir / f'{asset.identifier}{icon_path.suffix}',
+            self.custom_icons_dir / f'{asset_identifier}{icon_path.suffix}',
         )

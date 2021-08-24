@@ -1,4 +1,5 @@
 import logging
+import urllib
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -24,7 +25,7 @@ from werkzeug.datastructures import FileStorage
 from rotkehlchen.accounting.ledger_actions import LedgerAction, LedgerActionType
 from rotkehlchen.accounting.structures import ActionType, BalanceType, HistoryEventType
 from rotkehlchen.accounting.typing import SchemaEventType
-from rotkehlchen.assets.asset import Asset, EthereumToken, UnderlyingToken
+from rotkehlchen.assets.asset import Asset, EvmToken, UnderlyingToken
 from rotkehlchen.assets.typing import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.bitcoin.hdkey import HDKey, XpubType
@@ -46,6 +47,7 @@ from rotkehlchen.chain.substrate.utils import (
     is_valid_polkadot_address,
 )
 from rotkehlchen.constants.misc import ONE, ZERO
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind
 from rotkehlchen.db.filtering import (
     AssetMovementsFilterQuery,
     Eth2DailyStatsFilterQuery,
@@ -85,7 +87,7 @@ from rotkehlchen.typing import (
     AssetAmount,
     AssetMovementCategory,
     BTCAddress,
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
     ExternalService,
     ExternalServiceApiCredentials,
     Fee,
@@ -445,7 +447,12 @@ class AssetField(fields.Field):
             **_kwargs: Any,
     ) -> Asset:
         try:
-            asset = Asset(value, form_with_incomplete_data=self.form_with_incomplete_data)
+            if not isinstance(value, str):
+                raise DeserializationError(
+                    'Tried to initialize an asset out of a non-string identifier',
+                )
+            identifier = urllib.parse.unquote(value)
+            asset = Asset(identifier, form_with_incomplete_data=self.form_with_incomplete_data)
         except (DeserializationError, UnknownAsset) as e:
             raise ValidationError(str(e)) from e
 
@@ -489,7 +496,7 @@ class EthereumAddressField(fields.Field):
 
     @staticmethod
     def _serialize(
-            value: ChecksumEthAddress,
+            value: ChecksumEvmAddress,
             attr: str,  # pylint: disable=unused-argument
             obj: Any,  # pylint: disable=unused-argument
             **_kwargs: Any,
@@ -502,7 +509,7 @@ class EthereumAddressField(fields.Field):
             attr: Optional[str],  # pylint: disable=unused-argument
             data: Optional[Mapping[str, Any]],  # pylint: disable=unused-argument
             **_kwargs: Any,
-    ) -> ChecksumEthAddress:
+    ) -> ChecksumEvmAddress:
         # Make sure that given value is an ethereum address
         try:
             address = to_checksum_address(value)
@@ -543,6 +550,50 @@ class SchemaEventTypeField(fields.Field):
             ) from e
 
         return event_type
+
+
+class EvmIdentifierField(fields.Field):
+    pass
+
+
+class EvmChainField(fields.Field):
+    def _deserialize(
+            self,
+            value: str,
+            attr: Optional[str],  # pylint: disable=unused-argument
+            data: Optional[Mapping[str, Any]],  # pylint: disable=unused-argument
+            **_kwargs: Any,
+    ) -> ChainID:
+        # Get chain from string
+        try:
+            chain = ChainID[value]
+        except KeyError as e:
+            raise ValidationError(
+                f'Given value {value} is not a valid EVM chain',
+                field_name='chain',
+            ) from e
+
+        return chain
+
+
+class EvmTokenKindField(fields.Field):
+    def _deserialize(
+            self,
+            value: str,
+            attr: Optional[str],  # pylint: disable=unused-argument
+            data: Optional[Mapping[str, Any]],  # pylint: disable=unused-argument
+            **_kwargs: Any,
+    ) -> EvmTokenKind:
+        # Get chain from string
+        try:
+            token_kind = EvmTokenKind[value]
+        except KeyError as e:
+            raise ValidationError(
+                f'Given value {value} is not a valid EVM token kind',
+                field_name='token_type',
+            ) from e
+
+        return token_kind
 
 
 class TradeTypeField(fields.Field):
@@ -1898,7 +1949,7 @@ def _transform_btc_address(
 
 
 def _transform_eth_address(
-        ethereum: EthereumManager, given_address: str) -> ChecksumEthAddress:
+        ethereum: EthereumManager, given_address: str) -> ChecksumEvmAddress:
     try:
         address = to_checksum_address(given_address)
     except ValueError:
@@ -2134,7 +2185,7 @@ class RequiredEthereumAddressSchema(Schema):
 
 
 class UnderlyingTokenInfoSchema(Schema):
-    address = EthereumAddressField(required=True)
+    address = EvmIdentifierField(required=True)
     weight = FloatingPercentageField(required=True)
 
 
@@ -2207,6 +2258,8 @@ class EthereumTokenSchema(Schema):
     cryptocompare = fields.String(load_default=None)
     protocol = fields.String(load_default=None)
     underlying_tokens = fields.List(fields.Nested(UnderlyingTokenInfoSchema), load_default=None)
+    chain = EvmChainField(load_default=None)
+    token_type = EvmTokenKindField(load_default=None)
 
     def __init__(
             self,
@@ -2254,17 +2307,17 @@ class EthereumTokenSchema(Schema):
             self,
             data: Dict[str, Any],
             **_kwargs: Any,
-    ) -> EthereumToken:
+    ) -> EvmToken:
         given_underlying_tokens = data.pop('underlying_tokens', None)
         underlying_tokens = None
         if given_underlying_tokens is not None:
             underlying_tokens = []
             for entry in given_underlying_tokens:
                 underlying_tokens.append(UnderlyingToken(
-                    address=entry['address'],
+                    identifier=entry['address'],
                     weight=entry['weight'],
                 ))
-        return EthereumToken.initialize(**data, underlying_tokens=underlying_tokens)
+        return EvmToken.initialize(**data, underlying_tokens=underlying_tokens)
 
 
 class ModifyEthereumTokenSchema(Schema):

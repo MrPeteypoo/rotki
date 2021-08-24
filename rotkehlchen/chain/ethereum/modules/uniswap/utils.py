@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List, Set
 
 import requests
 
-from rotkehlchen.assets.asset import EthereumToken
+from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.contracts import EthereumContract
 from rotkehlchen.chain.ethereum.defi.zerionsdk import ZERION_ADAPTER_ADDRESS
 from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import LiquidityPool
@@ -14,7 +14,7 @@ from rotkehlchen.chain.ethereum.typing import NodeName
 from rotkehlchen.constants.ethereum import ZERION_ABI
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.typing import ChecksumEvmAddress
 from rotkehlchen.utils.misc import get_chunks
 
 if TYPE_CHECKING:
@@ -28,11 +28,11 @@ log = RotkehlchenLogsAdapter(logger)
 
 def uniswap_lp_token_balances(
         userdb: 'DBHandler',
-        address: ChecksumEthAddress,
+        address: ChecksumEvmAddress,
         ethereum: 'EthereumManager',
-        lp_addresses: List[ChecksumEthAddress],
-        known_assets: Set[EthereumToken],
-        unknown_assets: Set[EthereumToken],
+        lp_addresses: List[ChecksumEvmAddress],
+        known_assets: Set[EvmToken],
+        unknown_assets: Set[EvmToken],
 ) -> List[LiquidityPool]:
     """Query uniswap token balances from ethereum chain
 
@@ -70,7 +70,7 @@ def uniswap_lp_token_balances(
     return balances
 
 
-def get_latest_lp_addresses(data_directory: Path) -> List[ChecksumEthAddress]:
+def get_latest_lp_addresses(data_directory: Path) -> List[ChecksumEvmAddress]:
     """Gets the latest lp addresses either locally or from the remote
 
     Checks the remote (github) and if there is a newer file there it pulls it,

@@ -122,9 +122,9 @@ T_TradePair = str
 TradePair = NewType('TradePair', T_TradePair)
 
 T_EthAddres = str
-EthAddress = NewType('EthAddress', T_EthAddres)
+EvmAddress = NewType('EvmAddress', T_EthAddres)
 
-ChecksumEthAddress = ChecksumAddress
+ChecksumEvmAddress = ChecksumAddress
 
 T_BTCAddress = str
 BTCAddress = NewType('BTCAddress', T_BTCAddress)
@@ -133,16 +133,16 @@ T_Eth2PubKey = str
 Eth2PubKey = NewType('Eth2PubKey', T_Eth2PubKey)
 
 BlockchainAddress = Union[
-    EthAddress,
+    EvmAddress,
     BTCAddress,
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
     KusamaAddress,
     PolkadotAddress,
     str,
 ]
 ListOfBlockchainAddresses = Union[
     List[BTCAddress],
-    List[ChecksumEthAddress],
+    List[ChecksumEvmAddress],
     List[KusamaAddress],
     List[PolkadotAddress],
 ]
@@ -170,8 +170,8 @@ class EthereumTransaction(NamedTuple):
     tx_hash: bytes
     timestamp: Timestamp
     block_number: int
-    from_address: ChecksumEthAddress
-    to_address: Optional[ChecksumEthAddress]
+    from_address: ChecksumEvmAddress
+    to_address: Optional[ChecksumEvmAddress]
     value: int
     gas: int
     gas_price: int
@@ -217,8 +217,8 @@ class CovalentTransaction(NamedTuple):
     tx_hash: str
     timestamp: Timestamp
     block_number: int
-    from_address: ChecksumEthAddress
-    to_address: Optional[ChecksumEthAddress]
+    from_address: ChecksumEvmAddress
+    to_address: Optional[ChecksumEvmAddress]
     value: int
     gas: int
     gas_price: int
@@ -269,7 +269,7 @@ class SupportedBlockchain(Enum):
 
     def get_address_type(self) -> Callable:
         if self in (SupportedBlockchain.ETHEREUM, SupportedBlockchain.AVALANCHE):
-            return ChecksumEthAddress
+            return ChecksumEvmAddress
         if self == SupportedBlockchain.ETHEREUM_BEACONCHAIN:
             return Eth2PubKey
         if self == SupportedBlockchain.BITCOIN:

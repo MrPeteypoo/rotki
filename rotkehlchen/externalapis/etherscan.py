@@ -19,7 +19,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_ethereum_transaction,
     deserialize_int_from_str,
 )
-from rotkehlchen.typing import ChecksumEthAddress, EthereumTransaction, ExternalService, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, EthereumTransaction, ExternalService, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import hex_or_bytes_to_int
 from rotkehlchen.utils.serialization import jsonloads_dict
@@ -209,7 +209,7 @@ class Etherscan(ExternalServiceWithApiKey):
 
     def get_transactions(
             self,
-            account: ChecksumEthAddress,
+            account: ChecksumEvmAddress,
             from_ts: Optional[Timestamp] = None,
             to_ts: Optional[Timestamp] = None,
     ) -> List[EthereumTransaction]:
@@ -289,7 +289,7 @@ class Etherscan(ExternalServiceWithApiKey):
         transaction_data = self._query(module='proxy', action='eth_getTransactionByHash', options=options)  # noqa: E501
         return transaction_data
 
-    def get_code(self, account: ChecksumEthAddress) -> str:
+    def get_code(self, account: ChecksumEvmAddress) -> str:
         """Gets the deployment bytecode at the given address
 
         May raise:
@@ -314,7 +314,7 @@ class Etherscan(ExternalServiceWithApiKey):
 
     def eth_call(
             self,
-            to_address: ChecksumEthAddress,
+            to_address: ChecksumEvmAddress,
             input_data: str,
     ) -> str:
         """Performs an eth_call on the given address and the given input data.
@@ -333,7 +333,7 @@ class Etherscan(ExternalServiceWithApiKey):
 
     def get_logs(
             self,
-            contract_address: ChecksumEthAddress,
+            contract_address: ChecksumEvmAddress,
             topics: List[str],
             from_block: int,
             to_block: Union[int, str] = 'latest',

@@ -1,9 +1,10 @@
-from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional, Tuple
 
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind
 from rotkehlchen.utils.mixins.dbenum import DBEnumMixIn
 
 if TYPE_CHECKING:
-    from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+    from rotkehlchen.typing import ChecksumEvmAddress, Timestamp
 
 
 class AssetType(DBEnumMixIn):
@@ -33,6 +34,29 @@ class AssetType(DBEnumMixIn):
     AVALANCHE_TOKEN = 24
     SOLANA_TOKEN = 25
     NFT = 26
+    XDAI_TOKEN = 27
+    OKEX_TOKEN = 28
+    FANTOM_TOKEN = 29
+    ARBITRUM_TOKEN = 30
+    OPTIMISM_TOKEN = 31
+    POLYGON_TOKEN = 32
+
+    @classmethod
+    def evm_assets(cls) -> Tuple['AssetType', ...]:
+        return (
+            AssetType.ETHEREUM_TOKEN,
+            AssetType.POLYGON_TOKEN,
+            AssetType.XDAI_TOKEN,
+            AssetType.AVALANCHE_TOKEN,
+            AssetType.OKEX_TOKEN,
+            AssetType.FANTOM_TOKEN,
+            AssetType.ARBITRUM_TOKEN,
+            AssetType.OPTIMISM_TOKEN,
+        )
+
+    @classmethod
+    def is_evm_compatible(cls, asset_type: 'AssetType') -> bool:
+        return asset_type in AssetType.evm_assets()
 
 
 class AssetData(NamedTuple):
@@ -46,7 +70,9 @@ class AssetData(NamedTuple):
     started: Optional['Timestamp']
     forked: Optional[str]
     swapped_for: Optional[str]
-    ethereum_address: Optional['ChecksumEthAddress']
+    evm_address: Optional['ChecksumEvmAddress']
+    chain: Optional[ChainID]
+    token_type: Optional[EvmTokenKind]
     decimals: Optional[int]
     # None means, no special mapping. '' means not supported
     cryptocompare: Optional[str]

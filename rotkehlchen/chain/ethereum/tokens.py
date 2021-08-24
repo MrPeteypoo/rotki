@@ -3,27 +3,29 @@ import random
 from collections import defaultdict
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from rotkehlchen.assets.asset import EthereumToken
+from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.manager import EthereumManager, NodeName
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.typing import string_to_evm_address
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.constants.ethereum import ETH_SCAN
 from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.resolver import ChainID
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.errors import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Price
+from rotkehlchen.typing import ChecksumEvmAddress, Price
 from rotkehlchen.utils.misc import get_chunks, ts_now
+
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 TokensReturn = Tuple[
-    Dict[ChecksumEthAddress, Dict[EthereumToken, FVal]],
-    Dict[EthereumToken, Price],
+    Dict[ChecksumEvmAddress, Dict[EvmToken, FVal]],
+    Dict[EvmToken, Price],
 ]
 
 # 08/08/2020
@@ -65,12 +67,12 @@ class EthTokens():
 
     def detect_tokens_for_address(
             self,
-            address: ChecksumEthAddress,
-            token_usd_price: Dict[EthereumToken, Price],
-            etherscan_chunks: List[List[EthereumToken]],
-            other_chunks: List[List[EthereumToken]],
-    ) -> Dict[EthereumToken, FVal]:
-        balances: Dict[EthereumToken, FVal] = defaultdict(FVal)
+            address: ChecksumEvmAddress,
+            token_usd_price: Dict[EvmToken, Price],
+            etherscan_chunks: List[List[EvmToken]],
+            other_chunks: List[List[EvmToken]],
+    ) -> Dict[EvmToken, FVal]:
+        balances: Dict[EvmToken, FVal] = defaultdict(FVal)
         if self.ethereum.connected_to_any_web3():
             call_order = []
             if NodeName.OWN in self.ethereum.web3_mapping:
@@ -103,7 +105,7 @@ class EthTokens():
 
     def query_tokens_for_addresses(
             self,
-            addresses: List[ChecksumEthAddress],
+            addresses: List[ChecksumEvmAddress],
             force_detection: bool,
     ) -> TokensReturn:
         """Queries/detects token balances for a list of addresses
@@ -123,11 +125,11 @@ class EthTokens():
             # defi SDK as part of locked CRV in Vote Escrowed CRV. Which is the right way
             # to approach it as there is no way to assign a price to 1 veCRV. It
             # can be 1 CRV locked for 4 years or 4 CRV locked for 1 year etc.
-            string_to_ethereum_address('0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2'),
+            string_to_evm_address('0x5f3b5DfEb7B28CDbD7FAba78963EE202a494e2A2'),
             # Ignore for now xsushi since is queried by defi SDK. We'll do it for now
             # since the SDK entry might return other tokens from sushi and we don't
             # fully support sushi now.
-            string_to_ethereum_address('0x8798249c2E607446EfB7Ad49eC89dD1865Ff4272'),
+            string_to_evm_address('0x8798249c2E607446EfB7Ad49eC89dD1865Ff4272'),
             # Ignore the following tokens. They are old tokens of upgraded contracts which
             # duplicated the balances at upgrade instead of doing a token swap.
             # e.g.: https://github.com/rotki/rotki/issues/3548
@@ -135,21 +137,22 @@ class EthTokens():
             # upgrade possible occurences in the user DB
             #
             # Old contract of Fetch.ai
-            string_to_ethereum_address('0x1D287CC25dAD7cCaF76a26bc660c5F7C8E2a05BD'),
+            string_to_evm_address('0x1D287CC25dAD7cCaF76a26bc660c5F7C8E2a05BD'),
         ]
         for asset in ignored_assets:  # don't query for the ignored tokens
-            if asset.is_eth_token():  # type ignore since we know asset is a token
-                exceptions.append(EthereumToken.from_asset(asset).ethereum_address)  # type: ignore
-        all_tokens = GlobalDBHandler().get_ethereum_tokens(
+            if asset.is_evm_token():  # type ignore since we know asset is a token
+                exceptions.append(EvmToken.from_asset(asset))  # type: ignore
+        all_tokens = GlobalDBHandler().get_evm_tokens(
             exceptions=exceptions,
             except_protocols=['balancer'],
+            chain=ChainID.ETHEREUM,
         )
         # With etherscan with chunks > 120, we get request uri too large
         # so the limitation is not in the gas, but in the request uri length
         etherscan_chunks = list(get_chunks(all_tokens, n=ETHERSCAN_MAX_TOKEN_CHUNK_LENGTH))
         other_chunks = list(get_chunks(all_tokens, n=OTHER_MAX_TOKEN_CHUNK_LENGTH))
         now = ts_now()
-        token_usd_price: Dict[EthereumToken, Price] = {}
+        token_usd_price: Dict[EvmToken, Price] = {}
         result = {}
 
         for address in addresses:
@@ -180,10 +183,10 @@ class EthTokens():
 
     def _get_tokens_balance_and_price(
             self,
-            address: ChecksumEthAddress,
-            tokens: List[EthereumToken],
-            balances: Dict[EthereumToken, FVal],
-            token_usd_price: Dict[EthereumToken, Price],
+            address: ChecksumEvmAddress,
+            tokens: List[EvmToken],
+            balances: Dict[EvmToken, FVal],
+            token_usd_price: Dict[EvmToken, Price],
             call_order: Optional[Sequence[NodeName]],
     ) -> None:
         ret = self._get_multitoken_account_balance(
@@ -191,8 +194,9 @@ class EthTokens():
             account=address,
             call_order=call_order,
         )
+
         for token_identifier, value in ret.items():
-            token = EthereumToken.from_identifier(token_identifier)
+            token = EvmToken.from_identifier(token_identifier)
             if token is None:  # should not happen
                 log.warning(
                     f'Could not initialize token with identifier {token_identifier}. '
@@ -211,8 +215,8 @@ class EthTokens():
 
     def _get_multitoken_account_balance(
             self,
-            tokens: List[EthereumToken],
-            account: ChecksumEthAddress,
+            tokens: List[EvmToken],
+            account: ChecksumEvmAddress,
             call_order: Optional[Sequence[NodeName]],
     ) -> Dict[str, FVal]:
         """Queries balances of multiple tokens for an account
@@ -235,7 +239,7 @@ class EthTokens():
         result = ETH_SCAN.call(
             ethereum=self.ethereum,
             method_name='tokensBalance',
-            arguments=[account, [x.ethereum_address for x in tokens]],
+            arguments=[account, [x.evm_address for x in tokens]],
             call_order=call_order,
         )
         for tk_idx, token in enumerate(tokens):
@@ -243,7 +247,7 @@ class EthTokens():
             if token_amount != 0:
                 normalized_amount = token_normalized_value(token_amount, token)
                 log.debug(
-                    f'Found {token.symbol}({token.ethereum_address}) token balance for '
+                    f'Found {token.symbol}({token.evm_address}) token balance for '
                     f'{account} and amount {normalized_amount}',
                 )
                 balances[token.identifier] = normalized_amount

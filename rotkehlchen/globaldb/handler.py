@@ -6,17 +6,18 @@ from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Tuple, Un
 
 from typing_extensions import Literal
 
-from rotkehlchen.assets.asset import Asset, EthereumToken, UnderlyingToken
+from rotkehlchen.assets.asset import Asset, EvmToken, UnderlyingToken
 from rotkehlchen.assets.typing import AssetData, AssetType
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.typing import string_to_evm_address
 from rotkehlchen.constants.assets import CONSTANT_ASSETS
 from rotkehlchen.constants.misc import NFT_DIRECTIVE
-from rotkehlchen.constants.resolver import ethaddress_to_identifier
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind, translate_old_format_to_new
 from rotkehlchen.errors import DeserializationError, InputError, UnknownAsset
 from rotkehlchen.globaldb.upgrades.v1_v2 import upgrade_ethereum_asset_ids
+from rotkehlchen.globaldb.upgrades.v2_v3 import migrate_to_v3
 from rotkehlchen.history.typing import HistoricalPrice, HistoricalPriceOracle
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, Location, Timestamp
 from rotkehlchen.utils.misc import ts_now
 
 from .schema import DB_SCRIPT_CREATE_TABLES
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-GLOBAL_DB_VERSION = 2
+GLOBAL_DB_VERSION = 3
 
 
 def _get_setting_value(cursor: sqlite3.Cursor, name: str, default_value: int) -> int:
@@ -56,6 +57,8 @@ def initialize_globaldb(dbpath: Path) -> sqlite3.Connection:
 
     if db_version == 1:
         upgrade_ethereum_asset_ids(connection)
+    if db_version == 2:
+        migrate_to_v3(connection)
     cursor.execute(
         'INSERT OR REPLACE INTO settings(name, value) VALUES(?, ?)',
         ('version', str(GLOBAL_DB_VERSION)),
@@ -130,10 +133,10 @@ class GlobalDBHandler():
     def add_asset(
             asset_id: str,
             asset_type: AssetType,
-            data: Union[EthereumToken, Dict[str, Any]],
+            data: Union[EvmToken, Dict[str, Any]],
     ) -> None:
         """
-        Add an asset in the DB. Either an ethereum token or a custom asset.
+        Add an asset in the DB. Either an evm token or a custom asset.
 
         If it's a custom asset the data should be typed. As given in by marshmallow.
 
@@ -141,11 +144,15 @@ class GlobalDBHandler():
         connection = GlobalDBHandler()._conn
         cursor = connection.cursor()
 
-        details_id: Union[str, ChecksumEthAddress]
-        if asset_type == AssetType.ETHEREUM_TOKEN:
-            token = cast(EthereumToken, data)
-            GlobalDBHandler().add_ethereum_token_data(token)
-            details_id = token.ethereum_address
+        details_id = asset_id
+        if isinstance(data, EvmToken):
+            forked = data.forked.identifier if data.forked else None
+        else:
+            forked_asset = data.get('forked', None)
+            forked = forked_asset.identifier if forked_asset else None
+        if AssetType.is_evm_compatible(asset_type):
+            token = cast(EvmToken, data)
+            GlobalDBHandler().add_evm_token_data(token)
             name = token.name
             symbol = token.symbol
             started = token.started
@@ -153,7 +160,6 @@ class GlobalDBHandler():
             coingecko = token.coingecko
             cryptocompare = token.cryptocompare
         else:
-            details_id = asset_id
             data = cast(Dict[str, Any], data)
             # The data should already be typed (as given in by marshmallow)
             name = data.get('name', None)
@@ -166,32 +172,35 @@ class GlobalDBHandler():
 
         try:
             cursor.execute(
+                'INSERT INTO common_asset_details(identifier, name, symbol, coingecko, '
+                'cryptocompare, forked)'
+                'VALUES(?, ?, ?, ?, ?, ?);',
+                (
+                    asset_id,
+                    name,
+                    symbol,
+                    coingecko,
+                    cryptocompare,
+                    forked,
+                ),
+            )
+            cursor.execute(
                 'INSERT INTO assets('
-                'identifier, type, name, symbol, started, swapped_for, '
-                'coingecko, cryptocompare, details_reference) '
-                'VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'identifier, type, started, swapped_for, common_details_id) '
+                'VALUES(?, ?, ?, ?, ?);',
                 (
                     asset_id,
                     asset_type.serialize_for_db(),
-                    name,
-                    symbol,
                     started,
                     swapped_for,
-                    coingecko,
-                    cryptocompare,
-                    details_id),
+                    details_id,
+                ),
             )
         except sqlite3.IntegrityError as e:
             connection.rollback()
             raise InputError(
                 f'Failed to add asset {asset_id} into the assets table for details id {details_id} due to {str(e)}',  # noqa: E501
             ) from e
-
-        # for common asset details we have to add them after the addition of the main asset table
-        if asset_type != AssetType.ETHEREUM_TOKEN:
-            asset_data = cast(Dict[str, Any], data)
-            asset_data['identifier'] = asset_id
-            GlobalDBHandler().add_common_asset_details(asset_data)
 
         connection.commit()  # success
 
@@ -230,41 +239,47 @@ class GlobalDBHandler():
         else:
             result = []
         cursor = GlobalDBHandler()._conn.cursor()
+        if specific_ids is not None:
+            specific_ids = [translate_old_format_to_new(id) for id in specific_ids]
         specific_ids_query = ''
         if specific_ids is not None:
             specific_ids_query = f'AND A.identifier in ({",".join("?" * len(specific_ids))})'
         querystr = f"""
-        SELECT A.identifier, A.type, B.address, B.decimals, A.name, A.symbol, A.started, null, A.swapped_for, A.coingecko, A.cryptocompare, B.protocol from assets as A LEFT OUTER JOIN ethereum_tokens as B
-        ON B.address = A.details_reference WHERE A.type=? {specific_ids_query}
+        SELECT A.identifier, A.type, B.address, B.decimals, C.name, C.symbol, A.started, null, A.swapped_for, C.coingecko, C.cryptocompare, B.protocol, B.chain, B.token_type FROM assets as A JOIN evm_tokens as B
+        ON B.identifier = A.identifier JOIN common_asset_details AS C ON C.identifier = B.identifier WHERE A.type=? {specific_ids_query}
         UNION ALL
-        SELECT A.identifier, A.type, null, null, A.name, A.symbol, A.started, B.forked, A.swapped_for, A.coingecko, A.cryptocompare, null from assets as A LEFT OUTER JOIN common_asset_details as B
-        ON B.asset_id = A.identifier WHERE A.type!=? {specific_ids_query};
+        SELECT A.identifier, A.type, null, null, B.name, B.symbol, A.started, B.forked, A.swapped_for, B.coingecko, B.cryptocompare, null, null, null from assets as A JOIN common_asset_details as B
+        ON B.identifier = A.identifier WHERE A.type!=? {specific_ids_query};
         """  # noqa: E501
+
         eth_token_type = AssetType.ETHEREUM_TOKEN.serialize_for_db()    # pylint: disable=no-member
         if specific_ids is not None:
             bindings = (eth_token_type, *specific_ids, eth_token_type, *specific_ids)
         else:
             bindings = (eth_token_type, eth_token_type)
+
         query = cursor.execute(querystr, bindings)
         for entry in query:
             asset_type = AssetType.deserialize_from_db(entry[1])
-            ethereum_address: Optional[ChecksumEthAddress]
+            evm_address: Optional[ChecksumEvmAddress]
             if asset_type == AssetType.ETHEREUM_TOKEN:
-                ethereum_address = string_to_ethereum_address(entry[2])
+                evm_address = string_to_evm_address(entry[2])
             else:
-                ethereum_address = None
+                evm_address = None
             data = AssetData(
                 identifier=entry[0],
-                asset_type=asset_type,
-                ethereum_address=ethereum_address,
-                decimals=entry[3],
                 name=entry[4],
                 symbol=entry[5],
+                asset_type=asset_type,
                 started=entry[6],
                 forked=entry[7],
                 swapped_for=entry[8],
-                coingecko=entry[9],
+                evm_address=evm_address,
+                chain=ChainID(entry[12]) if entry[12] is not None else None,
+                token_type=EvmTokenKind(entry[13]) if entry[13] is not None else None,
+                decimals=entry[3],
                 cryptocompare=entry[10],
+                coingecko=entry[9],
                 protocol=entry[11],
             )
             if mapping:
@@ -283,10 +298,14 @@ class GlobalDBHandler():
 
         Returns None if identifier can't be matched to an asset
         """
+        # TODO: This is to ensure that identifier gets traslated in places
+        # where we call with the old id. Needs to be removed later
+        identifier = translate_old_format_to_new(identifier)
         cursor = GlobalDBHandler()._conn.cursor()
         query = cursor.execute(
-            'SELECT identifier, type, name, symbol, started, swapped_for, coingecko, '
-            'cryptocompare, details_reference from assets WHERE identifier=?;',
+            'SELECT A.identifier, A.type, B.name, B.symbol, A.started, A.swapped_for, '
+            'B.coingecko, B.cryptocompare, B.forked from assets AS A JOIN  '
+            'common_asset_details AS B ON A.identifier = B.identifier WHERE A.identifier=?;',
             (identifier,),
         )
         result = query.fetchone()
@@ -302,11 +321,13 @@ class GlobalDBHandler():
         swapped_for = result[5]
         coingecko = result[6]
         cryptocompare = result[7]
-        details_reference = result[8]
         forked = None
         decimals = None
         protocol = None
-        ethereum_address = None
+        evm_address = None
+        chain = None
+        token_type = None
+        forked = result[8]
 
         try:
             asset_type = AssetType.deserialize_from_db(db_serialized_type)
@@ -317,11 +338,12 @@ class GlobalDBHandler():
             )
             return None
 
-        if asset_type == AssetType.ETHEREUM_TOKEN:
-            ethereum_address = details_reference
+        evm_assets = AssetType.evm_assets()
+
+        if asset_type in evm_assets:
             cursor.execute(
-                'SELECT decimals, protocol from ethereum_tokens '
-                'WHERE address=?', (ethereum_address,),
+                'SELECT decimals, protocol, address, chain, token_type from evm_tokens '
+                'WHERE identifier=?', (saved_identifier,),
             )
             result = query.fetchone()
             if result is None:
@@ -333,27 +355,16 @@ class GlobalDBHandler():
 
             decimals = result[0]
             protocol = result[1]
+            evm_address = result[2]
+            chain = result[3]
+            token_type = result[4]
             missing_basic_data = name is None or symbol is None or decimals is None
             if missing_basic_data and form_with_incomplete_data is False:
                 log.debug(
-                    f'Considering ethereum token with address {details_reference} '
+                    f'Considering evm token with identifier {saved_identifier} '
                     f'as unknown since its missing either decimals or name or symbol',
                 )
                 return None
-        else:
-            cursor = GlobalDBHandler()._conn.cursor()
-            query = cursor.execute(
-                'SELECT forked FROM common_asset_details WHERE asset_id = ?;',
-                (details_reference,),
-            )
-            result = query.fetchone()
-            if result is None:
-                log.error(
-                    f'Found asset {saved_identifier} in the DB assets table but not '
-                    f'in the common asset details table.',
-                )
-                return None
-            forked = result[0]
 
         return AssetData(
             identifier=saved_identifier,
@@ -363,7 +374,9 @@ class GlobalDBHandler():
             started=started,
             forked=forked,
             swapped_for=swapped_for,
-            ethereum_address=ethereum_address,
+            evm_address=evm_address,
+            chain=chain,
+            token_type=token_type,
             decimals=decimals,
             coingecko=coingecko,
             cryptocompare=cryptocompare,
@@ -372,13 +385,16 @@ class GlobalDBHandler():
 
     @staticmethod
     def fetch_underlying_tokens(
-            address: ChecksumEthAddress,
+            identifier: str,
     ) -> Optional[List[UnderlyingToken]]:
-        """Fetch underlying tokens for a token address if they exist"""
+        """
+        Fetch underlying tokens for a token address if they exist.
+        TODO assets: review type of argument. Shouldn't be str
+        """
         cursor = GlobalDBHandler()._conn.cursor()
         query = cursor.execute(
-            'SELECT address, weight from underlying_tokens_list WHERE parent_token_entry=?;',
-            (address,),
+            'SELECT identifier, weight from underlying_tokens_list WHERE parent_token_entry=?;',
+            (identifier,),
         )
         results = query.fetchall()
         underlying_tokens = None
@@ -390,7 +406,7 @@ class GlobalDBHandler():
     @staticmethod
     def _add_underlying_tokens(
             connection: sqlite3.Connection,
-            parent_token_address: ChecksumEthAddress,
+            parent_token_identifier: str,
             underlying_tokens: List[UnderlyingToken],
     ) -> None:
         """Add the underlying tokens for the parent token
@@ -400,50 +416,60 @@ class GlobalDBHandler():
         cursor = GlobalDBHandler()._conn.cursor()
         for underlying_token in underlying_tokens:
             # make sure underlying token address is tracked if not already there
-            asset_id = GlobalDBHandler.get_ethereum_token_identifier(underlying_token.address)  # noqa: E501
-            if asset_id is None:
+            asset_id = underlying_token.identifier
+            cursor.execute('SELECT COUNT(*) FROM evm_tokens where identifier=?', (asset_id, ))
+            if cursor.fetchone()[0] == 0:
                 try:  # underlying token does not exist. Track it
                     cursor.execute(
-                        'INSERT INTO ethereum_tokens(address) VALUES(?)',
-                        (underlying_token.address,),
+                        'INSERT INTO evm_tokens(identifier, address, chain, token_type)'
+                        'VALUES(?, ?, ?, ?)',
+                        (
+                            underlying_token.identifier,
+                            underlying_token.address(),
+                            underlying_token.chain.value,
+                            underlying_token.token_type.value,
+                        ),
                     )
-                    asset_id = ethaddress_to_identifier(underlying_token.address)
                     cursor.execute(
-                        """INSERT INTO assets(identifier, type, name, symbol,
-                        started, swapped_for, coingecko, cryptocompare, details_reference)
-                        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (asset_id, 'C', None, None, None,
-                         None, None, '', underlying_token.address),
+                        """INSERT INTO assets(identifier, type, started, swapped_for)
+                        VALUES(?, ?, ?, ?)""",
+                        (asset_id, 'C', None, None),
+                    )
+                    cursor.execute(
+                        """INSERT INTO common_asset_details(identifier, name, symbol,
+                        coingecko, cryptocompare, forked)
+                        VALUES(?, ?, ?, ?, ?, ?)""",
+                        (asset_id, None, None, None, '', None),
                     )
                 except sqlite3.IntegrityError as e:
                     connection.rollback()
                     raise InputError(
-                        f'Failed to add underlying tokens for {parent_token_address} '
+                        f'Failed to add underlying tokens for {parent_token_identifier} '
                         f'due to {str(e)}',
                     ) from e
             try:
                 cursor.execute(
-                    'INSERT INTO underlying_tokens_list(address, weight, parent_token_entry) '
+                    'INSERT INTO underlying_tokens_list(identifier, weight, parent_token_entry) '
                     'VALUES(?, ?, ?)',
                     (
-                        underlying_token.address,
+                        underlying_token.identifier,
                         str(underlying_token.weight),
-                        parent_token_address,
+                        parent_token_identifier,
                     ),
                 )
             except sqlite3.IntegrityError as e:
                 connection.rollback()
                 raise InputError(
-                    f'Failed to add underlying tokens for {parent_token_address} due to {str(e)}',
+                    f'Failed to add underlying tokens for {parent_token_identifier} '
+                    f'due to {str(e)}',
                 ) from e
 
     @staticmethod
-    def get_ethereum_token_identifier(address: ChecksumEthAddress) -> Optional[str]:
-        """Returns the asset identifier of an ethereum token by address if it can be found"""
+    def get_evm_token_identifier(address: ChecksumEvmAddress) -> Optional[str]:
+        """Returns the asset identifier of an evm token by address if it can be found"""
         cursor = GlobalDBHandler()._conn.cursor()
         query = cursor.execute(
-            'SELECT A.identifier from assets AS A LEFT OUTER JOIN ethereum_tokens as B '
-            ' ON B.address = A.details_reference WHERE b.address=?;',
+            'SELECT identifier from evm_tokens WHERE address=?;',
             (address,),
         )
         result = query.fetchall()
@@ -467,7 +493,8 @@ class GlobalDBHandler():
         """
         cursor = GlobalDBHandler()._conn.cursor()
         query = cursor.execute(
-            'SELECT identifier from assets WHERE type=? AND name=? AND symbol=?;',
+            'SELECT A.identifier from assets AS A JOIN common_asset_details as C '
+            'ON A.identifier=C.identifier WHERE A.type=? AND C.name=? AND C.symbol=?;',
             (asset_type.serialize_for_db(), name, symbol),
         )
         result = query.fetchall()
@@ -477,17 +504,18 @@ class GlobalDBHandler():
         return [x[0] for x in result]
 
     @staticmethod
-    def get_ethereum_token(address: ChecksumEthAddress) -> Optional[EthereumToken]:  # noqa: E501
-        """Gets all details for an ethereum token by its address
+    def get_evm_token(address: ChecksumEvmAddress) -> Optional[EvmToken]:  # noqa: E501
+        """Gets all details for an evm token by its address
 
         If no token for the given address can be found None is returned.
         """
         cursor = GlobalDBHandler()._conn.cursor()
         query = cursor.execute(
-            'SELECT A.identifier, B.address, B.decimals, A.name, A.symbol, A.started, '
-            'A.swapped_for, A.coingecko, A.cryptocompare, B.protocol '
-            'FROM ethereum_tokens AS B LEFT OUTER JOIN '
-            'assets AS A ON B.address = A.details_reference WHERE address=?;',
+            'SELECT A.identifier, B.address, B.decimals, A.name, A.symbol, C.started, '
+            'C.swapped_for, A.coingecko, A.cryptocompare, B.protocol, B.chain, B.token_type '
+            'FROM evm_tokens AS B JOIN '
+            'common_asset_details AS A ON B.identifier = A.identifier '
+            'JOIN assets AS C on C.identifier=A.identifier WHERE B.address=?;',
             (address,),
         )
         results = query.fetchall()
@@ -495,41 +523,44 @@ class GlobalDBHandler():
             return None
 
         token_data = results[0]
-        underlying_tokens = GlobalDBHandler().fetch_underlying_tokens(address)
+        underlying_tokens = GlobalDBHandler().fetch_underlying_tokens(token_data[0])
 
         try:
-            return EthereumToken.deserialize_from_db(
+            return EvmToken.deserialize_from_db(
                 entry=token_data,
                 underlying_tokens=underlying_tokens,
             )
         except UnknownAsset as e:
             log.error(
                 f'Found unknown swapped_for asset {str(e)} in '
-                f'the DB when deserializing an EthereumToken',
+                f'the DB when deserializing an EvmToken',
             )
             return None
 
     @staticmethod
-    def get_ethereum_tokens(
-            exceptions: Optional[List[ChecksumEthAddress]] = None,
+    def get_evm_tokens(
+            exceptions: Optional[List[ChecksumEvmAddress]] = None,
             except_protocols: Optional[List[str]] = None,
             protocol: Optional[str] = None,
-    ) -> List[EthereumToken]:
+            chain: Optional[ChainID] = None,
+    ) -> List[EvmToken]:
         """Gets all ethereum tokens from the DB
 
         Can also accept filtering parameters.
         - List of addresses to ignore via exceptions
         - Protocol for which to return tokens
+        - Chain to filter
         """
         cursor = GlobalDBHandler()._conn.cursor()
         querystr = (
-            'SELECT A.identifier, B.address, B.decimals, A.name, A.symbol, A.started, '
-            'A.swapped_for, A.coingecko, A.cryptocompare, B.protocol '
-            'FROM ethereum_tokens as B LEFT OUTER JOIN '
-            'assets AS A on B.address = A.details_reference '
+            'SELECT A.identifier, B.address, B.decimals, C.name, C.symbol, A.started, '
+            'A.swapped_for, C.coingecko, C.cryptocompare, B.protocol, B.chain, B.token_type '
+            'FROM evm_tokens as B LEFT OUTER JOIN '
+            'assets AS A on B.identifier = A.identifier JOIN common_asset_details AS C ON '
+            'C.identifier = B.identifier '
         )
         if exceptions is not None or protocol is not None or except_protocols is not None:
-            bindings_list: List[Union[str, ChecksumEthAddress]] = []
+            bindings_list: List[Union[str, int, ChecksumEvmAddress]] = []
             querystr_additions = []
             if exceptions is not None:
                 questionmarks = '?' * len(exceptions)
@@ -544,6 +575,10 @@ class GlobalDBHandler():
                 querystr_additions.append(f'(B.protocol NOT IN ({",".join(questionmarks)}) OR B.protocol IS NULL) ')  # noqa: E501
                 bindings_list.extend(except_protocols)
 
+            if chain is not None:
+                querystr_additions.append('B.chain=?')
+                bindings_list.append(chain.value)
+
             querystr += 'WHERE ' + 'AND '.join(querystr_additions) + ';'
             bindings = tuple(bindings_list)
         else:
@@ -553,20 +588,20 @@ class GlobalDBHandler():
         query = cursor.execute(querystr, bindings)
         tokens = []
         for entry in query:
-            underlying_tokens = GlobalDBHandler().fetch_underlying_tokens(entry[1])
+            underlying_tokens = GlobalDBHandler().fetch_underlying_tokens(entry[0])
             try:
-                token = EthereumToken.deserialize_from_db(entry, underlying_tokens)  # noqa: E501
+                token = EvmToken.deserialize_from_db(entry, underlying_tokens)  # noqa: E501
                 tokens.append(token)
             except UnknownAsset as e:
                 log.error(
                     f'Found unknown swapped_for asset {str(e)} in '
-                    f'the DB when deserializing an EthereumToken',
+                    f'the DB when deserializing an EvmToken',
                 )
 
         return tokens
 
     @staticmethod
-    def add_ethereum_token_data(entry: EthereumToken) -> None:
+    def add_evm_token_data(entry: EvmToken) -> None:
         """Adds ethereum token specific information into the global DB
 
         May raise InputError if the token already exists
@@ -576,32 +611,32 @@ class GlobalDBHandler():
         try:
             cursor.execute(
                 'INSERT INTO '
-                'ethereum_tokens(address, decimals, protocol) '
-                'VALUES(?, ?, ?)',
-                (entry.ethereum_address, entry.decimals, entry.protocol),
+                'evm_tokens(identifier, token_type, chain, address, decimals, protocol) '
+                'VALUES(?, ?, ?, ?, ?, ?)',
+                entry.serialize_for_db(),
             )
         except sqlite3.IntegrityError as e:
             exception_msg = str(e)
             if 'FOREIGN KEY' in exception_msg:
                 # should not really happen since API should check for this
                 msg = (
-                    f'Ethereum token with address {entry.ethereum_address} can not be put '
+                    f'EVM token with address {entry.evm_address} can not be put '
                     f'in the DB due to swapped for entry not existing'
                 )
             else:
-                msg = f'Ethereum token with address {entry.ethereum_address} already exists in the DB'  # noqa: E501
+                msg = f'Ethereum token with address {entry.evm_address} already exists in the DB'  # noqa: E501
             raise InputError(msg) from e
 
         if entry.underlying_tokens is not None:
             GlobalDBHandler()._add_underlying_tokens(
                 connection=connection,
-                parent_token_address=entry.ethereum_address,
+                parent_token_identifier=entry.identifier,
                 underlying_tokens=entry.underlying_tokens,
             )
 
     @staticmethod
-    def edit_ethereum_token(
-            entry: EthereumToken,
+    def edit_evm_token(
+            entry: EvmToken,
     ) -> str:
         """Edits an ethereum token entry in the DB
 
@@ -613,50 +648,67 @@ class GlobalDBHandler():
         cursor = connection.cursor()
         try:
             cursor.execute(
-                'UPDATE assets SET name=?, symbol=?, started=?, swapped_for=?, '
-                'coingecko=?, cryptocompare=? WHERE identifier=?;',
+                'UPDATE common_asset_details SET name=?, symbol=?, coingecko=?, cryptocompare=?, '
+                'forked=? WHERE identifier=?;',
                 (
                     entry.name,
                     entry.symbol,
-                    entry.started,
-                    entry.swapped_for.identifier if entry.swapped_for else None,
                     entry.coingecko,
                     entry.cryptocompare,
-                    ethaddress_to_identifier(entry.ethereum_address),
+                    entry.forked.identifier if entry.forked else None,
+                    entry.identifier,
                 ),
             )
             cursor.execute(
-                'UPDATE ethereum_tokens SET decimals=?, protocol=? WHERE address = ?',
-                (entry.decimals, entry.protocol, entry.ethereum_address),
+                'UPDATE assets SET started=?, swapped_for=?, common_details_id=? '
+                'WHERE identifier=?;',
+                (
+                    entry.started,
+                    entry.swapped_for.identifier if entry.swapped_for else None,
+                    entry.identifier,
+                    entry.identifier,
+                ),
+            )
+            cursor.execute(
+                'UPDATE evm_tokens SET token_type=?, chain=?, address=?, decimals=?, protocol=? '
+                ' WHERE identifier = ?',
+                (
+                    entry.token_type.value,
+                    entry.chain.value,
+                    entry.evm_address,
+                    entry.decimals,
+                    entry.protocol,
+                    entry.identifier,
+                ),
             )
         except sqlite3.IntegrityError as e:
             raise InputError(
-                f'Failed to update DB entry for ethereum token with address {entry.ethereum_address} '  # noqa: E501
+                f'Failed to update DB entry for EVM token with address {entry.evm_address} '  # noqa: E501
                 f'due to a constraint being hit. Make sure the new values are valid ',
             ) from e
 
         if cursor.rowcount != 1:
             raise InputError(
-                f'Tried to edit non existing ethereum token with address {entry.ethereum_address}',
+                f'Tried to edit non existing ethereum token with address {entry.evm_address}',
             )
 
         # Since this is editing, make sure no underlying tokens exist
         cursor.execute(
             'DELETE from underlying_tokens_list WHERE parent_token_entry=?',
-            (entry.ethereum_address,),
+            (entry.identifier,),
         )
         if entry.underlying_tokens is not None:  # and now add any if needed
             GlobalDBHandler()._add_underlying_tokens(
                 connection=connection,
-                parent_token_address=entry.ethereum_address,
+                parent_token_identifier=entry.identifier,
                 underlying_tokens=entry.underlying_tokens,
             )
 
-        rotki_id = GlobalDBHandler().get_ethereum_token_identifier(entry.ethereum_address)
+        rotki_id = GlobalDBHandler().get_evm_token_identifier(entry.evm_address)
         if rotki_id is None:
             connection.rollback()
             raise InputError(
-                f'Unexpected DB state. Ethereum token {entry.ethereum_address} exists in the DB '
+                f'Unexpected DB state. Ethereum token {entry.evm_address} exists in the DB '
                 f'but its corresponding asset entry was not found.',
             )
 
@@ -664,8 +716,8 @@ class GlobalDBHandler():
         return rotki_id
 
     @staticmethod
-    def delete_ethereum_token(address: ChecksumEthAddress) -> str:
-        """Deletes an ethereum token from the global DB
+    def delete_evm_token(address: ChecksumEvmAddress) -> str:
+        """Deletes an evm token from the global DB
 
         May raise InputError if the token does not exist in the DB or
         some other constraint is hit. Such as for example trying to delete
@@ -673,15 +725,23 @@ class GlobalDBHandler():
         """
         connection = GlobalDBHandler()._conn
         cursor = connection.cursor()
+        identifier = None
         try:
             cursor.execute(
-                'DELETE FROM ethereum_tokens WHERE address=?;',
+                'SELECT identifier from evm_tokens where address=?;',
+                (address,),
+            )
+            output = cursor.fetchone()
+            if output is not None:
+                identifier = output[0]
+            cursor.execute(
+                'DELETE FROM evm_tokens WHERE address=?;',
                 (address,),
             )
         except sqlite3.IntegrityError as e:
             connection.rollback()
             raise InputError(
-                f'Tried to delete ethereum token with address {address} '
+                f'Tried to delete EVM token with address {address} '
                 f'but its deletion would violate a constraint so deletion '
                 f'failed. Make sure that this token is not already used by '
                 f'other tokens as an underlying or swapped for token or is '
@@ -689,51 +749,48 @@ class GlobalDBHandler():
             ) from e
 
         affected_rows = cursor.rowcount
-        if affected_rows != 1:
+        if affected_rows != 1 or identifier is None:
             raise InputError(
-                f'Tried to delete ethereum token with address {address} '
+                f'Tried to delete EVM token with address {address} '
                 f'but it was not found in the DB',
             )
 
-        # get the rotki identifier of the token
-        query = cursor.execute(
-            'SELECT identifier from assets where details_reference=?;',
-            (address,),
-        )
-        result = query.fetchall()
-        if len(result) == 0:
-            connection.rollback()
-            raise InputError(
-                f'Tried to delete ethereum token with address {address} '
-                f'from the assets table but it was not found in the DB',
-            )
-        rotki_id = result[0][0]
-
-        # finally delete the assets entry
+        # finally delete the information from other tables
+        affected_rows = 0
         try:
             cursor.execute(
-                'DELETE FROM assets WHERE details_reference=?;',
-                (address,),
+                'DELETE FROM assets WHERE identifier=?; ',
+                (identifier,),
             )
+            affected_rows += cursor.rowcount
+            cursor.execute(
+                'DELETE FROM multiasset_collector WHERE identifier=?;',
+                (identifier,),
+            )
+            affected_rows += cursor.rowcount
+            cursor.execute(
+                'DELETE FROM common_asset_details WHERE identifier=?;',
+                (identifier,),
+            )
+            affected_rows += cursor.rowcount
         except sqlite3.IntegrityError as e:
             connection.rollback()
             raise InputError(
-                f'Tried to delete ethereum token with address {address} '
+                f'Tried to delete EVM token with address {address} '
                 f'but its deletion would violate a constraint so deletion '
                 f'failed. Make sure that this token is not already used by '
                 f'other tokens as an underlying or swapped for token',
             ) from e
 
-        affected_rows = cursor.rowcount
-        if affected_rows != 1:
+        if affected_rows < 2:
             connection.rollback()
             raise InputError(
-                f'Tried to delete ethereum token with address {address} '
+                f'Tried to delete EVM token with address {address} '
                 f'from the assets table but it was not found in the DB',
             )
 
         connection.commit()
-        return rotki_id
+        return identifier
 
     @staticmethod
     def edit_custom_asset(data: Dict[str, Any]) -> None:
@@ -755,22 +812,20 @@ class GlobalDBHandler():
         swapped_for = swapped_for_asset.identifier if swapped_for_asset else None
         try:
             cursor.execute(
-                'UPDATE assets SET type=?, name=?, symbol=?, started=?, swapped_for=?, '
-                'coingecko=?, cryptocompare=? WHERE identifier = ?',
+                'UPDATE common_asset_details SET name=?, symbol=?, '
+                'coingecko=?, cryptocompare=?, forked=? WHERE identifier = ?',
                 (
-                    data['asset_type'].serialize_for_db(),
                     data.get('name'),
                     data.get('symbol'),
-                    data.get('started'),
-                    swapped_for,
                     data.get('coingecko'),
                     data.get('cryptocompare', ''),
+                    forked,
                     identifier,
                 ),
             )
         except sqlite3.IntegrityError as e:
             raise InputError(
-                f'Failed to update DB entry for asset with identifier {identifier} '
+                f'Failed to update DB entry for common_asset_details with identifier {identifier} '
                 f'due to a constraint being hit. Make sure the new values are valid ',
             ) from e
 
@@ -778,17 +833,20 @@ class GlobalDBHandler():
             raise InputError(
                 f'Tried to edit non existing asset with identifier {identifier}',
             )
-
-        # Edit the common asset details
         try:
             cursor.execute(
-                'UPDATE common_asset_details SET forked=? WHERE asset_id=?',
-                (forked, identifier),
+                'UPDATE assets SET type=?, started=?, swapped_for=? WHERE identifier = ?',
+                (
+                    data['asset_type'].serialize_for_db(),
+                    data.get('started'),
+                    swapped_for,
+                    identifier,
+                ),
             )
         except sqlite3.IntegrityError as e:
-            connection.rollback()
             raise InputError(
-                f'Failure at editing custom asset {identifier} common asset details',
+                f'Failed to update DB entry for asset with identifier {identifier} '
+                f'due to a constraint being hit. Make sure the new values are valid ',
             ) from e
 
         connection.commit()
@@ -811,7 +869,7 @@ class GlobalDBHandler():
         forked = forked_asset.identifier if forked_asset else None
         try:
             cursor.execute(
-                'INSERT INTO common_asset_details(asset_id, forked)'
+                'INSERT INTO common_asset_details(identifier, forked)'
                 'VALUES(?, ?)',
                 (asset_id, forked),
             )
@@ -833,6 +891,10 @@ class GlobalDBHandler():
         try:
             cursor.execute(
                 'DELETE FROM assets WHERE identifier=?;',
+                (identifier,),
+            )
+            cursor.execute(
+                'DELETE FROM common_asset_details WHERE identifier=?;',
                 (identifier,),
             )
         except sqlite3.IntegrityError as e:
@@ -902,7 +964,7 @@ class GlobalDBHandler():
 
         try:
             if asset_type == AssetType.ETHEREUM_TOKEN:
-                globaldb.delete_ethereum_token(identifier[6:])  # type: ignore
+                globaldb.delete_evm_token(identifier[6:])  # type: ignore
             else:
                 globaldb.delete_custom_asset(identifier)
         except InputError:
@@ -925,25 +987,27 @@ class GlobalDBHandler():
             asset_type_check = ''
             query_tuples = (symbol, eth_token_type, symbol, eth_token_type)
         querystr = f"""
-        SELECT A.identifier, A.type, B.address, B.decimals, A.name, A.symbol, A.started, null, A.swapped_for, A.coingecko, A.cryptocompare, B.protocol from assets as A LEFT OUTER JOIN ethereum_tokens as B
-        ON B.address = A.details_reference WHERE A.symbol=? COLLATE NOCASE AND A.type=?
+        SELECT A.identifier, A.type, B.address, B.decimals, C.name, C.symbol, A.started, null, A.swapped_for, C.coingecko, C.cryptocompare, B.protocol, B.chain, B.token_type from assets as A LEFT OUTER JOIN evm_tokens as B
+        ON B.identifier = A.identifier JOIN common_asset_details AS C ON C.identifier = B.identifier WHERE C.symbol=? COLLATE NOCASE AND A.type=?
         UNION ALL
-        SELECT A.identifier, A.type, null, null, A.name, A.symbol, A.started, B.forked, A.swapped_for, A.coingecko, A.cryptocompare, null from assets as A LEFT OUTER JOIN common_asset_details as B
-        ON B.asset_id = A.identifier WHERE A.symbol=? COLLATE NOCASE AND A.type!=?{asset_type_check};
+        SELECT A.identifier, A.type, null, null, B.name, B.symbol, A.started, B.forked, A.swapped_for, B.coingecko, B.cryptocompare, null, null, null from assets as A JOIN common_asset_details as B
+        ON B.identifier = A.identifier WHERE B.symbol=? COLLATE NOCASE AND A.type!=?{asset_type_check};
         """  # noqa: E501
         query = cursor.execute(querystr, query_tuples)
         assets = []
         for entry in query:
             asset_type = AssetType.deserialize_from_db(entry[1])
-            ethereum_address: Optional[ChecksumEthAddress]
+            evm_address: Optional[ChecksumEvmAddress]
             if asset_type == AssetType.ETHEREUM_TOKEN:
-                ethereum_address = string_to_ethereum_address(entry[2])
+                evm_address = string_to_evm_address(entry[2])
             else:
-                ethereum_address = None
+                evm_address = None
             assets.append(AssetData(
                 identifier=entry[0],
                 asset_type=asset_type,
-                ethereum_address=ethereum_address,
+                evm_address=evm_address,
+                chain=ChainID(entry[12]) if entry[12] is not None else None,
+                token_type=EvmTokenKind(entry[13]) if entry[13] is not None else None,
                 decimals=entry[3],
                 name=entry[4],
                 symbol=entry[5],
@@ -1383,11 +1447,10 @@ class GlobalDBHandler():
 
 def _reload_constant_assets(globaldb: GlobalDBHandler) -> None:
     """Reloads the details of the constant declared assets after reading from the DB"""
-    identifiers = [x.identifier for x in CONSTANT_ASSETS]
+    identifiers = [translate_old_format_to_new(x.identifier) for x in CONSTANT_ASSETS]
     db_data = globaldb.get_all_asset_data(mapping=True, serialized=False, specific_ids=identifiers)  # type: ignore  # noqa: E501
-
     for entry in CONSTANT_ASSETS:
-        db_entry = db_data.get(entry.identifier)
+        db_entry = db_data.get(translate_old_format_to_new(entry.identifier))
         if db_entry is None:
             log.critical(
                 f'Constant declared asset with id {entry.identifier} has no corresponding DB entry'
@@ -1411,7 +1474,7 @@ def _reload_constant_assets(globaldb: GlobalDBHandler) -> None:
             object.__setattr__(entry, 'swapped_for', swapped_for)
             object.__setattr__(entry, 'cryptocompare', db_entry.cryptocompare)
             object.__setattr__(entry, 'coingecko', db_entry.coingecko)
-            object.__setattr__(entry, 'ethereum_address', db_entry.ethereum_address)
+            object.__setattr__(entry, 'evm_address', db_entry.evm_address)
             object.__setattr__(entry, 'decimals', db_entry.decimals)
             object.__setattr__(entry, 'protocol', db_entry.protocol)
             # TODO: Not changing underlying tokens at the moment since none

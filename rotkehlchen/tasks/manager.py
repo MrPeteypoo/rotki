@@ -24,7 +24,7 @@ from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.history.typing import HistoricalPriceOracle
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.sync import PremiumSyncManager
-from rotkehlchen.typing import ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, Location, Timestamp
 from rotkehlchen.utils.misc import ts_now
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,7 @@ class TaskManager():
         self.cryptocompare_queries: Set[CCHistoQuery] = set()
         self.chain_manager = chain_manager
         self.last_xpub_derivation_ts = 0
-        self.last_eth_tx_query_ts: DefaultDict[ChecksumEthAddress, int] = defaultdict(int)
+        self.last_eth_tx_query_ts: DefaultDict[ChecksumEvmAddress, int] = defaultdict(int)
         self.last_exchange_query_ts: DefaultDict[Tuple[str, Location], int] = defaultdict(int)
         self.base_entries_ignore_set: Set[str] = set()
         self.prepared_cryptocompare_query = False

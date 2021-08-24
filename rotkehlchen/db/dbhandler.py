@@ -12,7 +12,7 @@ from pysqlcipher3 import dbapi2 as sqlcipher
 from typing_extensions import Literal
 
 from rotkehlchen.accounting.structures import ActionType, BalanceType, HistoryBaseEntry
-from rotkehlchen.assets.asset import Asset, EthereumToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.chain.bitcoin.xpub import (
@@ -117,7 +117,8 @@ from rotkehlchen.typing import (
     AssetMovementCategory,
     BlockchainAccountData,
     BTCAddress,
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
+    EthereumTransaction,
     ExchangeApiCredentials,
     ExternalService,
     ExternalServiceApiCredentials,
@@ -744,7 +745,7 @@ class DBHandler:
                 continue
         self.update_last_write()
 
-    def add_aave_events(self, address: ChecksumEthAddress, events: Sequence[AaveEvent]) -> None:
+    def add_aave_events(self, address: ChecksumEvmAddress, events: Sequence[AaveEvent]) -> None:
         cursor = self.conn.cursor()
         for e in events:
             event_tuple = e.to_db_tuple(address)
@@ -779,8 +780,8 @@ class DBHandler:
 
     def get_aave_events(
             self,
-            address: ChecksumEthAddress,
-            atoken: Optional[EthereumToken] = None,
+            address: ChecksumEvmAddress,
+            atoken: Optional[EvmToken] = None,
     ) -> List[AaveEvent]:
         """Get aave for a single address and a single aToken """
         cursor = self.conn.cursor()
@@ -863,7 +864,7 @@ class DBHandler:
             self,
             from_timestamp: Optional[Timestamp] = None,
             to_timestamp: Optional[Timestamp] = None,
-            address: Optional[ChecksumEthAddress] = None,
+            address: Optional[ChecksumEvmAddress] = None,
             bond_id: Optional[str] = None,
             event_type: Optional[AdexEventType] = None,
     ) -> List[Union[Bond, Unbond, UnbondRequest, ChannelWithdraw]]:
@@ -960,7 +961,7 @@ class DBHandler:
             self,
             from_timestamp: Optional[Timestamp] = None,
             to_timestamp: Optional[Timestamp] = None,
-            address: Optional[ChecksumEthAddress] = None,
+            address: Optional[ChecksumEvmAddress] = None,
     ) -> List[BalancerEvent]:
         """Returns a list of Balancer events optionally filtered by time and address"""
         cursor = self.conn.cursor()
@@ -1074,7 +1075,7 @@ class DBHandler:
             events: List[EventType],
             from_ts: Optional[Timestamp] = None,
             to_ts: Optional[Timestamp] = None,
-            address: Optional[ChecksumEthAddress] = None,
+            address: Optional[ChecksumEvmAddress] = None,
     ) -> List[LiquidityPoolEvent]:
         """Returns a list of amm events optionally filtered by time, location
         and address
@@ -1210,7 +1211,7 @@ class DBHandler:
 
     def add_yearn_vaults_events(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             events: List[YearnVaultEvent],
     ) -> None:
         cursor = self.conn.cursor()
@@ -1247,7 +1248,7 @@ class DBHandler:
 
     def get_yearn_vaults_events(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             vault: YearnVault,
     ) -> List[YearnVaultEvent]:
         cursor = self.conn.cursor()
@@ -1268,7 +1269,7 @@ class DBHandler:
 
     def get_yearn_vaults_v2_events(
         self,
-        address: ChecksumEthAddress,
+        address: ChecksumEvmAddress,
         from_block: int,
         to_block: int,
     ) -> List[YearnVaultEvent]:
@@ -1508,7 +1509,7 @@ class DBHandler:
 
     def _get_address_details_if_time(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             current_time: Timestamp,
     ) -> Optional[Dict[str, Any]]:
         cursor = self.conn.cursor()
@@ -1540,9 +1541,9 @@ class DBHandler:
 
     def get_tokens_for_address_if_time(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             current_time: Timestamp,
-    ) -> Optional[List[EthereumToken]]:
+    ) -> Optional[List[EvmToken]]:
         """Gets the detected tokens for the given address if the given current time
         is recent enough.
 
@@ -1565,7 +1566,7 @@ class DBHandler:
         returned_list = []
         for x in tokens_list:
             try:
-                token = EthereumToken.from_identifier(x)
+                token = EvmToken.from_identifier(x)
             except (DeserializationError, UnknownAsset):
                 token = None
             if token is None:
@@ -1579,7 +1580,7 @@ class DBHandler:
 
         return returned_list
 
-    def _get_address_details_json(self, address: ChecksumEthAddress) -> Optional[Dict[str, Any]]:
+    def _get_address_details_json(self, address: ChecksumEvmAddress) -> Optional[Dict[str, Any]]:
         cursor = self.conn.cursor()
         query = cursor.execute(
             'SELECT tokens_list, time FROM ethereum_accounts_details WHERE account = ?',
@@ -1603,8 +1604,8 @@ class DBHandler:
 
     def save_tokens_for_address(
             self,
-            address: ChecksumEthAddress,
-            tokens: List[EthereumToken],
+            address: ChecksumEvmAddress,
+            tokens: List[EvmToken],
     ) -> None:
         """Saves detected tokens for an address"""
         old_details = self._get_address_details_json(address)
@@ -2384,7 +2385,51 @@ class DBHandler:
         query = cursor.execute(cursorstr)
         return query.fetchone()[0]
 
-    def delete_data_for_ethereum_address(self, address: ChecksumEthAddress) -> None:
+    def get_ethereum_transactions(
+            self,
+            from_ts: Optional[Timestamp] = None,
+            to_ts: Optional[Timestamp] = None,
+            address: Optional[ChecksumEvmAddress] = None,
+    ) -> List[EthereumTransaction]:
+        """Returns a list of ethereum transactions optionally filtered by time and/or from address
+
+        The returned list is ordered from oldest to newest
+        """
+        cursor = self.conn.cursor()
+        query = 'SELECT * FROM ethereum_transactions '
+        if address is not None:
+            query += f'WHERE (from_address="{address}" OR to_address="{address}") '
+        query, bindings = form_query_to_filter_timestamps(query, 'timestamp', from_ts, to_ts)
+        results = cursor.execute(query, bindings)
+
+        ethereum_transactions = []
+        for result in results:
+            try:
+                tx = EthereumTransaction(
+                    tx_hash=result[0],
+                    timestamp=deserialize_timestamp(result[1]),
+                    block_number=result[2],
+                    from_address=result[3],
+                    to_address=result[4],
+                    value=int(result[5]),
+                    gas=int(result[6]),
+                    gas_price=int(result[7]),
+                    gas_used=int(result[8]),
+                    input_data=result[9],
+                    nonce=result[10],
+                )
+            except DeserializationError as e:
+                self.msg_aggregator.add_error(
+                    f'Error deserializing ethereum transaction from the DB. '
+                    f'Skipping it. Error was: {str(e)}',
+                )
+                continue
+
+            ethereum_transactions.append(tx)
+
+        return ethereum_transactions
+
+    def delete_data_for_ethereum_address(self, address: ChecksumEvmAddress) -> None:
         """Deletes all ethereum related data from the DB for a single ethereum address"""
         other_eth_accounts = self.get_blockchain_accounts().eth
         if address in other_eth_accounts:
@@ -2620,7 +2665,7 @@ class DBHandler:
             from_ts: Optional[Timestamp] = None,
             to_ts: Optional[Timestamp] = None,
             location: Optional[Location] = None,
-            address: Optional[ChecksumEthAddress] = None,
+            address: Optional[ChecksumEvmAddress] = None,
     ) -> List[AMMSwap]:
         """Returns a list of AMM swaps optionally filtered by time, location
         and address

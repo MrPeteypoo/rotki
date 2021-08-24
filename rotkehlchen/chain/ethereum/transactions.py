@@ -7,7 +7,7 @@ from rotkehlchen.db.filtering import ETHTransactionsFilterQuery
 from rotkehlchen.db.ranges import DBQueryRanges
 from rotkehlchen.errors import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, EthereumTransaction, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, EthereumTransaction, Timestamp
 from rotkehlchen.utils.misc import hexstring_to_bytes, ts_now
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
@@ -44,14 +44,14 @@ class EthTransactions(LockableQueryMixIn):
 
     def _return_transactions_maybe_limit(
             self,
-            requested_addresses: Optional[List[ChecksumEthAddress]],
+            requested_addresses: Optional[List[ChecksumEvmAddress]],
             transactions: List[EthereumTransaction],
             with_limit: bool,
     ) -> List[EthereumTransaction]:
         if with_limit is False:
             return transactions
 
-        count_map: DefaultDict[ChecksumEthAddress, int] = defaultdict(int)
+        count_map: DefaultDict[ChecksumEvmAddress, int] = defaultdict(int)
         for tx in transactions:
             count_map[tx.from_address] += 1
 
@@ -69,7 +69,7 @@ class EthTransactions(LockableQueryMixIn):
 
     def single_address_query_transactions(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             start_ts: Timestamp,
             end_ts: Timestamp,
     ) -> None:

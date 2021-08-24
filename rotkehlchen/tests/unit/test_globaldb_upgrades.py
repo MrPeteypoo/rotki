@@ -1,11 +1,7 @@
 import pytest
 
 from rotkehlchen.assets.typing import AssetType
-from rotkehlchen.constants.resolver import (
-    ETHEREUM_DIRECTIVE,
-    ethaddress_to_identifier,
-    strethaddress_to_identifier,
-)
+from rotkehlchen.constants.resolver import ETHEREUM_DIRECTIVE, ethaddress_to_identifier
 
 
 @pytest.mark.parametrize('globaldb_version', [1])
@@ -15,23 +11,23 @@ def test_upgrade_v1_v2(globaldb):
 
     for identifier, entry in globaldb.get_all_asset_data(mapping=True, serialized=False).items():
         if entry.asset_type == AssetType.ETHEREUM_TOKEN:
-            assert identifier == ethaddress_to_identifier(entry.ethereum_address)
+            assert identifier == ethaddress_to_identifier(entry.evm_address)
 
         swapped_for = entry.swapped_for
 
         # check the swapped_for key also changed for one we know
         if entry.name == 'Aurora DAO':
-            assert entry.swapped_for == strethaddress_to_identifier('0xB705268213D593B8FD88d3FDEFF93AFF5CbDcfAE')  # noqa: E501
+            assert entry.swapped_for == ethaddress_to_identifier('0xB705268213D593B8FD88d3FDEFF93AFF5CbDcfAE')  # noqa: E501
 
         if swapped_for and swapped_for not in ('AM', 'PHB', 'FIRO', 'DIVI', 'SCRT', 'HAI', 'MED', 'NOAHP', 'VET', 'XDC'):  # noqa: E501
             assert entry.swapped_for.startswith(ETHEREUM_DIRECTIVE)
 
     # Check some swapped for that we know should have changed. DIVX -> DIVI
-    asset_data = globaldb.get_asset_data(strethaddress_to_identifier('0x13f11C9905A08ca76e3e853bE63D4f0944326C72'), form_with_incomplete_data=True)  # noqa: E501
+    asset_data = globaldb.get_asset_data(ethaddress_to_identifier('0x13f11C9905A08ca76e3e853bE63D4f0944326C72'), form_with_incomplete_data=True)  # noqa: E501
     assert asset_data.swapped_for == 'DIVI'
     # GNT -> GLM
-    asset_data = globaldb.get_asset_data(strethaddress_to_identifier('0xa74476443119A942dE498590Fe1f2454d7D4aC0d'), form_with_incomplete_data=True)  # noqa: E501
-    assert asset_data.swapped_for == strethaddress_to_identifier('0x7DD9c5Cba05E151C895FDe1CF355C9A1D5DA6429')  # noqa: E501
+    asset_data = globaldb.get_asset_data(ethaddress_to_identifier('0xa74476443119A942dE498590Fe1f2454d7D4aC0d'), form_with_incomplete_data=True)  # noqa: E501
+    assert asset_data.swapped_for == ethaddress_to_identifier('0x7DD9c5Cba05E151C895FDe1CF355C9A1D5DA6429')  # noqa: E501
 
     # Make sure the number of assets remained the same
     cursor = globaldb._conn.cursor()
@@ -62,3 +58,21 @@ def test_upgrade_v1_v2(globaldb):
          ),
     )
     assert query.fetchone()[0] == 4
+
+
+@pytest.mark.parametrize('globaldb_version', [2])
+def test_upgrade_v2_v3(globaldb):
+    # at this point upgrade should have happened
+    assert globaldb.get_setting_value('version', None) == 3
+
+    cursor = globaldb._conn.cursor()
+    # Test that the assets where correctly translated
+    query = 'SELECT COUNT(*) from evm_tokens where chain = 1'
+    assert cursor.execute(query).fetchone()[0] == 1758
+    query = 'SELECT COUNT(*) from evm_tokens where chain = 43114'
+    assert cursor.execute(query).fetchone()[0] == 3
+
+    # Test that we have the same amount of assets
+    assert cursor.execute('SELECT COUNT(*) FROM common_asset_details;').fetchone()[0] == 2465
+    assert cursor.execute('SELECT COUNT(*) FROM user_owned_assets;').fetchone()[0] == 33
+    assert cursor.execute('SELECT COUNT(*) FROM underlying_tokens_list;').fetchone()[0] == 87

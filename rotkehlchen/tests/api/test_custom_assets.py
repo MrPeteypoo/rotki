@@ -9,7 +9,7 @@ from rotkehlchen.accounting.structures import BalanceType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.typing import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
-from rotkehlchen.constants.resolver import strethaddress_to_identifier
+from rotkehlchen.constants.resolver import ethaddress_to_identifier
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.api import (
     api_url_for,
@@ -741,7 +741,7 @@ def test_replace_asset_edge_cases(rotkehlchen_api_server, globaldb):
     # Test that trying to replace an asset that's used as a foreign key elsewhere in
     # the global DB does not work, error is returned and no changes happen
     # in the global DB and in the user DB
-    glm_id = strethaddress_to_identifier('0x7DD9c5Cba05E151C895FDe1CF355C9A1D5DA6429')
+    glm_id = ethaddress_to_identifier('0x7DD9c5Cba05E151C895FDe1CF355C9A1D5DA6429')
     balances: List[Dict[str, Any]] = [{
         'asset': glm_id,
         'label': 'ICP account',
@@ -778,7 +778,7 @@ def test_replace_asset_edge_cases(rotkehlchen_api_server, globaldb):
     )
     assert_error_response(
         response=response,
-        contained_in_msg='Tried to delete ethereum token with address',
+        contained_in_msg='Tried to delete EVM token with address',
         status_code=HTTPStatus.CONFLICT,
     )
     assert_db()

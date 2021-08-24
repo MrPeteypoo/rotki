@@ -10,14 +10,14 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 import requests
 from typing_extensions import Literal
 
-from rotkehlchen.assets.asset import Asset, EthereumToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.assets.resolver import AssetResolver
 from rotkehlchen.assets.typing import AssetData, AssetType
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
 from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 
 from .handler import GlobalDBHandler, initialize_globaldb
@@ -49,11 +49,11 @@ def _replace_assets_from_db(
     ATTACH DATABASE "{sourcedb_path}" AS other_db;
     PRAGMA foreign_keys = OFF;
     DELETE FROM assets;
-    DELETE FROM ethereum_tokens;
+    DELETE FROM evm_tokens;
     DELETE FROM underlying_tokens_list;
     DELETE FROM common_asset_details;
     INSERT INTO assets SELECT * FROM other_db.assets;
-    INSERT INTO ethereum_tokens SELECT * FROM other_db.ethereum_tokens;
+    INSERT INTO evm_tokens SELECT * FROM other_db.evm_tokens;
     INSERT INTO underlying_tokens_list SELECT * FROM other_db.underlying_tokens_list;
     INSERT INTO common_asset_details SELECT * FROM other_db.common_asset_details;
     INSERT OR REPLACE INTO settings(name, value) VALUES("{ASSETS_VERSION_KEY}",
@@ -71,10 +71,10 @@ def _force_remote(cursor: sqlite3.Cursor, local_asset: Asset, full_insert: str) 
     """
     cursor.executescript('PRAGMA foreign_keys = OFF;')
     if local_asset.asset_type == AssetType.ETHEREUM_TOKEN:
-        token = EthereumToken.from_asset(local_asset)
+        token = EvmToken.from_asset(local_asset)
         cursor.execute(
             'DELETE FROM ethereum_tokens WHERE address=?;',
-            (token.ethereum_address,),  # type: ignore  # token != None
+            (token.evm_address,),  # type: ignore  # token != None
         )
     else:
         cursor.execute(
@@ -225,7 +225,7 @@ class AssetsUpdater():
             cryptocompare=self._parse_optional_str(match.group(8), 'cryptocompare', insert_text),
         )
 
-    def _parse_ethereum_token_data(self, insert_text: str) -> Tuple[ChecksumEthAddress, Optional[int], Optional[str]]:  # noqa: E501
+    def _parse_ethereum_token_data(self, insert_text: str) -> Tuple[ChecksumEvmAddress, Optional[int], Optional[str]]:  # noqa: E501
         match = self.ethereum_tokens_re.match(insert_text)
         if match is None:
             raise DeserializationError(
@@ -273,11 +273,13 @@ class AssetsUpdater():
             started=asset_data.started,
             forked=forked,
             swapped_for=asset_data.swapped_for,
-            ethereum_address=address,
+            evm_address=address,
             decimals=decimals,
             cryptocompare=asset_data.cryptocompare,
             coingecko=asset_data.coingecko,
             protocol=protocol,
+            chain=None,
+            token_type=None,  # TODO yabirgb: Update this
         )
 
     def _apply_single_version_update(

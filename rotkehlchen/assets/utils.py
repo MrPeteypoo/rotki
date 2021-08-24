@@ -2,12 +2,13 @@ import logging
 from typing import TYPE_CHECKING, List, Optional
 
 from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind, evm_address_to_identifier
 from rotkehlchen.errors import DeserializationError, UnknownAsset
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.typing import ChecksumEvmAddress
 
-from .asset import Asset, EthereumToken, UnderlyingToken
+from .asset import Asset, EvmToken, UnderlyingToken
 from .typing import AssetType
 
 if TYPE_CHECKING:
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 
-def add_ethereum_token_to_db(token_data: EthereumToken) -> EthereumToken:
+def add_ethereum_token_to_db(token_data: EvmToken) -> EvmToken:
     """Adds an ethereum token to the DB and returns it
 
     May raise:
@@ -30,39 +31,48 @@ def add_ethereum_token_to_db(token_data: EthereumToken) -> EthereumToken:
         data=token_data,
     )
     # This can, but should not raise UnknownAsset, DeserializationError
-    return EthereumToken(token_data.ethereum_address, form_with_incomplete_data=True)
+    return EvmToken(token_data.identifier, form_with_incomplete_data=True)
 
 
-def get_or_create_ethereum_token(
+def get_or_create_evm_token(
         userdb: 'DBHandler',
         symbol: str,
-        ethereum_address: ChecksumEthAddress,
+        ethereum_address: ChecksumEvmAddress,
+        chain: ChainID,
+        token_type: EvmTokenKind,
         name: Optional[str] = None,
         decimals: Optional[int] = None,
         protocol: Optional[str] = None,
         underlying_tokens: Optional[List[UnderlyingToken]] = None,
         form_with_incomplete_data: bool = False,
-) -> EthereumToken:
-    """Given a token symbol and address return the <EthereumToken>
+) -> EvmToken:
+    """Given a token symbol and address return the <EvmToken>
 
     If the token exists in the GlobalDB it's returned. If not it's created and added.
     Note: if the token already exists but the other arguments don't match the
     existing token will still be silently returned
     """
     try:
-        ethereum_token = EthereumToken(ethereum_address, form_with_incomplete_data)
+        identifier = evm_address_to_identifier(
+            address=ethereum_address,
+            chain=chain,
+            token_type=token_type,
+        )
+        ethereum_token = EvmToken(identifier, form_with_incomplete_data)
     except (UnknownAsset, DeserializationError):
         log.info(
             f'Encountered unknown asset {symbol} with address '
             f'{ethereum_address}. Adding it to the global DB',
         )
-        token_data = EthereumToken.initialize(
+        token_data = EvmToken.initialize(
             address=ethereum_address,
             name=name,
             decimals=decimals,
             symbol=symbol,
             protocol=protocol,
             underlying_tokens=underlying_tokens,
+            chain=chain,
+            token_type=token_type,
         )
         # This can but should not raise InputError since it should not already exist
         ethereum_token = add_ethereum_token_to_db(token_data)
@@ -106,7 +116,7 @@ def symbol_to_asset_or_token(symbol: str) -> Asset:
     return asset
 
 
-def symbol_to_ethereum_token(symbol: str) -> EthereumToken:
+def symbol_to_ethereum_token(symbol: str) -> EvmToken:
     """Tries to turn the given symbol to an ethereum token
 
     May raise:
@@ -118,4 +128,4 @@ def symbol_to_ethereum_token(symbol: str) -> EthereumToken:
         raise UnknownAsset(symbol)
 
     # ignore type here since the identifier has to match an ethereum token at this point
-    return EthereumToken.from_asset(maybe_asset)  # type: ignore
+    return EvmToken.from_asset(maybe_asset)  # type: ignore

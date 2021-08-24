@@ -10,6 +10,7 @@ import requests
 from rotkehlchen.api.server import APIServer
 from rotkehlchen.constants.assets import A_BUSD, A_WBTC
 from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.resolver import ethaddress_to_identifier
 from rotkehlchen.fval import FVal
 from rotkehlchen.serialization.serialize import process_result_list
 from rotkehlchen.tests.utils.aave import (
@@ -231,9 +232,9 @@ def _query_simple_aave_history_test_v2(
     assert len(total_lost) == 1
     assert len(total_earned_liquidations) == 0
     assert len(total_earned_interest) == 1
-    assert len(total_earned_interest['_ceth_0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0']) == 2
-    assert FVal(total_earned_interest['_ceth_0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0']['amount']) >= FVal('0.09')  # noqa: E501
-    assert FVal(total_earned_interest['_ceth_0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0']['usd_value']) >= FVal('0.09248')  # noqa: E501
+    assert len(total_earned_interest[ethaddress_to_identifier('0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0')]) == 2  # noqa: E501
+    assert FVal(total_earned_interest[ethaddress_to_identifier('0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0')]['amount']) >= FVal('0.09')  # noqa: E501
+    assert FVal(total_earned_interest[ethaddress_to_identifier('0xa06bC25B5805d5F8d82847D191Cb4Af5A3e873E0')]['usd_value']) >= FVal('0.09248')  # noqa: E501
 
     assert_serialized_lists_equal(
         a=events[:len(expected_aave_v2_events)],

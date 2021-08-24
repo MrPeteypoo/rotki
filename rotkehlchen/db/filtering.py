@@ -14,7 +14,7 @@ from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.typing import (
     AssetMovementCategory,
-    ChecksumEthAddress,
+    ChecksumEvmAddress,
     Location,
     Timestamp,
     TradeType,
@@ -82,7 +82,7 @@ class DBTimestampFilter(DBFilter):
 
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
 class DBETHTransactionAddressFilter(DBFilter):
-    addresses: Optional[List[ChecksumEthAddress]] = None
+    addresses: Optional[List[ChecksumEvmAddress]] = None
 
     def prepare(self) -> Tuple[List[str], List[Any]]:
         filters = []
@@ -281,14 +281,14 @@ class ETHTransactionsFilterQuery(DBFilterQuery, FilterWithTimestamp):
         return None
 
     @property
-    def addresses(self) -> Optional[List[ChecksumEthAddress]]:
+    def addresses(self) -> Optional[List[ChecksumEvmAddress]]:
         address_filter = self.address_filter
         if address_filter is None:
             return None
         return address_filter.addresses
 
     @addresses.setter
-    def addresses(self, addresses: Optional[List[ChecksumEthAddress]]) -> None:
+    def addresses(self, addresses: Optional[List[ChecksumEvmAddress]]) -> None:
         address_filter = self.address_filter
         if address_filter is None:
             return
@@ -302,7 +302,7 @@ class ETHTransactionsFilterQuery(DBFilterQuery, FilterWithTimestamp):
             order_ascending: bool = True,
             limit: Optional[int] = None,
             offset: Optional[int] = None,
-            addresses: Optional[List[ChecksumEthAddress]] = None,
+            addresses: Optional[List[ChecksumEvmAddress]] = None,
             from_ts: Optional[Timestamp] = None,
             to_ts: Optional[Timestamp] = None,
             tx_hash: Optional[Union[str, bytes]] = None,

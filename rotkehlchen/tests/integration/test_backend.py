@@ -29,7 +29,7 @@ def test_backend():
 
             url = f'http://{output.split()[-1]}/api/1/info'
             response = requests.get(url)
-            assert response.status_code == HTTPStatus.OK
+            assert response.status_code == HTTPStatus.OK, response.text
             assert 'data_directory' in response.json()['result']
 
         except gevent.Timeout as e:

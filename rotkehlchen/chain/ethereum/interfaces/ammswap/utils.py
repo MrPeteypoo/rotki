@@ -2,12 +2,13 @@ import logging
 from typing import TYPE_CHECKING, NamedTuple, Set, Tuple
 
 from rotkehlchen.accounting.structures import Balance
-from rotkehlchen.assets.asset import EthereumToken
-from rotkehlchen.assets.utils import get_or_create_ethereum_token
+from rotkehlchen.assets.asset import EvmToken
+from rotkehlchen.assets.utils import get_or_create_evm_token
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.constants.resolver import ChainID, EvmTokenKind
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.typing import ChecksumEvmAddress
 
 from .typing import LiquidityPool, LiquidityPoolAsset
 
@@ -27,7 +28,7 @@ SUBGRAPH_REMOTE_ERROR_MSG = (
 
 
 class TokenDetails(NamedTuple):
-    address: ChecksumEthAddress
+    address: ChecksumEvmAddress
     name: str
     symbol: str
     decimals: int
@@ -48,8 +49,8 @@ def _decode_token(entry: Tuple) -> TokenDetails:
 def _decode_result(
         userdb: 'DBHandler',
         data: Tuple,
-        known_assets: Set[EthereumToken],
-        unknown_assets: Set[EthereumToken],
+        known_assets: Set[EvmToken],
+        unknown_assets: Set[EvmToken],
 ) -> LiquidityPool:
     pool_token = _decode_token(data[0])
     token0 = _decode_token(data[1][0])
@@ -57,10 +58,12 @@ def _decode_result(
 
     assets = []
     for token in (token0, token1):
-        asset = get_or_create_ethereum_token(
+        asset = get_or_create_evm_token(
             userdb=userdb,
             symbol=token.symbol,
             ethereum_address=token.address,
+            chain=ChainID.ETHEREUM,
+            token_type=EvmTokenKind.ERC20,
             name=token.name,
             decimals=token.decimals,
         )

@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from rotkehlchen.accounting.structures import Balance
-from rotkehlchen.assets.asset import EthereumToken
+from rotkehlchen.assets.asset import EvmToken
 from rotkehlchen.chain.ethereum.manager import NodeName
 from rotkehlchen.chain.ethereum.modules.yearn.vaults import (
     YEARN_VAULTS,
@@ -417,9 +417,9 @@ EXPECTED_V2_HISTORY = {
             event_type='deposit',
             block_number=12462638,
             timestamp=Timestamp(1621397797),
-            from_asset=EthereumToken('0x94e131324b6054c0D789b190b2dAC504e4361b53'),
+            from_asset=EvmToken('eip155:1/ERC20:0x94e131324b6054c0D789b190b2dAC504e4361b53'),
             from_value=Balance(amount=FVal('32064.715735449204040742'), usd_value=ONE),
-            to_asset=EthereumToken('0x1C6a9783F812b3Af3aBbf7de64c3cD7CC7D1af44'),
+            to_asset=EvmToken('eip155:1/ERC20:0x1C6a9783F812b3Af3aBbf7de64c3cD7CC7D1af44'),
             to_value=Balance(amount=FVal('32064.715735449204040742'), usd_value=ONE),
             realized_pnl=None,
             tx_hash='0x0a53f8817f44ac0f8b516b7fa7ecba2861c001f506dbc465fe289a7110fcc1ca',
@@ -429,9 +429,9 @@ EXPECTED_V2_HISTORY = {
             event_type='withdraw',
             block_number=12494161,
             timestamp=Timestamp(1621820621),
-            from_asset=EthereumToken('0x1C6a9783F812b3Af3aBbf7de64c3cD7CC7D1af44'),
+            from_asset=EvmToken('eip155:1/ERC20:0x1C6a9783F812b3Af3aBbf7de64c3cD7CC7D1af44'),
             from_value=Balance(amount=FVal('32064.715735449204040742'), usd_value=ONE),
-            to_asset=EthereumToken('0x94e131324b6054c0D789b190b2dAC504e4361b53'),
+            to_asset=EvmToken('eip155:1/ERC20:0x94e131324b6054c0D789b190b2dAC504e4361b53'),
             to_value=Balance(amount=FVal('32092.30659836985292638'), usd_value=ONE),
             realized_pnl=None,
             tx_hash='0xda0694c6b3582fe03b2eb9edb0169d23c8413157e233d0c8f678a7cc9ab4f918',
@@ -582,7 +582,7 @@ def test_query_yearn_vault_v2_balances(rotkehlchen_api_server, ethereum_accounts
             result = outcome['result']
         else:
             result = assert_proper_response_with_result(response)
-
+    print(result)
     for _, vault in result[TEST_V2_ACC2].items():
         assert '%' in vault['roi']
         assert FVal(vault['vault_value']['amount']) > ZERO

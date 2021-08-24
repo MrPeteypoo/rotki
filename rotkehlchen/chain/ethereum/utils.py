@@ -3,12 +3,12 @@ from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 from eth_utils import to_checksum_address
 from web3 import Web3
 
-from rotkehlchen.assets.asset import Asset, EthereumToken
+from rotkehlchen.assets.asset import Asset, EvmToken
 from rotkehlchen.chain.ethereum.contracts import EthereumContract
 from rotkehlchen.constants.ethereum import ETH_MULTICALL, ETH_MULTICALL_2
 from rotkehlchen.errors import UnsupportedAsset
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.typing import ChecksumEvmAddress
 from rotkehlchen.utils.misc import hexstring_to_bytes
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ def token_normalized_value_decimals(token_amount: int, token_decimals: Optional[
 
 def token_normalized_value(
         token_amount: int,
-        token: EthereumToken,
+        token: EvmToken,
 ) -> FVal:
     return token_normalized_value_decimals(token_amount, token.decimals)
 
@@ -65,7 +65,7 @@ def asset_normalized_value(amount: int, asset: Asset) -> FVal:
     if asset.identifier == 'ETH':
         decimals = 18
     else:
-        token = EthereumToken.from_asset(asset)
+        token = EvmToken.from_asset(asset)
         if token is None:
             raise UnsupportedAsset(asset.identifier)
         decimals = token.decimals
@@ -75,7 +75,7 @@ def asset_normalized_value(amount: int, asset: Asset) -> FVal:
 
 def multicall(
         ethereum: 'EthereumManager',
-        calls: List[Tuple[ChecksumEthAddress, str]],
+        calls: List[Tuple[ChecksumEvmAddress, str]],
         call_order: Optional[Sequence['NodeName']] = None,
 ) -> Any:
     multicall_result = ETH_MULTICALL.call(
@@ -90,7 +90,7 @@ def multicall(
 
 def multicall_2(
         ethereum: 'EthereumManager',
-        calls: List[Tuple[ChecksumEthAddress, str]],
+        calls: List[Tuple[ChecksumEvmAddress, str]],
         require_success: bool,
         call_order: Optional[Sequence['NodeName']] = None,
 ) -> List[Tuple[bool, bytes]]:
@@ -125,7 +125,7 @@ def generate_address_via_create2(
         address: str,
         salt: str,
         init_code: str,
-) -> ChecksumEthAddress:
+) -> ChecksumEvmAddress:
     """Python implementation of CREATE2 opcode.
 
     Given an address (deployer), a salt and an init code (contract creation

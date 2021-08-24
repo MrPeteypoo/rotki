@@ -59,13 +59,13 @@ class ContextManager():
 
     def add_ethtoken_initialization(self, var_name: str, address: str) -> str:
         generated_text = ''
-        token = self.globaldb.get_ethereum_token(address=address)
+        token = self.globaldb.get_evm_token(address=address)
         var_swappedfor = 'None'
         if token.swapped_for:
             if token.swapped_for in self.id_to_variable:
                 var_swappedfor = self.id_to_variable[token.swapped_for]
             else:
-                var_swappedfor = f'{strethaddress_to_identifier(address).upper()}_swappedfor'
+                var_swappedfor = f'A_{strethaddress_to_identifier(address).upper()}_swappedfor'
                 generated_text += self.add_asset_initialization(var_swappedfor, token.swapped_for.identifier)  # noqa: E501
 
         name = f'"{token.name}"' if token.name else None
@@ -74,14 +74,17 @@ class ContextManager():
         coingecko = f'\'{token.coingecko}\'' if token.coingecko else None
         cryptocompare = f'\'{token.cryptocompare}\'' if token.cryptocompare else None
         protocol = f'\'{token.protocol}\'' if token.protocol else None
+        chain = f'ChainID({token.chain.value})'
+        token_type = f'EvmTokenKind({token.token_type.value})'
+
         if token.underlying_tokens is not None:
             raise ValueError(
                 f'Found token {address} with underlying tokens. Not supported '
                 f'at constants asset generation yet. Can implement when needed.',
             )
         generated_text += (
-            f'{var_name} = EthereumToken.initialize(\n'
-            f'    address=string_to_ethereum_address(\'{address}\'),\n'
+            f'{var_name} = EvmToken.initialize(\n'
+            f'    address=string_to_evm_address(\'{address}\'),\n'
             f'    decimals={token.decimals},\n'
             f'    name={name},\n'
             f'    symbol={symbol},\n'
@@ -90,6 +93,8 @@ class ContextManager():
             f'    coingecko={coingecko},\n'
             f'    cryptocompare={cryptocompare},\n'
             f'    protocol={protocol},\n'
+            f'    chain={chain},\n'
+            f'    token_type={token_type},\n'
             f')\n'
             f'CONSTANT_ASSETS.append({var_name})\n'
         )
@@ -124,8 +129,8 @@ def main() -> None:
                 generated_text += ctx.add_asset_initialization(var_name, identifier)
                 continue
 
-            if 'EthereumToken(\'' in line:
-                initial_split = line.split(' = EthereumToken(\'')
+            if 'EvmToken(\'' in line:
+                initial_split = line.split(' = EvmToken(\'')
                 var_name = initial_split[0]
                 identifier = initial_split[1].split('\'')[0]
                 generated_text += ctx.add_ethtoken_initialization(var_name, identifier)

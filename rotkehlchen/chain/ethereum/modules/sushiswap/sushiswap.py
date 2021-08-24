@@ -18,7 +18,7 @@ from rotkehlchen.chain.ethereum.trades import AMMTrade
 from rotkehlchen.errors import ModuleInitializationFailure, RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.typing import ChecksumEvmAddress, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 
@@ -70,7 +70,7 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
 
     def _get_events_balances(
             self,
-            addresses: List[ChecksumEthAddress],
+            addresses: List[ChecksumEvmAddress],
             from_timestamp: Timestamp,
             to_timestamp: Timestamp,
     ) -> AddressEventsBalances:
@@ -82,8 +82,8 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
         address_events_balances: AddressEventsBalances = {}
         address_events: DDAddressEvents = defaultdict(list)
         db_address_events: AddressEvents = {}
-        new_addresses: List[ChecksumEthAddress] = []
-        existing_addresses: List[ChecksumEthAddress] = []
+        new_addresses: List[ChecksumEvmAddress] = []
+        existing_addresses: List[ChecksumEvmAddress] = []
         min_end_ts: Timestamp = to_timestamp
 
         # Get addresses' last used query range for Sushiswap events
@@ -182,7 +182,7 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
 
     def get_balances(
         self,
-        addresses: List[ChecksumEthAddress],
+        addresses: List[ChecksumEvmAddress],
     ) -> AddressToLPBalances:
         """Get the addresses' balances in the Sushiswap protocol
 
@@ -211,7 +211,7 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
 
     def get_trades_history(
         self,
-        addresses: List[ChecksumEthAddress],
+        addresses: List[ChecksumEvmAddress],
         reset_db_data: bool,
         from_timestamp: Timestamp,
         to_timestamp: Timestamp,
@@ -231,7 +231,7 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
 
     def _get_trades_graph_for_address(
             self,
-            address: ChecksumEthAddress,
+            address: ChecksumEvmAddress,
             start_ts: Timestamp,
             end_ts: Timestamp,
     ) -> List[AMMTrade]:
@@ -256,8 +256,8 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
     def on_startup(self) -> None:
         pass
 
-    def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
+    def on_account_addition(self, address: ChecksumEvmAddress) -> Optional[List['AssetBalance']]:
         pass
 
-    def on_account_removal(self, address: ChecksumEthAddress) -> None:
+    def on_account_removal(self, address: ChecksumEvmAddress) -> None:
         pass
