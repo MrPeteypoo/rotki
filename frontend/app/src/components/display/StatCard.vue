@@ -21,7 +21,7 @@
       />
     </div>
     <div class="stat-card__content flex-grow-1">
-      <v-card-title class="py-2">
+      <v-card-title>
         <span v-if="title">
           <card-title>{{ title }}</card-title>
         </span>
@@ -39,25 +39,20 @@
 </template>
 
 <script lang="ts">
-import { Component, Mixins, Prop } from 'vue-property-decorator';
+import { defineComponent } from '@vue/composition-api';
 import PremiumLock from '@/components/premium/PremiumLock.vue';
-import ThemeMixin from '@/mixins/theme-mixin';
 
-@Component({
-  components: { PremiumLock }
-})
-export default class StatCard extends Mixins(ThemeMixin) {
-  @Prop({ required: false })
-  title!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  locked!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  loading!: boolean;
-  @Prop({ required: false, type: String })
-  protocolIcon!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  bordered!: boolean;
-}
+export default defineComponent({
+  name: 'StatCard',
+  components: { PremiumLock },
+  props: {
+    title: { required: false, type: String, default: '' },
+    locked: { required: false, type: Boolean, default: false },
+    loading: { required: false, type: Boolean, default: false },
+    protocolIcon: { required: false, type: String, default: '' },
+    bordered: { required: false, type: Boolean, default: false }
+  }
+});
 </script>
 
 <style scoped lang="scss">
@@ -72,7 +67,6 @@ export default class StatCard extends Mixins(ThemeMixin) {
   ::v-deep {
     .v-card {
       &__text {
-        padding-top: 12px;
         font-size: 1em;
       }
     }

@@ -7,12 +7,16 @@ on:
       - develop
       - bugfixes
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check-changes:
     strategy:
       matrix:
         os: [ ubuntu-18.04 ]
-        node-version: [ 14.x ]
+        node-version: [ 16.x ]
     runs-on: ${{ matrix.os }}
     outputs:
       backend_tasks: ${{ steps.checker.outputs.backend_tasks }}
@@ -35,13 +39,13 @@ jobs:
             frontend/app
 
 
-  check-frontend:
+  lint-frontend:
     needs: ['check-changes']
     if: ${{ needs.check-changes.outputs.frontend_tasks }}
     strategy:
       matrix:
         os: [ubuntu-18.04]
-        node-version: [14.x]
+        node-version: [16.x]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -50,7 +54,7 @@ jobs:
       - name: Setup
         uses: actions/setup-node@v1
         with:
-          node-version: '14.x'
+          node-version: '16.x'
       - name: Store npm cache
         uses: actions/cache@v2
         with:
@@ -61,7 +65,7 @@ jobs:
       - name: Install dependencies
         working-directory: ./frontend
         run: |
-          npm install -g npm@7
+          npm install -g npm@8
           if ! npm ci --exit-code; then
             npm ci
           fi
@@ -74,6 +78,38 @@ jobs:
       - name: Lint style
         working-directory: ./frontend/app
         run: npm run lint:style
+
+  unittest-frontend:
+    needs: [ 'check-changes' ]
+    if: ${{ needs.check-changes.outputs.frontend_tasks }}
+    strategy:
+      matrix:
+        os: [ ubuntu-18.04 ]
+        node-version: [ 16.x ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 2
+      - name: Setup
+        uses: actions/setup-node@v1
+        with:
+          node-version: '16.x'
+      - name: Store npm cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/Cypress
+          key: ${{ runner.os }}-node--ci-${{ hashFiles('**/app/package-lock.json') }}
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: |
+          npm install -g npm@8
+          if ! npm ci --exit-code; then
+            npm ci
+          fi
+          npm run build -w @rotki/common
       - name: Run unit tests
         working-directory: ./frontend/app
         run: npm run test:unit
@@ -87,14 +123,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-18.04]
-        python-version: [3.7]
+        python-version: [3.9]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
       - name: Setup
         uses: actions/setup-python@v1
         with:
-          python-version: '3.7'
+          python-version: '3.9'
       - name: Install dependencies
         run: |
           pip install -r requirements_docs.txt
@@ -109,14 +145,14 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-18.04]
-        python-version: [3.7]
+        python-version: [3.9]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
       - name: Setup
         uses: actions/setup-python@v1
         with:
-          python-version: '3.7'
+          python-version: '3.9'
       - name: Install dependencies
         run: |
           pip install -r requirements_lint.txt
@@ -134,7 +170,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-18.04]
-        python-version: [3.7]
+        python-version: [3.9]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -149,7 +185,7 @@ jobs:
       - name: Set up python
         uses: actions/setup-python@v1
         with:
-          python-version: '3.7'
+          python-version: '3.9'
       - name: Store python cache
         uses: actions/cache@v2
         with:
@@ -164,7 +200,7 @@ jobs:
             ${{ runner.os }}-testdir-
       - name: Install dependencies
         run: |
-          pip install --upgrade "pip<19.0.0" wheel
+          pip install --upgrade pip==21.3.1 wheel
           pip install codecov pytest-cov
           pip install -r requirements_dev.txt
           pip install -e .
@@ -183,8 +219,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-18.04]
-        python-version: [3.7]
-        node-version: [14.x]
+        python-version: [3.9]
+        node-version: [16.x]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v2
@@ -193,11 +229,11 @@ jobs:
       - name: Set up python
         uses: actions/setup-python@v1
         with:
-          python-version: '3.7'
+          python-version: '3.9'
       - name: Setup node
         uses: actions/setup-node@v1
         with:
-          node-version: '14.x'
+          node-version: '16.x'
       - name: Store python cache
         uses: actions/cache@v2
         with:
@@ -235,14 +271,19 @@ jobs:
       - name: Restore dependencies
         working-directory: ./frontend
         run: |
-          npm install -g npm@7
+          npm install -g npm@8
           if ! npm ci --exit-code; then
             npm ci
           fi
           npm run build -w @rotki/common
       - name: Run integration tests
-        working-directory: ./frontend/app
-        run: npm run test:integration-ci
+        uses: cypress-io/github-action@v2
+        env:
+          ARGS: "--browser chrome"
+        with:
+          install: false
+          command: npm run test:integration-ci
+          working-directory: ./frontend/app
       - name: Upload coverage
         working-directory: ./frontend/app
         run: cd ../.. && ./.github/.codecov -F frontend_integration
@@ -256,7 +297,7 @@ jobs:
         if: always()
         with:
           name: backend-logs-${{ runner.os }}
-          path: ~/*.log
+          path: ~/rotki-e2e-logs/*.log
       - uses: actions/upload-artifact@v2
         if: always()
         with:
@@ -264,7 +305,7 @@ jobs:
           path: ./frontend/app/tests/e2e/videos
   done:
     if: ${{ always() }}
-    needs: [ 'check-changes', 'check-frontend', 'docs', 'lint-backend', 'test-backend', 'test-e2e' ]
+    needs: [ 'check-changes', 'lint-frontend', 'unittest-frontend', 'docs', 'lint-backend', 'test-backend', 'test-e2e' ]
     strategy:
       matrix:
         os: [ubuntu-18.04]

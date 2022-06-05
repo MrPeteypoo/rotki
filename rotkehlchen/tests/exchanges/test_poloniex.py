@@ -3,10 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
-from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.asset import WORLD_TO_POLONIEX, Asset
 from rotkehlchen.assets.converters import UNSUPPORTED_POLONIEX_ASSETS, asset_from_poloniex
 from rotkehlchen.constants.assets import A_BCH, A_BTC, A_ETH
-from rotkehlchen.errors import DeserializationError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import Loan, Trade, TradeType
 from rotkehlchen.exchanges.poloniex import Poloniex, process_polo_loans, trade_from_poloniex
 from rotkehlchen.fval import FVal
@@ -18,7 +19,7 @@ from rotkehlchen.tests.utils.exchanges import (
 )
 from rotkehlchen.tests.utils.history import assert_poloniex_asset_movements
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import AssetMovementCategory, Location, Timestamp
+from rotkehlchen.types import AssetMovementCategory, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 
 TEST_RATE_STR = '0.00022999'
@@ -272,7 +273,7 @@ def test_query_trade_history_unexpected_data(function_scope_poloniex):
             return MockResponse(200, given_trades)
 
         with patch.object(poloniex.session, 'post', side_effect=mock_api_return):
-            trades = poloniex.query_online_trade_history(
+            trades, _ = poloniex.query_online_trade_history(
                 start_ts=0,
                 end_ts=1565732120,
             )
@@ -344,6 +345,9 @@ def test_query_trade_history_unexpected_data(function_scope_poloniex):
 
 
 def test_poloniex_assets_are_known(poloniex):
+    unsupported_assets = set(UNSUPPORTED_POLONIEX_ASSETS)
+    common_items = unsupported_assets.intersection(set(WORLD_TO_POLONIEX.values()))
+    assert not common_items, f'Poloniex assets {common_items} should not be unsupported'
     currencies = poloniex.return_currencies()
     for poloniex_asset in currencies.keys():
         try:

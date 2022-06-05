@@ -1,23 +1,23 @@
 import { mount, Wrapper } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import Vue from 'vue';
 import Vuetify from 'vuetify';
-import AssetBalances from '@/components/settings/AssetBalances.vue';
-import { createTask, Task, TaskMeta } from '@/model/task';
-import { TaskType } from '@/model/task-type';
+import AssetBalances from '@/components/AssetBalances.vue';
 import store from '@/store/store';
 import '../../i18n';
 
 Vue.use(Vuetify);
 
 describe('AssetBalances.vue', () => {
-  let wrapper: Wrapper<AssetBalances>;
-
+  let wrapper: Wrapper<any>;
   beforeEach(() => {
     const vuetify = new Vuetify();
-
+    const pinia = createPinia();
+    setActivePinia(pinia);
     wrapper = mount(AssetBalances, {
       vuetify,
       store,
+      pinia,
       provide: {
         'vuex-store': store
       },
@@ -32,15 +32,7 @@ describe('AssetBalances.vue', () => {
   });
 
   test('table enters into loading state when balances load', async () => {
-    const payload: Task<TaskMeta> = createTask(
-      1,
-      TaskType.QUERY_BLOCKCHAIN_BALANCES,
-      {
-        ignoreResult: false,
-        title: 'test'
-      }
-    );
-    store.commit('tasks/add', payload);
+    await wrapper.setProps({ loading: true });
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.v-data-table__progress').exists()).toBeTruthy();
@@ -48,7 +40,7 @@ describe('AssetBalances.vue', () => {
       'asset_balances.loading'
     );
 
-    store.commit('tasks/remove', 1);
+    await wrapper.setProps({ loading: false });
     await wrapper.vm.$nextTick();
 
     expect(wrapper.find('.v-data-table__progress').exists()).toBeFalsy();

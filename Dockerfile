@@ -1,20 +1,23 @@
 # build stage
-FROM node:14-buster as frontend-build-stage
+FROM --platform=$BUILDPLATFORM node:16-buster as frontend-build-stage
 
+ARG BUILDARCH
 WORKDIR /app
 COPY frontend/ .
-RUN apt-get update && apt-get install -y build-essential python3
-RUN npm install -g npm@7
-RUN npm ci
+RUN if [ "$BUILDARCH" != "amd64" ]; then apt-get update && apt-get install -y build-essential python3 --no-install-recommends; fi
+RUN npm install -g npm@8 && npm ci
 RUN npm run docker:build
 
-FROM python:3.7-buster as backend-build-stage
+FROM python:3.9-buster as backend-build-stage
 
-ARG PYINSTALLER_VERSION=v3.5
+ARG TARGETARCH
+ARG ROTKI_VERSION
+ENV PACKAGE_FALLBACK_VERSION=$ROTKI_VERSION
+ARG PYINSTALLER_VERSION=v4.8
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-RUN apt-get update && apt-get install -y build-essential zlib1g-dev
+RUN apt-get update && apt-get install -y build-essential zlib1g-dev --no-install-recommends
 
 RUN git clone https://github.com/sqlcipher/sqlcipher && \
     cd sqlcipher && \
@@ -27,26 +30,26 @@ RUN git clone https://github.com/sqlcipher/sqlcipher && \
     make install && \
     ldconfig
 
-RUN python3 -m pip install --upgrade pip
+RUN if [ "$TARGETARCH" != "amd64" ]; then curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; fi
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN if [ "$TARGETARCH" != "amd64" ]; then rustup default nightly-2021-03-24; fi
+
+RUN python3 -m pip install --upgrade pip setuptools wheel
 COPY ./requirements.txt /app/requirements.txt
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
-RUN rustup default nightly-2021-03-24 
-
 WORKDIR /app
-
-RUN pip install maturin==0.11.2 py-sr25519-bindings==0.1.2 wheel
 RUN pip install -r requirements.txt
 
 COPY . /app
 
-RUN git clone https://github.com/pyinstaller/pyinstaller.git && cd pyinstaller && \
-    git checkout ${PYINSTALLER_VERSION} && \
-    cd bootloader && \
-    ./waf all && \
-    cd .. && \
-    python setup.py install
+RUN if [ "$TARGETARCH" != "amd64" ]; then \
+      git clone https://github.com/pyinstaller/pyinstaller.git && \
+      cd pyinstaller && git checkout ${PYINSTALLER_VERSION} && \
+      cd bootloader && ./waf all && cd .. && \
+      python setup.py install; \
+    else \
+      pip install pyinstaller==${PYINSTALLER_VERSION}; \
+    fi
 
 RUN pip install -e . && \
     python -c "import sys;from rotkehlchen.db.dbhandler import detect_sqlcipher_version; version = detect_sqlcipher_version();sys.exit(0) if version == 4 else sys.exit(1)" && \
@@ -62,7 +65,7 @@ ENV REVISION=$REVISION
 ENV ROTKI_VERSION=$ROTKI_VERSION
 
 RUN apt-get update && \
-    apt-get install -y procps && \
+    apt-get install -y procps python3 --no-install-recommends && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -70,15 +73,15 @@ COPY --from=backend-build-stage /tmp/dist /opt/rotki
 COPY --from=frontend-build-stage /app/app/dist /opt/rotki/frontend
 
 RUN APP=$(find "/opt/rotki" -name "rotkehlchen-*-linux"  | head -n 1) && \
-    echo ${APP} && \
-    ln -s ${APP} /usr/sbin/rotki
+    echo "${APP}" && \
+    ln -s "${APP}" /usr/sbin/rotki
 
-VOLUME ["/data", "/logs"]
+VOLUME ["/data", "/logs", "/config"]
 
 EXPOSE 80
 
 COPY ./packaging/docker/nginx.conf /etc/nginx/conf.d/default.conf
-COPY ./packaging/docker/docker-entrypoint.sh ./opt/rotki
-CMD ["sh", "-c", "exec /opt/rotki/docker-entrypoint.sh"]
+COPY ./packaging/docker/entrypoint.py /opt/rotki
+CMD ["sh", "-c", "/opt/rotki/entrypoint.py"]
 
 HEALTHCHECK CMD curl --fail http://localhost/api/1/ping || exit 1

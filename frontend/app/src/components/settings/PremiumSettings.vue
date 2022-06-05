@@ -78,6 +78,7 @@
               <v-switch
                 v-model="sync"
                 class="premium-settings__sync"
+                hide-details
                 :label="$t('premium_settings.actions.sync')"
                 @change="onSyncChange()"
               />
@@ -111,7 +112,7 @@ import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import RevealableInput from '@/components/inputs/RevealableInput.vue';
 import { PremiumCredentialsPayload } from '@/store/session/types';
 import { ActionStatus } from '@/store/types';
-import { SettingsUpdate } from '@/typing/types';
+import { SettingsUpdate } from '@/types/user';
 import { trimOnPaste } from '@/utils/event';
 
 @Component({
@@ -195,10 +196,10 @@ export default class PremiumSettings extends Vue {
       apiKey: this.apiKey.trim(),
       apiSecret: this.apiSecret.trim()
     };
-    const { success, message } = await this.setupPremium(payload);
-    if (!success) {
+    const result = await this.setupPremium(payload);
+    if (!result.success) {
       this.errorMessages.push(
-        message ?? this.$tc('premium_settings.error.setting_failed')
+        result.message ?? this.$tc('premium_settings.error.setting_failed')
       );
       return;
     }
@@ -212,10 +213,10 @@ export default class PremiumSettings extends Vue {
     if (!this.premium) {
       return;
     }
-    const { success, message } = await this.deletePremium();
-    if (!success) {
+    const result = await this.deletePremium();
+    if (!result.success) {
       this.errorMessages.push(
-        message ?? this.$tc('premium_settings.error.removing_failed')
+        result.message ?? this.$tc('premium_settings.error.removing_failed')
       );
       return;
     }
@@ -224,7 +225,7 @@ export default class PremiumSettings extends Vue {
   }
 
   async onSyncChange() {
-    await this.updateSettings({ premium_should_sync: this.sync });
+    await this.updateSettings({ premiumShouldSync: this.sync });
   }
 }
 </script>
@@ -233,6 +234,8 @@ export default class PremiumSettings extends Vue {
 .premium-settings {
   &__sync {
     margin-left: 20px;
+    margin-top: 0;
+    padding-top: 0;
   }
 
   &__premium-active {

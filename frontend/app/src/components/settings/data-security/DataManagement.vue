@@ -43,18 +43,18 @@ import PurgeSelector, {
   PurgeParams
 } from '@/components/settings/data-security/PurgeSelector.vue';
 import StatusButton from '@/components/settings/data-security/StatusButton.vue';
-import { EXTERNAL_EXCHANGES, SUPPORTED_EXCHANGES } from '@/data/defaults';
-import { SupportedExchange } from '@/services/balances/types';
+import { EXTERNAL_EXCHANGES } from '@/data/defaults';
 import {
-  ALL_DECENTRALIZED_EXCHANGES,
   ALL_CENTRALIZED_EXCHANGES,
+  ALL_DECENTRALIZED_EXCHANGES,
   ALL_MODULES,
-  ALL_TRANSACTIONS,
-  Module
+  ALL_TRANSACTIONS
 } from '@/services/session/consts';
 import { Purgeable } from '@/services/session/types';
 import { ACTION_PURGE_CACHED_DATA } from '@/store/session/const';
-import { ActionStatus } from '@/store/types';
+import { SuccessMessage } from '@/store/types';
+import { SUPPORTED_EXCHANGES, SupportedExchange } from '@/types/exchanges';
+import { Module } from '@/types/modules';
 
 @Component({
   components: { PurgeSelector, StatusButton, ConfirmDialog },
@@ -64,11 +64,10 @@ import { ActionStatus } from '@/store/types';
 })
 export default class DataManagement extends Vue {
   source: Purgeable = ALL_TRANSACTIONS;
-  status: ActionStatus | null = null;
+  status: SuccessMessage | null = null;
   confirm: boolean = false;
   pending: boolean = false;
   sourceLabel: string = '';
-  removeExchangeTrades!: (location: SupportedExchange) => Promise<void>;
   [ACTION_PURGE_CACHED_DATA]: (purgeable: Purgeable) => Promise<void>;
 
   showConfirmation(source: PurgeParams) {

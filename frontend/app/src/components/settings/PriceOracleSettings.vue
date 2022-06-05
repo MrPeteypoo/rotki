@@ -11,7 +11,7 @@
       <v-col cols="12" md="6">
         <price-oracle-selection
           :value="currentOracles"
-          :all-items="availableOracles"
+          :all-items="availableCurrentOracles"
           :status="currentError"
           @input="onCurrentChange($event)"
         >
@@ -24,7 +24,7 @@
       <v-col cols="12" md="6">
         <price-oracle-selection
           :value="historicOracles"
-          :all-items="availableOracles"
+          :all-items="availableHistoricOracles"
           :status="historicError"
           @input="onHistoricChange($event)"
         >
@@ -48,12 +48,20 @@ import PriceOracleSelection from '@/components/settings/PriceOracleSelection.vue
 import SettingCategory from '@/components/settings/SettingCategory.vue';
 import SettingsMixin from '@/mixins/settings-mixin';
 import { ActionStatus } from '@/store/types';
+import { PriceOracle } from '@/types/user';
 
 @Component({
   components: { PriceOracleSelection, SettingCategory }
 })
 export default class PriceOracleSettings extends Mixins(SettingsMixin) {
-  readonly availableOracles: string[] = ['cryptocompare', 'coingecko'];
+  private readonly baseAvailableOracles = ['cryptocompare', 'coingecko'];
+  readonly availableCurrentOracles: string[] = [
+    ...this.baseAvailableOracles,
+    'uniswapv2',
+    'uniswapv3',
+    'saddle'
+  ];
+  readonly availableHistoricOracles = [...this.baseAvailableOracles, 'manual'];
 
   currentOracles: string[] = [];
   historicOracles: string[] = [];
@@ -66,12 +74,12 @@ export default class PriceOracleSettings extends Mixins(SettingsMixin) {
     this.historicOracles = this.generalSettings.historicalPriceOracles;
   }
 
-  async onCurrentChange(oracles: string[]) {
+  async onCurrentChange(oracles: PriceOracle[]) {
     this.currentError = null;
     const previous = [...this.currentOracles];
     this.currentOracles = oracles;
     const status = await this.settingsUpdate({
-      current_price_oracles: oracles
+      currentPriceOracles: oracles
     });
     if (!status.success) {
       this.currentError = status;
@@ -79,12 +87,12 @@ export default class PriceOracleSettings extends Mixins(SettingsMixin) {
     }
   }
 
-  async onHistoricChange(oracles: string[]) {
+  async onHistoricChange(oracles: PriceOracle[]) {
     this.historicError = null;
     const previous = [...this.historicOracles];
     this.historicOracles = oracles;
     const status = await this.settingsUpdate({
-      historical_price_oracles: oracles
+      historicalPriceOracles: oracles
     });
     if (!status.success) {
       this.historicError = status;

@@ -1,33 +1,38 @@
 <template>
-  <v-app v-if="!isPlayground" id="rotki" class="app">
-    <update-popup />
+  <v-app
+    v-if="!isPlayground"
+    id="rotki"
+    class="app"
+    :class="{ ['app--animations-disabled']: !animationsEnabled }"
+  >
+    <app-update-popup />
     <div v-if="logged" class="app__content rotki-light-grey">
       <asset-update auto />
       <notification-popup />
       <v-navigation-drawer
         v-if="loginComplete"
-        v-model="drawer"
+        v-model="showDrawer"
         width="300"
         class="app__navigation-drawer"
         fixed
-        :mini-variant="mini"
+        :mini-variant="isMini"
         :color="appBarColor"
         clipped
         app
       >
-        <div v-if="!mini" class="text-center app__logo" />
+        <div v-if="!isMini" class="text-center app__logo" />
         <div v-else class="app__logo-mini">
           {{ $t('app.name') }}
         </div>
-        <navigation-menu :show-tooltips="mini" />
+        <navigation-menu :is-mini="isMini" />
         <v-spacer />
         <div
-          v-if="!mini"
+          v-if="!isMini"
           class="my-2 text-center px-2 app__navigation-drawer__version"
         >
           <span class="text-overline">
             <v-divider class="mx-3 my-1" />
-            {{ version }}
+            {{ appVersion }}
           </span>
         </div>
       </v-navigation-drawer>
@@ -41,60 +46,74 @@
         class="app__app-bar"
       >
         <v-app-bar-nav-icon
-          class="secondary--text text--lighten-2"
+          class="secondary--text text--lighten-4"
           @click="toggleDrawer()"
         />
-        <node-status-indicator v-if="!xsOnly" />
-        <balance-saved-indicator />
-        <back-button :can-navigate-back="canNavigateBack" />
+        <div class="d-flex overflow-hidden">
+          <node-status-indicator v-if="!xsOnly" />
+          <balance-saved-indicator />
+          <global-search />
+          <back-button :can-navigate-back="canNavigateBack" />
+        </div>
         <v-spacer />
-        <v-btn v-if="isDevelopment" to="/playground" icon>
-          <v-icon>mdi-crane</v-icon>
-        </v-btn>
-        <update-indicator />
-        <theme-switch v-if="premium" />
-        <theme-switch-lock v-else />
-        <notification-indicator
-          :visible="notifications"
-          class="app__app-bar__button"
-          @click="notifications = !notifications"
-        />
-        <currency-drop-down class="red--text app__app-bar__button" />
-        <user-dropdown class="app__app-bar__button" />
-        <help-indicator
-          v-if="!xsOnly"
-          :visible="help"
-          @visible:update="help = $event"
-        />
+        <div class="d-flex overflow-hidden">
+          <v-btn v-if="isDevelopment" to="/playground" icon>
+            <v-icon>mdi-crane</v-icon>
+          </v-btn>
+          <app-update-indicator />
+          <theme-switch v-if="premium" />
+          <theme-switch-lock v-else />
+          <notification-indicator
+            :visible="showNotificationBar"
+            class="app__app-bar__button"
+            @click="showNotificationBar = !showNotificationBar"
+          />
+          <currency-dropdown class="app__app-bar__button" />
+          <privacy-mode-dropdown class="app__app-bar__button" />
+          <user-dropdown class="app__app-bar__button" />
+          <help-indicator
+            v-if="!xsOnly"
+            :visible="showHelpBar"
+            @visible:update="showHelpBar = $event"
+          />
+        </div>
       </v-app-bar>
       <notification-sidebar
-        :visible="notifications"
-        @close="notifications = false"
+        :visible="showNotificationBar"
+        @close="showNotificationBar = false"
       />
       <help-sidebar
-        :visible="help"
-        @visible:update="help = $event"
+        :visible="showHelpBar"
+        @visible:update="showHelpBar = $event"
         @about="showAbout = true"
       />
-      <v-main v-if="logged">
-        <router-view />
-      </v-main>
+      <div
+        class="app-main"
+        :class="{
+          small: showDrawer && isMini,
+          expanded: showDrawer && !isMini && !isMobile
+        }"
+      >
+        <v-main>
+          <router-view />
+        </v-main>
+      </div>
     </div>
     <message-dialog
       :title="message.title"
       :message="message.description"
       :success="message.success"
-      @dismiss="dismiss()"
+      @dismiss="dismissMessage()"
     />
     <startup-error-screen
-      v-if="startupError.length > 0"
-      :message="startupError"
+      v-if="startupErrorMessage.length > 0"
+      :message="startupErrorMessage"
       fatal
     />
-    <mac-os-version-unsupported v-if="macosUnsupported" />
+    <mac-os-version-unsupported v-if="isMacOsVersionUnsupported" />
     <v-fade-transition>
       <account-management
-        v-if="startupError.length === 0 && !loginIn"
+        v-if="startupErrorMessage.length === 0 && !loginIn"
         :logged="logged"
         @login-complete="completeLogin(true)"
         @about="showAbout = true"
@@ -103,49 +122,61 @@
     <v-dialog v-if="showAbout" v-model="showAbout" max-width="500">
       <about />
     </v-dialog>
-    <update-notifier />
+    <frontend-update-notifier />
   </v-app>
   <dev-app v-else />
 </template>
 
 <script lang="ts">
-import { Component, Mixins, Watch } from 'vue-property-decorator';
-import { mapGetters, mapMutations, mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  onBeforeMount,
+  ref,
+  toRefs,
+  watch
+} from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import About from '@/components/About.vue';
 import AccountManagement from '@/components/AccountManagement.vue';
-import CurrencyDropDown from '@/components/CurrencyDropDown.vue';
+import CurrencyDropdown from '@/components/CurrencyDropdown.vue';
 import MessageDialog from '@/components/dialogs/MessageDialog.vue';
-import ErrorScreen from '@/components/error/ErrorScreen.vue';
 import MacOsVersionUnsupported from '@/components/error/MacOsVersionUnsupported.vue';
 import StartupErrorScreen from '@/components/error/StartupErrorScreen.vue';
+import GlobalSearch from '@/components/GlobalSearch.vue';
 import HelpIndicator from '@/components/help/HelpIndicator.vue';
 import HelpSidebar from '@/components/help/HelpSidebar.vue';
 import BackButton from '@/components/helper/BackButton.vue';
 import NavigationMenu from '@/components/NavigationMenu.vue';
 import ThemeSwitchLock from '@/components/premium/ThemeSwitchLock.vue';
+import PrivacyModeDropdown from '@/components/PrivacyModeDropdown.vue';
+import AppUpdateIndicator from '@/components/status/AppUpdateIndicator.vue';
+import FrontendUpdateNotifier from '@/components/status/FrontendUpdateNotifier.vue';
 import NodeStatusIndicator from '@/components/status/NodeStatusIndicator.vue';
 import NotificationIndicator from '@/components/status/NotificationIndicator.vue';
 import NotificationPopup from '@/components/status/notifications/NotificationPopup.vue';
 import NotificationSidebar from '@/components/status/notifications/NotificationSidebar.vue';
 import SyncIndicator from '@/components/status/sync/SyncIndicator.vue';
-import '@/services/task-manager';
+import AppUpdatePopup from '@/components/status/update/AppUpdatePopup.vue';
 import AssetUpdate from '@/components/status/update/AssetUpdate.vue';
-import UpdatePopup from '@/components/status/update/UpdatePopup.vue';
-import UpdateIndicator from '@/components/status/UpdateIndicator.vue';
-import UpdateNotifier from '@/components/status/UpdateNotifier.vue';
 import UserDropdown from '@/components/UserDropdown.vue';
+import { setupThemeCheck, useRoute, useRouter } from '@/composables/common';
+import { getPremium, setupSession } from '@/composables/session';
 import DevApp from '@/DevApp.vue';
+import { useInterop } from '@/electron-interop';
 import { BackendCode } from '@/electron-main/backend-code';
-import PremiumMixin from '@/mixins/premium-mixin';
-import ThemeMixin from '@/mixins/theme-mixin';
 import { ThemeSwitch } from '@/premium/premium';
 import { monitor } from '@/services/monitoring';
 import { OverallPerformance } from '@/store/statistics/types';
-import { Message } from '@/store/types';
+import { useMainStore } from '@/store/store';
+import { useStore } from '@/store/utils';
+import { logger } from '@/utils/logging';
 
-@Component({
+export default defineComponent({
+  name: 'App',
   components: {
-    UpdateNotifier,
+    GlobalSearch,
+    FrontendUpdateNotifier,
     About,
     ThemeSwitchLock,
     MacOsVersionUnsupported,
@@ -153,154 +184,210 @@ import { Message } from '@/store/types';
     HelpIndicator,
     HelpSidebar,
     BackButton,
-    UpdatePopup,
+    AppUpdatePopup,
     StartupErrorScreen,
     ThemeSwitch,
     DevApp,
     NotificationPopup,
     NotificationSidebar,
-    ErrorScreen,
     AccountManagement,
-    UpdateIndicator,
+    AppUpdateIndicator,
     NotificationIndicator,
     BalanceSavedIndicator: SyncIndicator,
     NodeStatusIndicator,
     MessageDialog,
-    CurrencyDropDown,
+    CurrencyDropdown,
     NavigationMenu,
-    UserDropdown
+    UserDropdown,
+    PrivacyModeDropdown
   },
-  computed: {
-    ...mapState(['message']),
-    ...mapState('session', ['logged', 'username', 'loginComplete']),
-    ...mapGetters(['version'])
-  },
-  methods: {
-    ...mapMutations('session', ['completeLogin'])
-  }
-})
-export default class App extends Mixins(PremiumMixin, ThemeMixin) {
-  logged!: boolean;
-  message!: Message;
-  version!: string;
+  setup() {
+    const store = useMainStore();
+    const { appVersion, message } = toRefs(store);
+    const { setMessage, connect } = store;
 
-  loginComplete!: boolean;
-  completeLogin!: (complete: boolean) => void;
+    const { animationsEnabled } = setupSession();
 
-  notifications: boolean = false;
-  help: boolean = false;
-  showAbout: boolean = false;
+    const showNotificationBar = ref(false);
+    const showHelpBar = ref(false);
+    const showAbout = ref(false);
+    const showDrawer = ref(false);
+    const isMini = ref(false);
+    const startupErrorMessage = ref('');
+    const isMacOsVersionUnsupported = ref(false);
 
-  get xsOnly(): boolean {
-    return this.$vuetify.breakpoint.xsOnly;
-  }
-
-  get canNavigateBack(): boolean {
-    const canNavigateBack = this.$route.meta?.canNavigateBack ?? false;
-    return canNavigateBack && window.history.length > 1;
-  }
-
-  get loginIn(): boolean {
-    return this.logged && this.loginComplete;
-  }
-
-  @Watch('logged')
-  onLoggedChange() {
-    if (!this.logged) {
-      this.completeLogin(false);
-    } else {
-      this.drawer = !this.$vuetify.breakpoint.mobile;
-    }
-
-    if (this.$route.name !== 'dashboard') {
-      this.$router.push({ name: 'dashboard' });
-    }
-  }
-
-  drawer = false;
-  mini = false;
-
-  startupError: string = '';
-  macosUnsupported: boolean = false;
-
-  openSite() {
-    this.$interop.navigateToRotki();
-  }
-
-  dismiss() {
-    this.$store.commit('resetMessage');
-  }
-
-  toggleDrawer() {
-    if (!this.drawer) {
-      this.drawer = !this.drawer;
-      this.mini = false;
-    } else {
-      this.mini = !this.mini;
-    }
-  }
-
-  get isDevelopment(): boolean {
-    return process.env.NODE_ENV === 'development';
-  }
-
-  async created(): Promise<void> {
-    this.$interop.onError((backendOutput: string, code: BackendCode) => {
-      if (code === BackendCode.TERMINATED) {
-        this.startupError = backendOutput;
-      } else if (code === BackendCode.MACOS_VERSION) {
-        this.macosUnsupported = true;
+    const { navigateToRotki, onError, onAbout, updateTray } = useInterop();
+    const openSite = navigateToRotki;
+    const dismissMessage = () => setMessage();
+    const toggleDrawer = () => {
+      if (!get(showDrawer)) {
+        set(showDrawer, !get(showDrawer));
+        set(isMini, false);
       } else {
-        // eslint-disable-next-line no-console
-        console.error(backendOutput, code);
+        set(isMini, !get(isMini));
       }
-    });
-    this.$interop.onAbout(() => {
-      this.showAbout = true;
+    };
+
+    const { isMobile, dark, currentBreakpoint } = setupThemeCheck();
+    const xsOnly = computed(() => get(currentBreakpoint).xsOnly);
+
+    const route = useRoute();
+    const router = useRouter();
+
+    const canNavigateBack = computed(() => {
+      const canNavigateBack = get(route).meta?.canNavigateBack ?? false;
+      return canNavigateBack && window.history.length > 1;
     });
 
-    await this.$store.dispatch('connect');
-    if (this.isDevelopment && this.logged) {
-      monitor.start();
-    }
-    this.$store.watch(
-      (state, getters) => {
-        return getters['statistics/overall'];
-      },
-      (value: OverallPerformance) => {
-        if (value.percentage === '-') {
-          return;
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const isPlayground = computed(() => {
+      return isDevelopment && get(route).name === 'playground';
+    });
+
+    const appBarColor = computed(() => {
+      if (!get(dark)) {
+        return 'white';
+      }
+      return null;
+    });
+
+    const { commit, state, getters } = useStore();
+
+    const logged = computed(() => state.session?.logged ?? false);
+    const username = computed(() => state.session?.username ?? '');
+    const loginComplete = computed(() => state.session?.loginComplete ?? false);
+    const loginIn = computed(() => get(logged) && get(loginComplete));
+    const overall = computed<OverallPerformance>(
+      () => getters['statistics/overall']
+    );
+
+    const completeLogin = async (complete: boolean) => {
+      await commit('session/completeLogin', complete, { root: true });
+    };
+
+    onBeforeMount(async () => {
+      onError((backendOutput: string, code: BackendCode) => {
+        if (code === BackendCode.TERMINATED) {
+          set(startupErrorMessage, backendOutput);
+        } else if (code === BackendCode.MACOS_VERSION) {
+          set(isMacOsVersionUnsupported, true);
+        } else {
+          logger.error(backendOutput, code);
         }
-        this.$interop.updateTray(value);
-      }
-    );
-  }
+      });
+      onAbout(() => set(showAbout, true));
 
-  get isPlayground(): boolean {
-    return (
-      process.env.NODE_ENV === 'development' &&
-      this.$route.name === 'playground'
-    );
+      await connect();
+      if (isDevelopment && get(logged)) {
+        monitor.start();
+      }
+      const search = window.location.search;
+      const skipUpdate = search.indexOf('skip_update') >= 0;
+      if (skipUpdate) {
+        sessionStorage.setItem('skip_update', '1');
+      }
+    });
+
+    watch(overall, overall => {
+      if (overall.percentage === '-') {
+        return;
+      }
+      updateTray(overall);
+    });
+
+    watch(logged, async logged => {
+      if (!logged) {
+        await completeLogin(false);
+      } else {
+        set(showDrawer, !get(isMobile));
+      }
+
+      if (get(route).name !== 'dashboard') {
+        router.push({ name: 'dashboard' });
+      }
+    });
+
+    const premium = getPremium();
+
+    return {
+      animationsEnabled,
+      username,
+      premium,
+      loginIn,
+      logged,
+      loginComplete,
+      appVersion,
+      message,
+      showDrawer,
+      showNotificationBar,
+      showAbout,
+      showHelpBar,
+      isMini,
+      startupErrorMessage,
+      isMacOsVersionUnsupported,
+      isMobile,
+      xsOnly,
+      appBarColor,
+      canNavigateBack,
+      isDevelopment,
+      isPlayground,
+      dismissMessage,
+      completeLogin,
+      openSite,
+      toggleDrawer
+    };
   }
-}
+});
 </script>
 
 <style scoped lang="scss">
-@import '~@/scss/scroll';
-
 .v-navigation-drawer {
   &--is-mobile {
     padding-top: 60px !important;
   }
+}
 
-  @extend .themed-scrollbar;
+::v-deep {
+  .v-navigation-drawer {
+    box-shadow: 0 2px 12px rgba(74, 91, 120, 0.1);
+
+    &__border {
+      background-color: transparent !important;
+    }
+  }
+
+  .v-main {
+    padding: 0 !important;
+  }
+
+  .v-app-bar {
+    &::after {
+      height: 1px;
+      display: block;
+      width: 100%;
+      content: '';
+      border-bottom: var(--v-rotki-light-grey-darken1) solid thin;
+    }
+  }
 }
 
 .app {
   overflow: hidden;
 
-  &__content {
-    height: 100vh;
+  &--animations-disabled {
+    ::v-deep {
+      * {
+        &:not(.animate) {
+          // ignore manual animation (e.g. animation on login screen)
+
+          &,
+          &::before,
+          &::after {
+            animation-timing-function: steps(5, end) !important;
+          }
+        }
+      }
+    }
   }
 
   &__app-bar {
@@ -323,7 +410,7 @@ export default class App extends Mixins(PremiumMixin, ThemeMixin) {
     min-height: 150px;
     margin-bottom: 15px;
     margin-top: 15px;
-    background: url(~@/assets/images/rotkehlchen_no_text.png) no-repeat center;
+    background: url(/assets/images/rotkehlchen_no_text.png) no-repeat center;
     background-size: contain;
   }
 
@@ -349,37 +436,19 @@ export default class App extends Mixins(PremiumMixin, ThemeMixin) {
       width: 100%;
     }
   }
-}
 
-::v-deep {
-  .v-navigation-drawer {
-    box-shadow: 0 2px 12px rgba(74, 91, 120, 0.1);
+  &-main {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    width: 100%;
+    min-height: calc(100vh - 64px);
 
-    &__border {
-      background-color: transparent !important;
-    }
-  }
-
-  .v-main {
-    height: 100vh;
-
-    &__wrap {
-      overflow-y: scroll;
-      overflow-x: hidden;
-
-      @extend .themed-scrollbar;
+    &.small {
+      padding-left: 56px;
     }
 
-    @extend .themed-scrollbar;
-  }
-
-  .v-app-bar {
-    &::after {
-      height: 1px;
-      display: block;
-      width: 100%;
-      content: '';
-      border-bottom: var(--v-rotki-light-grey-darken1) solid thin;
+    &.expanded {
+      padding-left: 300px;
     }
   }
 }

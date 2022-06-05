@@ -1,7 +1,7 @@
 from decimal import Decimal, InvalidOperation
 from typing import Any, Union
 
-from rotkehlchen.errors import ConversionError
+from rotkehlchen.errors.serialization import ConversionError
 
 # Here even though we got __future__ annotations using FVal does not seem to work
 AcceptableFValInitInput = Union[float, bytes, Decimal, int, str, 'FVal']
@@ -145,8 +145,8 @@ class FVal():
         evaluated_third = evaluate_input(third)
         return FVal(self.num.fma(evaluated_other, evaluated_third))
 
-    def to_percentage(self, precision: int = 4) -> str:
-        return '{:.{}%}'.format(self.num, precision)
+    def to_percentage(self, precision: int = 4, with_perc_sign: bool = True) -> str:
+        return f'{self.num*100:.{precision}f}{"%" if with_perc_sign else ""}'
 
     def to_int(self, exact: bool) -> int:
         """

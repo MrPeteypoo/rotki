@@ -1,11 +1,13 @@
 import pytest
 import requests
+from flaky import flaky
 
-from rotkehlchen.chain.substrate.typing import KusamaNodeName
-from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response
+from rotkehlchen.chain.substrate.types import KusamaNodeName
+from rotkehlchen.tests.utils.api import api_url_for, assert_proper_response_with_result
 from rotkehlchen.tests.utils.substrate import KUSAMA_TEST_NODES, SUBSTRATE_ACC1_KSM_ADDR
 
 
+@flaky(max_runs=3, min_passes=1)  # Kusama open nodes some times time out
 def test_set_own_rpc_endpoint(rotkehlchen_api_server):
     """Test that successfully setting an own node (via `ksm_rpc_endpoint` setting)
     updates the `available_node_attributes_map`, sorts `available_nodes_call_order`,
@@ -29,9 +31,7 @@ def test_set_own_rpc_endpoint(rotkehlchen_api_server):
     )
 
     # Check settings response
-    assert_proper_response(response)
-    json_data = response.json()
-    result = json_data['result']
+    result = assert_proper_response_with_result(response)
     assert result['ksm_rpc_endpoint'] == test_node_endpoint
 
     # Check SubstrateManager instance
@@ -42,6 +42,7 @@ def test_set_own_rpc_endpoint(rotkehlchen_api_server):
     assert kusama_manager.available_nodes_call_order[0][0] == KusamaNodeName.OWN
 
 
+@flaky(max_runs=3, min_passes=1)  # Kusama open nodes some times time out
 @pytest.mark.parametrize('ksm_accounts', [[SUBSTRATE_ACC1_KSM_ADDR]])
 @pytest.mark.parametrize('ksm_rpc_endpoint', [KUSAMA_TEST_NODES[1].endpoint()])
 @pytest.mark.parametrize('kusama_manager_connect_at_start', [[KusamaNodeName.OWN]])
@@ -69,9 +70,7 @@ def test_unset_own_rpc_endpoint(ksm_rpc_endpoint, rotkehlchen_api_server):
     )
 
     # Check settings response
-    assert_proper_response(response)
-    json_data = response.json()
-    result = json_data['result']
+    result = assert_proper_response_with_result(response)
     assert result['ksm_rpc_endpoint'] == ''
 
     # Check SubstrateManager instance

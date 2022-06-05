@@ -5,18 +5,20 @@ import sqlite3
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Tuple, Union
 
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.assets.asset import Asset, EthereumToken
 from rotkehlchen.assets.resolver import AssetResolver
-from rotkehlchen.assets.typing import AssetData, AssetType
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.assets.types import AssetData, AssetType
+from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 
 from .handler import GlobalDBHandler, initialize_globaldb
@@ -120,7 +122,7 @@ class AssetsUpdater():
     def _get_remote_info_json(self) -> Dict[str, Any]:
         url = f'https://raw.githubusercontent.com/rotki/assets/{self.branch}/updates/info.json'
         try:
-            response = requests.get(url)
+            response = requests.get(url=url, timeout=DEFAULT_TIMEOUT_TUPLE)
         except requests.exceptions.RequestException as e:
             raise RemoteError(f'Failed to query Github {url} during assets update: {str(e)}') from e  # noqa: E501
 
@@ -403,7 +405,7 @@ class AssetsUpdater():
             # otherwise we are sure the DB will work without conflicts so let's
             # now move the data to the actual global DB
             connection.close()
-            connection = GlobalDBHandler()._conn
+            connection = GlobalDBHandler().conn
             _replace_assets_from_db(connection, tempdbpath)
             return None
 
@@ -454,7 +456,7 @@ class AssetsUpdater():
 
             try:
                 url = f'https://raw.githubusercontent.com/rotki/assets/{self.branch}/updates/{version}/updates.sql'  # noqa: E501
-                response = requests.get(url)
+                response = requests.get(url=url, timeout=DEFAULT_TIMEOUT_TUPLE)
             except requests.exceptions.RequestException as e:
                 connection.rollback()
                 raise RemoteError(f'Failed to query Github for {url} during assets update: {str(e)}') from e  # noqa: E501

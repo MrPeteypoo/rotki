@@ -1,6 +1,6 @@
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken
-from rotkehlchen.chain.ethereum.structures import (
+from rotkehlchen.chain.ethereum.modules.aave.structures import (
     AaveBorrowEvent,
     AaveDepositWithdrawalEvent,
     AaveInterestEvent,
@@ -30,6 +30,7 @@ from rotkehlchen.constants.assets import (
     A_REN,
     A_REP,
     A_SNX,
+    A_STETH,
     A_SUSD,
     A_TUSD,
     A_UNI,
@@ -43,7 +44,7 @@ from rotkehlchen.constants.assets import (
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.constants import A_ADAI
-from rotkehlchen.typing import Timestamp
+from rotkehlchen.types import Timestamp
 
 A_AENJ_V1 = EthereumToken('0x712DB54daA836B53Ef1EcBb9c6ba3b9Efb073F40')
 A_ADAI_V1 = EthereumToken('0xfC1E690f61EFd961294b3e1Ce3313fBD8aa4f85d')
@@ -117,6 +118,7 @@ ATOKENV2_ADDRESS_TO_RESERVE_ASSET = {
     '0x272F97b7a56a387aE942350bBC7Df5700f8a4576': A_BAL,
     '0xc9BC48c72154ef3e5425641a3c747242112a46AF': A_RAI,
     '0xF256CC7847E919FAc9B808cC216cAc87CCF2f47a': EthereumToken('0x8798249c2E607446EfB7Ad49eC89dD1865Ff4272'),  # xSUSHI  # noqa: E501
+    '0x1982b2F5814301d4e9a8b0201555376e62F82428': A_STETH,
 }
 
 
@@ -470,7 +472,7 @@ expected_aave_v2_events = [
         block_number=0,
         timestamp=Timestamp(1615333105),
         tx_hash='0x75444c0ae48700f388d05ec8380b3922c4daf1e8eef2476001437b68d36f56a1',
-        log_index=1,
+        log_index=216,
     ), AaveBorrowEvent(
         event_type='borrow',
         asset=A_USDT,
@@ -481,7 +483,7 @@ expected_aave_v2_events = [
         block_number=0,
         timestamp=Timestamp(1615333284),
         tx_hash='0x74e8781fd86e81a87a4ba93bc7755d4a94901765cd72399f0372d36e7a26a03a',
-        log_index=2,
+        log_index=352,
         borrow_rate_mode='stable',
         borrow_rate=FVal('0.088712770921360153608109216'),
         accrued_borrow_interest=ZERO,
@@ -496,7 +498,7 @@ expected_aave_v2_events = [
         block_number=0,
         timestamp=Timestamp(1615587042),
         tx_hash='0x164e3eafef02ac1a956ba3c7d027506d47de36b34daee1e05ca0d178413911c1',
-        log_index=4,
+        log_index=29,
     ), AaveInterestEvent(
         event_type='interest',
         asset=A_ALINK_V2,
@@ -507,7 +509,7 @@ expected_aave_v2_events = [
         block_number=0,
         timestamp=Timestamp(1615669328),
         tx_hash='0xfeee61357d43e79a2beae9edab860c30db9765964be26eff82c6834d4e2c2db7',
-        log_index=4,
+        log_index=133,
     ), AaveDepositWithdrawalEvent(
         event_type='withdrawal',
         asset=A_LINK,
@@ -519,6 +521,6 @@ expected_aave_v2_events = [
         block_number=0,
         timestamp=Timestamp(1615669328),
         tx_hash='0xfeee61357d43e79a2beae9edab860c30db9765964be26eff82c6834d4e2c2db7',
-        log_index=3,
+        log_index=132,
     ),
 ]

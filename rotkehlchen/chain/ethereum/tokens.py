@@ -5,17 +5,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.chain.ethereum.manager import EthereumManager, NodeName
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.types import string_to_ethereum_address
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.constants.ethereum import ETH_SCAN
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.db.dbhandler import DBHandler
-from rotkehlchen.errors import RemoteError
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Price
+from rotkehlchen.types import ChecksumEthAddress, Price
 from rotkehlchen.utils.misc import get_chunks, ts_now
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,8 @@ class EthTokens():
             # since the SDK entry might return other tokens from sushi and we don't
             # fully support sushi now.
             string_to_ethereum_address('0x8798249c2E607446EfB7Ad49eC89dD1865Ff4272'),
+            # Ignore stkAave since it's queried by defi SDK.
+            string_to_ethereum_address('0x4da27a545c0c5B758a6BA100e3a049001de870f5'),
             # Ignore the following tokens. They are old tokens of upgraded contracts which
             # duplicated the balances at upgrade instead of doing a token swap.
             # e.g.: https://github.com/rotki/rotki/issues/3548

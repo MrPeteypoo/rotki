@@ -4,7 +4,7 @@
     <div class="text-body-1 mt-2 text--secondary">
       {{ $t('connection_failure.message') }}
     </div>
-    <div class="full-width d-flex mt-2">
+    <div class="full-width d-flex mt-4">
       <v-btn v-if="!$api.defaultBackend" text @click="toDefault">
         {{ $t('connection_failure.default') }}
       </v-btn>
@@ -12,30 +12,33 @@
       <v-btn depressed @click="terminate">
         {{ $t('connection_failure.terminate') }}
       </v-btn>
-      <v-btn depressed color="primary" @click="retry">
+      <v-btn class="ml-4" depressed color="primary" @click="retry">
         {{ $t('connection_failure.retry') }}
       </v-btn>
     </div>
   </div>
 </template>
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
-import { deleteBackendUrl } from '@/components/account-management/utils';
+import { defineComponent } from '@vue/composition-api';
+import { useInterop } from '@/electron-interop';
+import { api } from '@/services/rotkehlchen-api';
+import { useMainStore } from '@/store/store';
 
-@Component({})
-export default class ConnectionFailure extends Vue {
-  retry() {
-    this.$store.dispatch('connect', this.$api.serverUrl);
-  }
+export default defineComponent({
+  name: 'ConnectionFailure',
+  setup() {
+    const { connect } = useMainStore();
+    const interop = useInterop();
 
-  toDefault() {
-    deleteBackendUrl();
-    this.$store.dispatch('connect', null);
-  }
+    const retry = () => connect(api.serverUrl);
+    const toDefault = () => connect();
+    const terminate = () => interop.closeApp();
 
-  terminate() {
-    this.$interop.closeApp();
+    return {
+      retry,
+      toDefault,
+      terminate
+    };
   }
-}
+});
 </script>
-<style scoped lang="scss"></style>

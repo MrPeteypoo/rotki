@@ -6,16 +6,20 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.constants.timing import YEAR_IN_SECONDS
 from rotkehlchen.db.utils import str_to_bool
-from rotkehlchen.errors import DeserializationError
-from rotkehlchen.history.typing import (
-    DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER,
-    HistoricalPriceOracle,
-)
+from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.history.types import DEFAULT_HISTORICAL_PRICE_ORACLES_ORDER, HistoricalPriceOracle
 from rotkehlchen.inquirer import DEFAULT_CURRENT_PRICE_ORACLES_ORDER, CurrentPriceOracle
-from rotkehlchen.typing import AVAILABLE_MODULES_MAP, ModuleName, Timestamp
+from rotkehlchen.types import (
+    AVAILABLE_MODULES_MAP,
+    DEFAULT_OFF_MODULES,
+    ExchangeLocationID,
+    ModuleName,
+    Timestamp,
+)
 from rotkehlchen.user_messages import MessagesAggregator
 
-ROTKEHLCHEN_DB_VERSION = 30
+ROTKEHLCHEN_DB_VERSION = 32
+ROTKEHLCHEN_TRANSIENT_DB_VERSION = 1
 DEFAULT_TAXFREE_AFTER_PERIOD = YEAR_IN_SECONDS
 DEFAULT_INCLUDE_CRYPTO2CRYPTO = True
 DEFAULT_INCLUDE_GAS_COSTS = True
@@ -25,7 +29,7 @@ DEFAULT_BALANCE_SAVE_FREQUENCY = 24
 DEFAULT_MAIN_CURRENCY = A_USD
 DEFAULT_DATE_DISPLAY_FORMAT = '%d/%m/%Y %H:%M:%S %Z'
 DEFAULT_SUBMIT_USAGE_ANALYTICS = True
-DEFAULT_ACTIVE_MODULES = list(AVAILABLE_MODULES_MAP.keys())
+DEFAULT_ACTIVE_MODULES = list(set(AVAILABLE_MODULES_MAP.keys()) - DEFAULT_OFF_MODULES)
 DEFAULT_ACCOUNT_FOR_ASSETS_MOVEMENTS = True
 DEFAULT_BTC_DERIVATION_GAP_LIMIT = 20
 DEFAULT_CALCULATE_PAST_COST_BASIS = True
@@ -43,8 +47,14 @@ DEFAULT_TAXABLE_LEDGER_ACTIONS = [
 DEFAULT_PNL_CSV_WITH_FORMULAS = True
 DEFAULT_PNL_CSV_HAVE_SUMMARY = False
 DEFAULT_SSF_0GRAPH_MULTIPLIER = 0
+DEFAULT_LAST_DATA_MIGRATION = 0
 
-JSON_KEYS = ('current_price_oracles', 'historical_price_oracles', 'taxable_ledger_actions')
+JSON_KEYS = (
+    'current_price_oracles',
+    'historical_price_oracles',
+    'taxable_ledger_actions',
+    'non_syncing_exchanges',
+)
 BOOLEAN_KEYS = (
     'have_premium',
     'include_crypto2crypto',
@@ -63,6 +73,7 @@ INTEGER_KEYS = (
     'balance_save_frequency',
     'btc_derivation_gap_limit',
     'ssf_0graph_multiplier',
+    'last_data_migration',
 )
 STRING_KEYS = (
     'eth_rpc_endpoint',
@@ -104,6 +115,8 @@ class DBSettings(NamedTuple):
     pnl_csv_with_formulas: bool = DEFAULT_PNL_CSV_WITH_FORMULAS
     pnl_csv_have_summary: bool = DEFAULT_PNL_CSV_HAVE_SUMMARY
     ssf_0graph_multiplier: int = DEFAULT_SSF_0GRAPH_MULTIPLIER
+    last_data_migration: int = DEFAULT_LAST_DATA_MIGRATION
+    non_syncing_exchanges: List[ExchangeLocationID] = []
 
 
 class ModifiableDBSettings(NamedTuple):
@@ -131,6 +144,7 @@ class ModifiableDBSettings(NamedTuple):
     pnl_csv_with_formulas: Optional[bool] = None
     pnl_csv_have_summary: Optional[bool] = None
     ssf_0graph_multiplier: Optional[int] = None
+    non_syncing_exchanges: Optional[List[ExchangeLocationID]] = None
 
     def serialize(self) -> Dict[str, Any]:
         settings_dict = {}
@@ -212,6 +226,9 @@ def db_settings_from_dict(
         elif key == 'taxable_ledger_actions':
             values = json.loads(value)
             specified_args[key] = [LedgerActionType.deserialize(x) for x in values]
+        elif key == 'non_syncing_exchanges':
+            values = json.loads(value)
+            specified_args[key] = [ExchangeLocationID.deserialize(x) for x in values]
         else:
             msg_aggregator.add_warning(
                 f'Unknown DB setting {key} given. Ignoring it. Should not '

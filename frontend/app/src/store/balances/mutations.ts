@@ -1,6 +1,5 @@
-import { SupportedAsset } from '@rotki/common/lib/data';
+import { Eth2Validators } from '@rotki/common/lib/staking/eth2';
 import { MutationTree } from 'vuex';
-import { Exchange } from '@/model/action-result';
 import {
   Balances,
   BalanceType,
@@ -18,11 +17,15 @@ import {
   EditExchange,
   NonFungibleBalances
 } from '@/store/balances/types';
-import { ExchangeData, ExchangeInfo, ExchangeRates } from '@/typing/types';
+import { Exchange, ExchangeData, ExchangeInfo } from '@/types/exchanges';
+import { ExchangeRates } from '@/types/user';
 
 export const mutations: MutationTree<BalanceState> = {
   updateEth(state: BalanceState, payload: BlockchainAssetBalances) {
     state.eth = { ...payload };
+  },
+  updateEth2(state: BalanceState, payload: BlockchainAssetBalances) {
+    state.eth2 = { ...payload };
   },
   updateBtc(state: BalanceState, payload: BtcBalances) {
     state.btc = { ...payload };
@@ -37,7 +40,13 @@ export const mutations: MutationTree<BalanceState> = {
     state.avax = { ...payload };
   },
   updateTotals(state: BalanceState, payload: Balances) {
-    state.totals = { ...state.totals, ...payload };
+    const totals = { ...state.totals, ...payload };
+
+    for (const asset in totals) {
+      if (totals[asset].amount.isZero()) delete totals[asset];
+    }
+
+    state.totals = totals;
   },
   updateLiabilities(state: BalanceState, payload: Balances) {
     state.liabilities = { ...state.liabilities, ...payload };
@@ -110,8 +119,8 @@ export const mutations: MutationTree<BalanceState> = {
   avaxAccounts(state: BalanceState, accounts: GeneralAccountData[]) {
     state.avaxAccounts = accounts;
   },
-  supportedAssets(state: BalanceState, supportedAssets: SupportedAsset[]) {
-    state.supportedAssets = supportedAssets;
+  eth2Validators(state: BalanceState, eth2Validators: Eth2Validators) {
+    state.eth2Validators = eth2Validators;
   },
   manualBalances(
     state: BalanceState,

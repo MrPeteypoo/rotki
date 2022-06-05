@@ -2,7 +2,19 @@ import logging
 from functools import wraps
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import Any, Callable, Dict, Iterable, List, NamedTuple, Optional, Sequence, Tuple, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+    cast,
+)
 from urllib.parse import urlparse
 
 import gevent
@@ -10,12 +22,14 @@ import requests
 from requests.adapters import Response
 from substrateinterface import SubstrateInterface
 from substrateinterface.exceptions import BlockNotFound, SubstrateRequestException
-from typing_extensions import Literal
 from websocket import WebSocketException
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets import GreenletManager
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -23,7 +37,7 @@ from rotkehlchen.serialization.deserialize import deserialize_int_from_str
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.serialization import jsonloads_dict
 
-from .typing import (
+from .types import (
     BlockNumber,
     DictNodeNameNodeAttributes,
     NodeName,
@@ -267,7 +281,10 @@ class SubstrateManager():
 
     @staticmethod
     def _format_own_rpc_endpoint(endpoint: str) -> str:
-        return f'http://{endpoint}' if not urlparse(endpoint).scheme else endpoint
+        parsed = urlparse(endpoint)
+        if not parsed.scheme or parsed.path.isnumeric():
+            return f'http://{endpoint}'
+        return endpoint
 
     def _get_account_balance(
             self,
@@ -460,7 +477,7 @@ class SubstrateManager():
 
         log.debug(f'{self.chain} subscan API request', request_url=url)
         try:
-            response = requests.post(url=url)
+            response = requests.post(url=url, timeout=DEFAULT_TIMEOUT_TUPLE)
         except requests.exceptions.RequestException as e:
             message = f'{self.chain} failed to post request at {url}. Connection error: {str(e)}.'
             log.error(message)

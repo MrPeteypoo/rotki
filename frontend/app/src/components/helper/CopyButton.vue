@@ -1,7 +1,7 @@
 <template>
   <v-tooltip top open-delay="400">
     <template #activator="{ on, attrs }">
-      <v-btn small v-bind="attrs" icon v-on="on" @click="copy">
+      <v-btn small v-bind="attrs" icon @click="copy" v-on="on">
         <v-icon small>mdi-content-copy</v-icon>
       </v-btn>
     </template>
@@ -10,19 +10,24 @@
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent } from '@vue/composition-api';
+import { toRefs, useClipboard } from '@vueuse/core';
 
-@Component({})
-export default class CopyButton extends Vue {
-  @Prop({ required: true, type: String })
-  value!: string;
-  @Prop({ required: true, type: String })
-  tooltip!: string;
+export default defineComponent({
+  name: 'CopyButton',
+  props: {
+    value: { required: true, type: String },
+    tooltip: { required: true, type: String }
+  },
+  setup(props) {
+    const { value } = toRefs(props);
+    const { copy: copyText } = useClipboard({ source: value });
 
-  copy() {
-    navigator.clipboard.writeText(this.value);
+    const copy = () => copyText();
+
+    return {
+      copy
+    };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

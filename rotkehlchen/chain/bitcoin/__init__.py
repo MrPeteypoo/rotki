@@ -2,9 +2,9 @@ from typing import Dict, List, Tuple
 
 import requests
 
-from rotkehlchen.errors import RemoteError, UnableToDecryptRemoteData
+from rotkehlchen.errors.misc import RemoteError, UnableToDecryptRemoteData
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import BTCAddress
+from rotkehlchen.types import BTCAddress
 from rotkehlchen.utils.misc import satoshis_to_btc
 from rotkehlchen.utils.network import request_get_dict
 

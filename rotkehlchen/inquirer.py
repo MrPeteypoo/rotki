@@ -2,6 +2,7 @@ from __future__ import unicode_literals  # isort:skip
 
 import logging
 import operator
+from enum import auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, Iterable, List, NamedTuple, Optional, Tuple, Union
 
@@ -14,6 +15,7 @@ from rotkehlchen.constants import CURRENCYCONVERTER_API_KEY, ZERO
 from rotkehlchen.constants.assets import (
     A_3CRV,
     A_ALINK_V1,
+    A_BSQ,
     A_BTC,
     A_CRV_3CRV,
     A_CRV_3CRVSUSD,
@@ -34,6 +36,7 @@ from rotkehlchen.constants.assets import (
     A_FARM_WBTC,
     A_FARM_WETH,
     A_GUSD,
+    A_KFEE,
     A_TUSD,
     A_USD,
     A_USDC,
@@ -53,24 +56,24 @@ from rotkehlchen.constants.assets import (
     A_YV1_WETH,
     A_YV1_YFI,
 )
-from rotkehlchen.constants.ethereum import CURVE_POOL_ABI, UNISWAP_V2_LP_ABI, YEARN_VAULT_V2_ABI
+from rotkehlchen.constants.ethereum import CURVE_POOL_ABI, YEARN_VAULT_V2_ABI
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, MONTH_IN_SECONDS
-from rotkehlchen.errors import (
-    BlockchainQueryError,
-    PriceQueryUnsupportedAsset,
-    RemoteError,
-    UnableToDecryptRemoteData,
-    UnknownAsset,
-)
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.defi import DefiPoolError
+from rotkehlchen.errors.misc import BlockchainQueryError, RemoteError, UnableToDecryptRemoteData
+from rotkehlchen.errors.price import PriceQueryUnsupportedAsset
+from rotkehlchen.errors.serialization import DeserializationError
+from rotkehlchen.externalapis.bisq_market import get_bisq_market_price
 from rotkehlchen.externalapis.xratescom import (
     get_current_xratescom_exchange_rates,
     get_historical_xratescom_exchange_rates,
 )
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.typing import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.interfaces import CurrentPriceOracleInterface
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     CURVE_POOL_PROTOCOL,
     UNISWAP_PROTOCOL,
     YEARN_VAULTS_V2_PROTOCOL,
@@ -84,6 +87,8 @@ from rotkehlchen.utils.network import request_get_dict
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager
+    from rotkehlchen.chain.ethereum.oracles.saddle import SaddleOracle
+    from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
     from rotkehlchen.externalapis.coingecko import Coingecko
     from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 
@@ -92,6 +97,7 @@ logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
 CURRENT_PRICE_CACHE_SECS = 300  # 5 mins
+BTC_PER_BSQ = FVal('0.00000100')
 
 ASSETS_UNDERLYING_BTC = (
     A_YV1_RENWSBTC,
@@ -103,7 +109,13 @@ ASSETS_UNDERLYING_BTC = (
 )
 
 
-CurrentPriceOracleInstance = Union['Coingecko', 'Cryptocompare']
+CurrentPriceOracleInstance = Union[
+    'Coingecko',
+    'Cryptocompare',
+    'UniswapV3Oracle',
+    'UniswapV2Oracle',
+    'SaddleOracle',
+]
 
 
 def _check_curve_contract_call(decoded: Tuple[Any, ...]) -> bool:
@@ -123,13 +135,19 @@ def _check_curve_contract_call(decoded: Tuple[Any, ...]) -> bool:
 
 class CurrentPriceOracle(SerializableEnumMixin):
     """Supported oracles for querying current prices"""
-    COINGECKO = 1
-    CRYPTOCOMPARE = 2
+    COINGECKO = auto()
+    CRYPTOCOMPARE = auto()
+    UNISWAPV2 = auto()
+    UNISWAPV3 = auto()
+    SADDLE = auto()
 
 
 DEFAULT_CURRENT_PRICE_ORACLES_ORDER = [
     CurrentPriceOracle.COINGECKO,
     CurrentPriceOracle.CRYPTOCOMPARE,
+    CurrentPriceOracle.UNISWAPV2,
+    CurrentPriceOracle.UNISWAPV3,
+    CurrentPriceOracle.SADDLE,
 ]
 
 
@@ -224,6 +242,9 @@ class Inquirer():
     _data_directory: Path
     _cryptocompare: 'Cryptocompare'
     _coingecko: 'Coingecko'
+    _uniswapv2: Optional['UniswapV2Oracle'] = None
+    _uniswapv3: Optional['UniswapV3Oracle'] = None
+    _saddle: Optional['SaddleOracle'] = None
     _ethereum: Optional['EthereumManager'] = None
     _oracles: Optional[List[CurrentPriceOracle]] = None
     _oracle_instances: Optional[List[CurrentPriceOracleInstance]] = None
@@ -287,6 +308,16 @@ class Inquirer():
         Inquirer()._ethereum = ethereum
 
     @staticmethod
+    def add_defi_oracles(
+        uniswap_v2: Optional['UniswapV2Oracle'],
+        uniswap_v3: Optional['UniswapV3Oracle'],
+        saddle: Optional['SaddleOracle'],
+    ) -> None:
+        Inquirer()._uniswapv2 = uniswap_v2
+        Inquirer()._uniswapv3 = uniswap_v3
+        Inquirer()._saddle = saddle
+
+    @staticmethod
     def get_cached_current_price_entry(cache_key: Tuple[Asset, Asset]) -> Optional[CachedPriceEntry]:  # noqa: E501
         cache = Inquirer()._cached_current_price.get(cache_key, None)
         if cache is None or ts_now() - cache.time > CURRENT_PRICE_CACHE_SECS:
@@ -317,7 +348,10 @@ class Inquirer():
         )
         price = Price(ZERO)
         for oracle, oracle_instance in zip(oracles, oracle_instances):
-            if oracle_instance.rate_limited_in_last() is True:
+            if (
+                isinstance(oracle_instance, CurrentPriceOracleInterface) and
+                oracle_instance.rate_limited_in_last() is True
+            ):
                 continue
 
             try:
@@ -325,7 +359,7 @@ class Inquirer():
                     from_asset=from_asset,
                     to_asset=to_asset,
                 )
-            except (PriceQueryUnsupportedAsset, RemoteError) as e:
+            except (DefiPoolError, PriceQueryUnsupportedAsset, RemoteError) as e:
                 log.error(
                     f'Current price oracle {oracle} failed to request {to_asset.identifier} '
                     f'price for {from_asset.identifier} due to: {str(e)}.',
@@ -445,84 +479,43 @@ class Inquirer():
             )
             return usd_price
 
+        # BSQ is a special asset that doesnt have oracle information but its custom API
+        if asset == A_BSQ:
+            try:
+                price_in_btc = get_bisq_market_price(asset)
+                btc_price = Inquirer().find_usd_price(A_BTC)
+                usd_price = Price(price_in_btc * btc_price)
+                Inquirer._cached_current_price[cache_key] = CachedPriceEntry(
+                    price=usd_price,
+                    time=ts_now(),
+                )
+                return usd_price
+            except (RemoteError, DeserializationError) as e:
+                msg = f'Could not find price for BSQ. {str(e)}'
+                if instance._ethereum is not None:
+                    instance._ethereum.msg_aggregator.add_warning(msg)
+                return Price(BTC_PER_BSQ * price_in_btc)
+
+        if asset == A_KFEE:
+            # KFEE is a kraken special asset where 1000 KFEE = 10 USD
+            return Price(FVal(0.01))
+
         return instance._query_oracle_instances(from_asset=asset, to_asset=A_USD)
 
     def find_uniswap_v2_lp_price(
-        self,
-        token: EthereumToken,
+            self,
+            token: EthereumToken,
     ) -> Optional[Price]:
-        """
-        Calculate the price for a uniswap v2 LP token. That is
-        value = (Total value of liquidity pool) / (Current suply of LP tokens)
-        We need:
-        - Price of token 0
-        - Price of token 1
-        - Pooled amount of token 0
-        - Pooled amount of token 1
-        - Total supply of of pool token
-        """
         assert self._ethereum is not None, 'Inquirer ethereum manager should have been initialized'  # noqa: E501
-
-        address = token.ethereum_address
-        contract = EthereumContract(address=address, abi=UNISWAP_V2_LP_ABI, deployed_block=0)
-        methods = ['token0', 'token1', 'totalSupply', 'getReserves', 'decimals']
-        try:
-            output = multicall_2(
-                ethereum=self._ethereum,
-                require_success=True,
-                calls=[(address, contract.encode(method_name=method)) for method in methods],
-            )
-        except RemoteError as e:
-            log.error(
-                f'Remote error calling multicall contract for uniswap v2 lp '
-                f'token {token.ethereum_address} properties: {str(e)}',
-            )
-            return None
-
-        # decode output
-        decoded = []
-        for (method_output, method_name) in zip(output, methods):
-            if method_output[0] and len(method_output[1]) != 0:
-                decoded_method = contract.decode(method_output[1], method_name)
-                if len(decoded_method) == 1:
-                    # https://github.com/PyCQA/pylint/issues/4739
-                    decoded.append(decoded_method[0])  # pylint: disable=unsubscriptable-object
-                else:
-                    decoded.append(decoded_method)
-            else:
-                log.debug(
-                    f'Multicall to Uniswap V2 LP failed to fetch field {method_name} '
-                    f'for token {token.ethereum_address}',
-                )
-                return None
-
-        try:
-            token0 = EthereumToken(decoded[0])
-            token1 = EthereumToken(decoded[1])
-        except UnknownAsset:
-            return None
-
-        try:
-            token0_supply = FVal(decoded[3][0] * 10**-token0.decimals)
-            token1_supply = FVal(decoded[3][1] * 10**-token1.decimals)
-            total_supply = FVal(decoded[2] * 10 ** - decoded[4])
-        except ValueError as e:
-            log.debug(
-                f'Failed to deserialize token amounts for token {address} '
-                f'with values {str(decoded)}. f{str(e)}',
-            )
-            return None
-        token0_price = self.find_usd_price(token0)
-        token1_price = self.find_usd_price(token1)
-
-        if ZERO in (token0_price, token1_price):
-            log.debug(
-                f'Couldnt retrieve non zero price information for tokens {token0}, {token1} '
-                f'with result {token0_price}, {token1_price}',
-            )
-        numerator = (token0_supply * token0_price + token1_supply * token1_price)
-        share_value = numerator / total_supply
-        return Price(share_value)
+        # BAD BAD BAD. TODO: Need to rethinking placement of modules here
+        from rotkehlchen.chain.ethereum.modules.uniswap.utils import find_uniswap_v2_lp_price  # isort:skip  # noqa: E501  # pylint: disable=import-outside-toplevel
+        return find_uniswap_v2_lp_price(
+            ethereum=self._ethereum,
+            token=token,
+            token_price_func=self.find_usd_price,
+            token_price_func_args=[],
+            block_identifier='latest',
+        )
 
     def find_curve_pool_price(
         self,
@@ -628,7 +621,7 @@ class Inquirer():
             return None
 
         # Calculate weight of each asset as the proportion of tokens value
-        weights = map(lambda x: data[x + 1] * prices[x] / total_assets_price, range(len(tokens)))
+        weights = (data[x + 1] * prices[x] / total_assets_price for x in range(len(tokens)))
         assets_price = FVal(sum(map(operator.mul, weights, prices)))
         return (assets_price * FVal(data[0])) / (10 ** lp_token.decimals)
 

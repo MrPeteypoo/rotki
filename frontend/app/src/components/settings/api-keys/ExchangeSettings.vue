@@ -33,6 +33,12 @@
         <template #item.location="{ item }">
           <location-display :identifier="item.location" />
         </template>
+        <template #item.syncEnabled="{ item }">
+          <v-switch
+            :input-value="!isNonSyncExchange(item)"
+            @change="toggleSync(item)"
+          />
+        </template>
         <template #item.actions="{ item }">
           <row-actions
             :delete-tooltip="$t('exchange_settings.delete.tooltip')"
@@ -72,7 +78,7 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
+import { Component, Mixins } from 'vue-property-decorator';
 import { DataTableHeader } from 'vuetify';
 import { mapActions, mapState } from 'vuex';
 import BaseExternalLink from '@/components/base/BaseExternalLink.vue';
@@ -83,14 +89,15 @@ import RowActions from '@/components/helper/RowActions.vue';
 import { exchangeName } from '@/components/history/consts';
 import RevealableInput from '@/components/inputs/RevealableInput.vue';
 import ExchangeKeysForm from '@/components/settings/api-keys/ExchangeKeysForm.vue';
-import { EXCHANGE_KRAKEN } from '@/data/defaults';
-import { Exchange } from '@/model/action-result';
+import SettingsMixin from '@/mixins/settings-mixin';
 import { ExchangePayload, ExchangeSetupPayload } from '@/store/balances/types';
+import { useNotifications } from '@/store/notifications';
 import { Nullable, Writeable } from '@/types';
+import { Exchange, SupportedExchange } from '@/types/exchanges';
 import { assert } from '@/utils/assertions';
 
 const placeholder: () => ExchangePayload = () => ({
-  location: EXCHANGE_KRAKEN,
+  location: SupportedExchange.KRAKEN,
   name: '',
   newName: null,
   apiKey: null,
@@ -118,7 +125,8 @@ const placeholder: () => ExchangePayload = () => ({
     ...mapActions('balances', ['setupExchange', 'removeExchange'])
   }
 })
-export default class ExchangeSettings extends Vue {
+export default class ExchangeSettings extends Mixins(SettingsMixin) {
+  nonSyncingExchanges: Exchange[] = [];
   pendingRemoval: Nullable<Exchange> = null;
   confirmation: boolean = false;
   setupExchange!: (payload: ExchangeSetupPayload) => Promise<boolean>;
@@ -131,6 +139,65 @@ export default class ExchangeSettings extends Vue {
   valid: boolean = false;
   pending: boolean = false;
   binancePairs: string[] = [];
+
+  created() {
+    this.nonSyncingExchanges = this.generalSettings.nonSyncingExchanges;
+  }
+
+  mounted() {
+    const { currentRoute } = this.$router;
+    if (currentRoute.query.add) {
+      this.addExchange();
+      this.$router.replace({ query: {} });
+    }
+  }
+
+  findNonSyncExchangeIndex(exchange: Exchange) {
+    return this.nonSyncingExchanges.findIndex((item: Exchange) => {
+      return item.name === exchange.name && item.location === exchange.location;
+    });
+  }
+
+  isNonSyncExchange(exchange: Exchange) {
+    return this.findNonSyncExchangeIndex(exchange) > -1;
+  }
+
+  async toggleSync(exchange: Exchange) {
+    const index = this.findNonSyncExchangeIndex(exchange);
+
+    let data = [...this.nonSyncingExchanges];
+
+    let enable = true;
+
+    if (index > -1) {
+      enable = false;
+      data.splice(index);
+    } else {
+      data.push({ location: exchange.location, name: exchange.name });
+    }
+
+    const status = await this.settingsUpdate({
+      nonSyncingExchanges: data
+    });
+
+    if (!status.success) {
+      const { notify } = useNotifications();
+      notify({
+        title: this.$t('exchange_settings.sync.messages.title').toString(),
+        message: this.$t('exchange_settings.sync.messages.description', {
+          action: enable
+            ? this.$t('exchange_settings.sync.messages.enable')
+            : this.$t('exchange_settings.sync.messages.disable'),
+          location: exchange.location,
+          name: exchange.name,
+          message: status.message
+        }).toString(),
+        display: true
+      });
+    }
+
+    this.nonSyncingExchanges = this.generalSettings.nonSyncingExchanges;
+  }
 
   get dialogTitle(): string {
     return this.edit
@@ -161,6 +228,10 @@ export default class ExchangeSettings extends Vue {
     {
       text: this.$t('exchange_settings.header.name').toString(),
       value: 'name'
+    },
+    {
+      text: this.$t('exchange_settings.header.sync_enabled').toString(),
+      value: 'syncEnabled'
     },
     {
       text: this.$t('exchange_settings.header.actions').toString(),
@@ -201,7 +272,7 @@ export default class ExchangeSettings extends Vue {
     }
 
     if (
-      exchange.ftxSubaccount !== null &&
+      !!exchange.ftxSubaccount &&
       exchange.ftxSubaccount.trim().length === 0
     ) {
       exchange.ftxSubaccount = null;

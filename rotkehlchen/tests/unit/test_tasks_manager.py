@@ -1,18 +1,20 @@
 from typing import List
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import gevent
 import pytest
 
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.chain.bitcoin.xpub import XpubData
-from rotkehlchen.chain.ethereum.transactions import EthTransactions
 from rotkehlchen.db.ethtx import DBEthTx
-from rotkehlchen.exchanges.manager import ExchangeManager
-from rotkehlchen.tasks.manager import TaskManager
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.premium.premium import Premium, PremiumCredentials, SubscriptionStatus
+from rotkehlchen.tasks.manager import PREMIUM_STATUS_CHECK, TaskManager
 from rotkehlchen.tests.utils.ethereum import setup_ethereum_transactions_test
-from rotkehlchen.typing import Location
-from rotkehlchen.utils.misc import hexstring_to_bytes, ts_now
+from rotkehlchen.tests.utils.premium import VALID_PREMIUM_KEY, VALID_PREMIUM_SECRET
+from rotkehlchen.types import Location
+from rotkehlchen.utils.hexbytes import hexstring_to_bytes
+from rotkehlchen.utils.misc import ts_now
 
 
 class MockPremiumSyncManager():
@@ -34,11 +36,6 @@ def fixture_api_task_greenlets() -> List:
     return []
 
 
-@pytest.fixture(name='exchange_manager')
-def fixture_exchange_manager(function_scope_messages_aggregator) -> ExchangeManager:
-    return ExchangeManager(msg_aggregator=function_scope_messages_aggregator)
-
-
 @pytest.fixture(name='task_manager')
 def fixture_task_manager(
         database,
@@ -48,6 +45,8 @@ def fixture_task_manager(
         api_task_greenlets,
         cryptocompare,
         exchange_manager,
+        evm_transaction_decoder,
+        eth_transactions,
 ) -> TaskManager:
     task_manager = TaskManager(
         max_tasks_num=max_tasks_num,
@@ -58,6 +57,12 @@ def fixture_task_manager(
         premium_sync_manager=MockPremiumSyncManager(),  # type: ignore
         chain_manager=blockchain,
         exchange_manager=exchange_manager,
+        evm_tx_decoder=evm_transaction_decoder,
+        eth_transactions=eth_transactions,
+        deactivate_premium=lambda: None,
+        query_balances=lambda: None,
+        activate_premium=lambda _: None,
+        rotki_notifier=None,
     )
     return task_manager
 
@@ -72,11 +77,11 @@ def test_maybe_query_ethereum_transactions(task_manager, ethereum_accounts):
         assert start_ts == 0
         assert end_ts >= now
 
-    tx_query_patch = patch(
-        'rotkehlchen.tasks.manager.EthTransactions.single_address_query_transactions',
+    tx_query_patch = patch.object(
+        task_manager.eth_transactions,
+        'single_address_query_transactions',
         wraps=tx_query_mock,
     )
-
     timeout = 8
     try:
         with gevent.Timeout(timeout):
@@ -155,7 +160,13 @@ def test_maybe_schedule_exchange_query(task_manager, exchange_manager, poloniex)
 
 
 @pytest.mark.parametrize('one_receipt_in_db', [True, False])
-def test_maybe_schedule_ethereum_txreceipts(task_manager, ethereum_manager, database, one_receipt_in_db):  # noqa: E501
+def test_maybe_schedule_ethereum_txreceipts(
+        task_manager,
+        ethereum_manager,
+        eth_transactions,
+        database,
+        one_receipt_in_db,
+):
     task_manager.potential_tasks = [task_manager._maybe_schedule_ethereum_txreceipts]  # pylint: disable=protected-member  # noqa: E501
     _, receipts = setup_ethereum_transactions_test(
         database=database,
@@ -165,33 +176,116 @@ def test_maybe_schedule_ethereum_txreceipts(task_manager, ethereum_manager, data
 
     dbethtx = DBEthTx(database)
     timeout = 10
-    tx_hash_1 = '0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda'
-    tx_hash_2 = '0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77'
-    receipt_task_patch = patch.object(task_manager, '_run_ethereum_txreceipts_query', wraps=task_manager._run_ethereum_txreceipts_query)  # pylint: disable=protected-member  # noqa: E501
+    tx_hash_1 = hexstring_to_bytes('0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda')  # noqa: E501
+    tx_hash_2 = hexstring_to_bytes('0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77')  # noqa: E501
+    receipt_get_patch = patch.object(ethereum_manager, 'get_transaction_receipt', wraps=ethereum_manager.get_transaction_receipt)  # pylint: disable=protected-member  # noqa: E501
     queried_receipts = set()
     try:
         with gevent.Timeout(timeout):
-            with receipt_task_patch as receipt_task_mock:
+            with receipt_get_patch as receipt_task_mock:
                 task_manager.schedule()
                 while True:
                     if len(queried_receipts) == 2:
                         break
 
                     for txhash in (tx_hash_1, tx_hash_2):
-                        if dbethtx.get_receipt(hexstring_to_bytes(txhash)) is not None:
+                        if dbethtx.get_receipt(txhash) is not None:
                             queried_receipts.add(txhash)
 
                     gevent.sleep(.3)
 
                 task_manager.schedule()
                 gevent.sleep(.5)
-                assert receipt_task_mock.call_count == 1, '2nd schedule should do nothing'
+                assert receipt_task_mock.call_count == 1 if one_receipt_in_db else 2, '2nd schedule should do nothing'  # noqa: E501
 
     except gevent.Timeout as e:
         raise AssertionError(f'receipts query was not completed within {timeout} seconds') from e  # noqa: E501
 
-    txmodule = EthTransactions(ethereum=ethereum_manager, database=database)
-    receipt1 = txmodule.get_or_query_transaction_receipt(tx_hash_1)
+    receipt1 = eth_transactions.get_or_query_transaction_receipt(tx_hash_1)
     assert receipt1 == receipts[0]
-    receipt2 = txmodule.get_or_query_transaction_receipt(tx_hash_2)
+    receipt2 = eth_transactions.get_or_query_transaction_receipt(tx_hash_2)
     assert receipt2 == receipts[1]
+
+
+@pytest.mark.parametrize('max_tasks_num', [7])
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_check_premium_status(rotkehlchen_api_server):
+    """
+    Test that the premium check tasks works correctly. The tests creates a valid subscription
+    and verifies that after the task was scheduled the users premium is deactivated.
+    """
+    rotki = rotkehlchen_api_server.rest_api.rotkehlchen
+    gevent.killall(rotki.api_task_greenlets)
+    task_manager = rotki.task_manager
+    task_manager.potential_tasks = [task_manager._maybe_check_premium_status]
+    task_manager.last_premium_status_check = ts_now() - 3601
+
+    premium_credentials = PremiumCredentials(VALID_PREMIUM_KEY, VALID_PREMIUM_SECRET)
+    premium = Premium(premium_credentials)
+    premium.status = SubscriptionStatus.ACTIVE
+
+    def mock_check_premium_status():
+        task_manager.last_premium_status_check = ts_now() - PREMIUM_STATUS_CHECK
+        task_manager._maybe_check_premium_status()
+
+    with patch(
+        'rotkehlchen.db.dbhandler.DBHandler.get_rotkehlchen_premium',
+        MagicMock(return_value=premium_credentials),
+    ):
+        assert premium.is_active() is True
+        assert rotki.premium is not None
+
+        with patch('rotkehlchen.premium.premium.Premium.is_active', MagicMock(return_value=False)):
+            mock_check_premium_status()
+            assert rotki.premium is None, (
+                'Premium object is not None and should be'
+                'deactivated after invalid premium credentials'
+            )
+
+        with patch('rotkehlchen.premium.premium.Premium.is_active', MagicMock(return_value=True)):
+            mock_check_premium_status()
+            assert rotki.premium is not None, (
+                'Permium object is None and Periodic check'
+                'didn\'t reactivate the premium status'
+            )
+
+        with patch(
+            'rotkehlchen.premium.premium.Premium.is_active',
+            MagicMock(side_effect=RemoteError()),
+        ):
+            for check_trial in range(3):
+                mock_check_premium_status()
+                assert rotki.premium is not None, f'Premium object is None and should be active after the {check_trial} periodic check'  # noqa: E501
+
+            mock_check_premium_status()
+            assert rotki.premium is None, 'Premium object is not None and should be deactivated after the 4th periodic check'  # noqa: E501
+
+        with patch('rotkehlchen.premium.premium.Premium.is_active', MagicMock(return_value=True)):
+            mock_check_premium_status()
+            assert rotki.premium is not None, 'Permium object is None and Periodic check didn\'t reactivate the premium status'  # noqa: E501
+
+
+def test_update_snapshot_balances(task_manager):
+    task_manager.potential_tasks = [task_manager._maybe_update_snapshot_balances]
+    query_balances_patch = patch.object(
+        task_manager,
+        'query_balances',
+    )
+    timeout = 5
+    try:
+        with gevent.Timeout(timeout):
+            with query_balances_patch as query_mock:
+                task_manager.schedule()
+                while True:
+                    if query_mock.call_count == 1:
+                        break
+                    gevent.sleep(.2)
+
+                query_mock.assert_called_once_with(
+                    requested_save_data=True,
+                    save_despite_errors=False,
+                    timestamp=None,
+                    ignore_cache=True,
+                )
+    except gevent.Timeout as e:
+        raise AssertionError(f'Update snapshot balances was not completed within {timeout} seconds') from e  # noqa: E501

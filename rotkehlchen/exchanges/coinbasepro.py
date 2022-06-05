@@ -8,28 +8,34 @@ from base64 import b64decode, b64encode
 from collections import defaultdict
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, DefaultDict, Dict, Iterator, List, Optional, Tuple, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    DefaultDict,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+)
 from urllib.parse import urlencode
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_coinbasepro
-from rotkehlchen.assets.typing import AssetType
+from rotkehlchen.assets.types import AssetType
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.constants.timing import QUERY_RETRY_TIMES
-from rotkehlchen.errors import (
-    DeserializationError,
-    RemoteError,
-    UnknownAsset,
-    UnprocessableTradePair,
-    UnsupportedAsset,
-)
+from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE, QUERY_RETRY_TIMES
+from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.history.deserialization import deserialize_price
@@ -41,9 +47,16 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_movement_category,
     deserialize_fee,
     deserialize_timestamp_from_date,
-    deserialize_trade_type,
 )
-from rotkehlchen.typing import ApiKey, ApiSecret, AssetMovementCategory, Fee, Location, Timestamp
+from rotkehlchen.types import (
+    ApiKey,
+    ApiSecret,
+    AssetMovementCategory,
+    Fee,
+    Location,
+    Timestamp,
+    TradeType,
+)
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
 from rotkehlchen.utils.mixins.lockable import protect_with_lock
@@ -205,12 +218,6 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             request_url += '?' + urlencode(query_options)
 
         message = timestamp + request_method + request_url + stringified_options
-        log.debug(
-            'Coinbase Pro API query',
-            request_method=request_method,
-            request_url=request_url,
-            options=options,
-        )
 
         if 'products' not in endpoint:
             try:
@@ -229,12 +236,19 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
 
         retries_left = QUERY_RETRY_TIMES
         while retries_left > 0:
+            log.debug(
+                'Coinbase Pro API query',
+                request_method=request_method,
+                request_url=request_url,
+                options=options,
+            )
             full_url = self.base_uri + request_url
             try:
                 response = self.session.request(
                     request_method.lower(),
                     full_url,
                     data=stringified_options,
+                    timeout=DEFAULT_TIMEOUT_TUPLE,
                 )
             except requests.exceptions.RequestException as e:
                 raise RemoteError(
@@ -244,7 +258,9 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
 
             if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
                 # Backoff a bit by sleeping. Sleep more, the more retries have been made
-                gevent.sleep(QUERY_RETRY_TIMES / retries_left)
+                backoff_secs = QUERY_RETRY_TIMES / retries_left
+                log.debug(f'Backing off coinbase pro api query for {backoff_secs} secs')
+                gevent.sleep(backoff_secs)
                 retries_left -= 1
             else:
                 # get out of the retry loop, we did not get 429 complaint
@@ -418,7 +434,7 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 if entry.get('completed_at', None) is None:
                     log.warning(
                         f'Skipping coinbase pro deposit/withdrawal '
-                        f'due not having been completed: {entry}',
+                        f'due to not having been completed: {entry}',
                     )
                     continue
 
@@ -430,8 +446,8 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 asset = account_to_currency.get(entry['account_id'], None)
                 if asset is None:
                     log.warning(
-                        f'Skipping coinbase pro asset_movement {entry} due to inability to '
-                        f'match account id to an asset',
+                        f'Skipping coinbase pro asset_movement {entry} due to '
+                        f'inability to match account id to an asset',
                     )
                     continue
 
@@ -494,7 +510,7 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         """Queries coinbase pro for trades"""
         log.debug('Query coinbasepro trade history', start_ts=start_ts, end_ts=end_ts)
         self.first_connection()
@@ -564,7 +580,7 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                         location=Location.COINBASEPRO,
                         base_asset=base_asset,
                         quote_asset=quote_asset,
-                        trade_type=deserialize_trade_type(fill_entry['side']),
+                        trade_type=TradeType.deserialize(fill_entry['side']),
                         amount=deserialize_asset_amount(fill_entry['size']),
                         rate=deserialize_price(fill_entry['price']),
                         fee=deserialize_fee(fill_entry['fee']),
@@ -598,7 +614,7 @@ class Coinbasepro(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                     )
                     continue
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def query_online_margin_history(
             self,  # pylint: disable=no-self-use

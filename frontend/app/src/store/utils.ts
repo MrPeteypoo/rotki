@@ -1,23 +1,20 @@
-import { inject } from '@vue/composition-api';
+import { Message, Severity } from '@rotki/common/lib/messages';
+import { Ref } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import * as logger from 'loglevel';
-import { ActionContext, Commit, Store } from 'vuex';
+import { ActionContext, Store } from 'vuex';
 import i18n from '@/i18n';
-import { createTask, taskCompletion, TaskMeta } from '@/model/task';
-import { TaskType } from '@/model/task-type';
 import { Section, Status } from '@/store/const';
-import { Severity } from '@/store/notifications/consts';
-import { notify } from '@/store/notifications/utils';
-import store from '@/store/store';
-import { Message, RotkehlchenState, StatusPayload } from '@/store/types';
-import { FetchPayload } from '@/store/typing';
-import { assert } from '@/utils/assertions';
+import { useNotifications } from '@/store/notifications';
+import store, { useMainStore } from '@/store/store';
+import { useTasks } from '@/store/tasks';
+import { RotkehlchenState } from '@/store/types';
+import { FetchData, FetchPayload } from '@/store/typing';
+import { TaskMeta } from '@/types/task';
+import { TaskType } from '@/types/task-type';
 
 export async function fetchAsync<S, T extends TaskMeta, R>(
-  {
-    commit,
-    rootGetters: { status },
-    rootState: { session }
-  }: ActionContext<S, RotkehlchenState>,
+  { commit, rootState: { session } }: ActionContext<S, RotkehlchenState>,
   payload: FetchPayload<T, R>
 ): Promise<void> {
   const { activeModules } = session!.generalSettings;
@@ -29,7 +26,7 @@ export async function fetchAsync<S, T extends TaskMeta, R>(
   }
 
   const section = payload.section;
-  const currentStatus = status(section);
+  const currentStatus = getStatus(section);
 
   if (
     isLoading(currentStatus) ||
@@ -39,82 +36,141 @@ export async function fetchAsync<S, T extends TaskMeta, R>(
   }
 
   const newStatus = payload.refresh ? Status.REFRESHING : Status.LOADING;
-  setStatus(newStatus, section, status, commit);
+  setStatus(newStatus, section);
+
+  const { awaitTask } = useTasks();
 
   try {
     const { taskId } = await payload.query();
-    const task = createTask(taskId, payload.taskType, payload.meta);
-    commit('tasks/add', task, { root: true });
-    const { result } = await taskCompletion<R, T>(payload.taskType);
+    const { result } = await awaitTask<R, T>(
+      taskId,
+      payload.taskType,
+      payload.meta
+    );
     commit(payload.mutation, payload.parser ? payload.parser(result) : result);
   } catch (e: any) {
     logger.error(`action failure for task ${TaskType[payload.taskType]}:`, e);
-    notify(
-      payload.onError.error(e.message),
-      payload.onError.title,
-      Severity.ERROR,
-      true
-    );
+    const { notify } = useNotifications();
+    notify({
+      title: payload.onError.title,
+      message: payload.onError.error(e.message),
+      severity: Severity.ERROR,
+      display: true
+    });
   }
-  setStatus(Status.LOADED, section, status, commit);
+  setStatus(Status.LOADED, section);
+}
+
+export async function fetchDataAsync<T extends TaskMeta, R>(
+  data: FetchData<T, R>,
+  state: Ref<R>
+): Promise<void> {
+  if (
+    !get(data.state.activeModules).includes(data.requires.module) ||
+    (data.requires.premium && !get(data.state.isPremium))
+  ) {
+    logger.debug('module inactive or not premium');
+    return;
+  }
+
+  const task = data.task;
+  const { getStatus, loading, setStatus } = getStatusUpdater(task.section);
+
+  if (loading() || (getStatus() === Status.LOADED && !data.refresh)) {
+    logger.debug(`${Section[data.task.section]} is already loading`);
+    return;
+  }
+
+  setStatus(data.refresh ? Status.REFRESHING : Status.LOADING);
+
+  const { awaitTask } = useTasks();
+
+  try {
+    const { taskId } = await task.query();
+    const { result } = await awaitTask<R, T>(taskId, task.type, task.meta);
+    set(state, task.parser ? task.parser(result) : result);
+  } catch (e: any) {
+    logger.error(`action failure for task ${TaskType[task.type]}:`, e);
+    const { notify } = useNotifications();
+    notify({
+      title: task.onError.title,
+      message: task.onError.error(e.message),
+      severity: Severity.ERROR,
+      display: true
+    });
+  }
+  setStatus(Status.LOADED);
 }
 
 export function showError(description: string, title?: string) {
+  const { setMessage } = useMainStore();
   const message = {
     title: title ?? i18n.t('message.error.title').toString(),
     description: description || '',
     success: false
   };
-  store.commit('setMessage', message);
+  setMessage(message);
 }
 
 export function showMessage(description: string, title?: string): void {
+  const { setMessage } = useMainStore();
   const message: Message = {
     title: title ?? i18n.t('message.success.title').toString(),
     description,
     success: true
   };
-  store.commit('setMessage', message);
+  setMessage(message);
 }
 
-export const setStatus: (
-  newStatus: Status,
-  section: Section,
-  status: (section: Section) => Status,
-  commit: Commit
-) => void = (newStatus, section, status, commit) => {
-  if (status(section) === newStatus) {
-    return;
-  }
-  const payload: StatusPayload = {
-    section: section,
-    status: newStatus
-  };
-  commit('setStatus', payload, { root: true });
+export const getStatus = (section: Section) => {
+  const { getStatus } = useMainStore();
+  return get(getStatus(section));
 };
 
-export const getStatusUpdater = (
-  commit: Commit,
-  section: Section,
-  getStatus: (section: Section) => Status
+export const setStatus: (newStatus: Status, section: Section) => void = (
+  newStatus,
+  section
 ) => {
-  const setStatus = (status: Status) => {
-    if (getStatus(section) === status) {
+  const { getStatus, setStatus } = useMainStore();
+  if (get(getStatus(section)) === newStatus) {
+    return;
+  }
+  setStatus({
+    section: section,
+    status: newStatus
+  });
+};
+
+export const getStatusUpdater = (section: Section, ignore: boolean = false) => {
+  const { setStatus, getStatus } = useMainStore();
+  const updateStatus = (status: Status, otherSection?: Section) => {
+    if (ignore) {
       return;
     }
-    const payload: StatusPayload = {
-      section: section,
+    setStatus({
+      section: otherSection ?? section,
       status: status
-    };
-    commit('setStatus', payload, { root: true });
+    });
   };
 
-  const loading = () => isLoading(getStatus(section));
-  const isFirstLoad = () => getStatus(section) === Status.NONE;
+  const resetStatus = (otherSection?: Section) => {
+    setStatus({
+      section: otherSection ?? section,
+      status: Status.NONE
+    });
+  };
+
+  const loading = () => isLoading(get(getStatus(section)));
+  const isFirstLoad = () => get(getStatus(section)) === Status.NONE;
+  const getSectionStatus = (otherSection?: Section) => {
+    return get(getStatus(otherSection ?? section));
+  };
   return {
     loading,
     isFirstLoad,
-    setStatus
+    setStatus: updateStatus,
+    getStatus: getSectionStatus,
+    resetStatus
   };
 };
 
@@ -143,8 +199,17 @@ export function filterAddresses<T>(
   }
 }
 
-export function useStore(): Store<RotkehlchenState> {
-  const store = inject<Store<RotkehlchenState>>('vuex-store');
-  assert(store);
-  return store;
+export const useStore = (): Store<RotkehlchenState> => store;
+
+const KEY_ANIMATIONS_ENABLED = 'rotki.animations_enabled' as const;
+export function isAnimationsEnabled(): boolean {
+  return !localStorage.getItem(KEY_ANIMATIONS_ENABLED) ?? true;
+}
+
+export function setAnimationsEnabled(enabled: boolean): void {
+  if (!enabled) {
+    localStorage.setItem(KEY_ANIMATIONS_ENABLED, `${enabled}`);
+  } else {
+    localStorage.removeItem(KEY_ANIMATIONS_ENABLED);
+  }
 }

@@ -1,6 +1,7 @@
 import { DebugSettings } from '@rotki/common/lib/settings';
+import { z } from 'zod';
 import { BackendCode } from '@/electron-main/backend-code';
-import { Level } from '@/utils/log-level';
+import { LogLevel } from '@/utils/log-level';
 
 type MetamaskImportError = {
   readonly error: string;
@@ -19,15 +20,24 @@ export type SystemVersion = {
   readonly arch: string;
 };
 
-export type BackendOptions = {
-  readonly loglevel: Level;
-  readonly dataDirectory: string;
-  readonly logDirectory: string;
-  readonly sleepSeconds: number;
-  readonly logFromOtherModules: boolean;
-  readonly maxSizeInMbAllLogs: number;
-  readonly maxLogfilesNum: number;
-};
+export const ActiveLogLevel = z.preprocess(
+  s => (typeof s === 'string' ? s.toLowerCase() : s),
+  z.nativeEnum(LogLevel)
+);
+
+export const BackendOptions = z.object({
+  loglevel: ActiveLogLevel.optional(),
+  dataDirectory: z.string().optional(),
+  logDirectory: z.string().optional(),
+  sleepSeconds: z.number().nonnegative().optional(),
+  logFromOtherModules: z.boolean().optional(),
+  maxSizeInMbAllLogs: z.number().optional(),
+  maxLogfilesNum: z.number().optional()
+});
+
+export type StoredBackendOptions = z.infer<typeof BackendOptions>;
+
+export type BackendOptions = Required<StoredBackendOptions>;
 
 export type TrayUpdate = {
   readonly percentage?: string;
@@ -50,7 +60,6 @@ export interface Interop {
   monitorDebugSettings(): void;
   debugSettings?(): DebugSettings | undefined;
   serverUrl(): string;
-  websocketUrl(): string;
   metamaskImport(): Promise<MetamaskImport>;
   checkForUpdates(): Promise<boolean>;
   downloadUpdate(progress: (percentage: number) => void): Promise<boolean>;
@@ -61,4 +70,8 @@ export interface Interop {
   onAbout(callback: () => void): void;
   config(defaults: boolean): Promise<Partial<BackendOptions>>;
   updateTray(trayUpdate: TrayUpdate): Promise<void>;
+  logToFile(message: string): void;
+  storePassword(username: string, password: string): Promise<boolean>;
+  getPassword(username: string): Promise<string>;
+  clearPassword(): Promise<void>;
 }

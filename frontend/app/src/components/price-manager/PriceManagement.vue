@@ -12,7 +12,7 @@
           <asset-select
             v-model="filter.fromAsset"
             outlined
-            :label="$t('price_management.from_asset')"
+            :label="$tc('price_management.from_asset')"
             clearable
           />
         </v-col>
@@ -20,7 +20,7 @@
           <asset-select
             v-model="filter.toAsset"
             outlined
-            :label="$t('price_management.to_asset')"
+            :label="$tc('price_management.to_asset')"
             clearable
           />
         </v-col>
@@ -45,10 +45,14 @@
           : $t('price_management.dialog.add_title')
       "
       :action-disabled="!valid"
-      @confirm="managePrice(price, editMode)"
+      @confirm="managePrice(priceForm, editMode)"
       @cancel="hideForm()"
     >
-      <price-form v-model="price" :edit="editMode" @valid="valid = $event" />
+      <price-form
+        v-model="priceForm"
+        :edit="editMode"
+        @valid="valid = $event"
+      />
     </big-dialog>
   </v-container>
 </template>
@@ -56,36 +60,38 @@
 <script lang="ts">
 import {
   defineComponent,
-  inject,
+  onMounted,
   reactive,
   Ref,
   ref
 } from '@vue/composition-api';
-import { Store } from 'vuex';
+import { get, set } from '@vueuse/core';
 import BigDialog from '@/components/dialogs/BigDialog.vue';
-import PriceForm from '@/components/price-manager/PriceFrom.vue';
+import PriceForm from '@/components/price-manager/PriceForm.vue';
 import PriceTable from '@/components/price-manager/PriceTable.vue';
+import { useRoute, useRouter } from '@/composables/common';
 import i18n from '@/i18n';
-import { HistoricalPrice } from '@/services/assets/types';
+import {
+  HistoricalPrice,
+  HistoricalPriceFormPayload
+} from '@/services/assets/types';
 import { api } from '@/services/rotkehlchen-api';
-import { Message, RotkehlchenState } from '@/store/types';
+import { useMainStore } from '@/store/store';
 import { Nullable } from '@/types';
-import { assert } from '@/utils/assertions';
-import { Zero } from '@/utils/bignumbers';
 
-const emptyPrice: () => HistoricalPrice = () => ({
+const emptyPrice: () => HistoricalPriceFormPayload = () => ({
   fromAsset: '',
   toAsset: '',
-  price: Zero,
+  price: '0',
   timestamp: 0
 });
 
-const managePrice = (
-  showForm: Ref<Boolean>,
-  refresh: Ref<Boolean>,
-  store: Store<RotkehlchenState>
-) => {
-  const managePrice = async (price: HistoricalPrice, edit: boolean) => {
+const managePrice = (showForm: Ref<Boolean>, refresh: Ref<Boolean>) => {
+  const { setMessage } = useMainStore();
+  const managePrice = async (
+    price: HistoricalPriceFormPayload,
+    edit: boolean
+  ) => {
     try {
       if (edit) {
         await api.assets.editHistoricalPrice(price);
@@ -93,9 +99,9 @@ const managePrice = (
         await api.assets.addHistoricalPrice(price);
       }
 
-      showForm.value = false;
-      if (!refresh.value) {
-        refresh.value = true;
+      set(showForm, false);
+      if (!get(refresh)) {
+        set(refresh, true);
       }
     } catch (e: any) {
       const values = { message: e.message };
@@ -105,12 +111,11 @@ const managePrice = (
       const description = edit
         ? i18n.t('price_management.edit.error.description', values)
         : i18n.t('price_management.add.error.description', values);
-      const message: Message = {
+      setMessage({
         title: title.toString(),
         description: description.toString(),
         success: false
-      };
-      store.commit('setMessage', message);
+      });
     }
   };
 
@@ -123,10 +128,8 @@ export default defineComponent({
   name: 'PriceManagement',
   components: { PriceTable, PriceForm, BigDialog },
   setup() {
-    const store = inject<Store<RotkehlchenState>>('vuex-store');
-    assert(store);
     const refresh = ref(false);
-    const price = ref(emptyPrice());
+    const priceForm = ref<HistoricalPriceFormPayload>(emptyPrice());
     const showForm = ref(false);
     const filter = reactive<{
       fromAsset: Nullable<string>;
@@ -138,36 +141,52 @@ export default defineComponent({
     const valid = ref(false);
     const editMode = ref(false);
 
-    const openForm = function (hPrice: HistoricalPrice = emptyPrice()) {
-      editMode.value = !!hPrice.timestamp;
-      price.value = editMode.value
-        ? hPrice
-        : {
-            ...hPrice,
-            fromAsset: filter.fromAsset ?? '',
-            toAsset: filter.toAsset ?? ''
-          };
-      showForm.value = true;
+    const openForm = function (hPrice: HistoricalPrice | null = null) {
+      set(editMode, !!hPrice);
+      if (hPrice) {
+        set(priceForm, {
+          ...hPrice,
+          price: hPrice.price.toFixed() ?? ''
+        });
+      } else {
+        const emptyPriceObj = emptyPrice();
+        set(priceForm, {
+          ...emptyPriceObj,
+          fromAsset: filter.fromAsset ?? '',
+          toAsset: filter.toAsset ?? ''
+        });
+      }
+      set(showForm, true);
     };
 
     const hideForm = function () {
-      showForm.value = false;
-      price.value = emptyPrice();
+      set(showForm, false);
+      set(priceForm, emptyPrice());
     };
 
+    const router = useRouter();
+    const route = useRoute();
+
+    onMounted(() => {
+      const query = get(route).query;
+
+      if (query.add) {
+        openForm();
+        router.replace({ query: {} });
+      }
+    });
+
     return {
-      ...managePrice(showForm, refresh, store),
+      ...managePrice(showForm, refresh),
       refresh,
       filter,
       openForm,
       hideForm,
       showForm,
       editMode,
-      price,
+      priceForm,
       valid
     };
   }
 });
 </script>
-
-<style scoped></style>

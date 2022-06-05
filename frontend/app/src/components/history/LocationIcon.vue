@@ -7,7 +7,7 @@
       'py-4': !noPadding
     }"
   >
-    <span>
+    <adaptive-wrapper component="span">
       <v-img
         v-if="item.imageIcon"
         :width="size"
@@ -19,29 +19,52 @@
       <component
         :is="item.component"
         v-else-if="typeof item.component !== 'undefined'"
+        :width="size"
       />
-      <v-icon v-else color="accent"> {{ item.icon }} </v-icon>
-    </span>
+      <v-icon v-else color="accent" :style="iconStyle">
+        {{ item.icon }}
+      </v-icon>
+    </adaptive-wrapper>
     <span v-if="!icon" :class="horizontal ? 'ml-3' : null" class="mt-1">
       {{ item.name }}
     </span>
   </span>
 </template>
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import { TradeLocationData } from '@/components/history/type';
 
-@Component({})
-export default class LocationIcon extends Vue {
-  @Prop({ required: true })
-  item!: TradeLocationData;
-  @Prop({ required: false, type: Boolean, default: false })
-  horizontal!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  icon!: boolean;
-  @Prop({ required: false, type: String, default: '24px' })
-  size!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  noPadding!: boolean;
-}
+export default defineComponent({
+  name: 'LocationIcon',
+  components: { AdaptiveWrapper },
+  props: {
+    item: {
+      required: true,
+      type: Object as PropType<TradeLocationData>
+    },
+    horizontal: { required: false, type: Boolean, default: false },
+    icon: { required: false, type: Boolean, default: false },
+    size: { required: false, type: String, default: '24px' },
+    noPadding: { required: false, type: Boolean, default: false }
+  },
+  setup(props) {
+    const { size } = toRefs(props);
+    const iconStyle = computed(() => {
+      return {
+        fontSize: get(size)
+      };
+    });
+
+    return {
+      iconStyle
+    };
+  }
+});
 </script>

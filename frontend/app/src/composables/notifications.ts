@@ -1,26 +1,17 @@
+import { NotificationData } from '@rotki/common/lib/messages';
 import { computed } from '@vue/composition-api';
-import { NotificationData } from '@/store/notifications/types';
-import { useStore } from '@/store/utils';
+import { acceptHMRUpdate } from 'pinia';
+import { useNotifications } from '@/store/notifications';
 
 export const setupNotifications = () => {
-  const store = useStore();
-  const count = computed(() => store.getters['notifications/count']);
-  const data = computed(() => store.state.notifications!!.data);
-  const remove = (id: number) => {
-    store.commit('notifications/remove', id);
-  };
+  const store = useNotifications();
+  const count = computed(() => store.count);
+  const queue = computed<NotificationData[]>(() => store.queue);
+  const data = computed(() => store.data);
 
-  const reset = () => {
-    store.commit('notifications/reset');
-  };
-
-  const displayed = async (id: number[]) => {
-    await store.dispatch('notifications/displayed', id);
-  };
-
-  const queue = computed<NotificationData[]>(
-    () => store.getters['notifications/queue']
-  );
+  const remove = (id: number) => store.remove(id);
+  const reset = () => store.reset();
+  const displayed = async (ids: number[]) => store.displayed(ids);
 
   return {
     data,
@@ -31,3 +22,7 @@ export const setupNotifications = () => {
     displayed
   };
 };
+
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useNotifications, import.meta.hot));
+}

@@ -5,7 +5,7 @@ export type ExplorerUrls = {
   readonly transaction: string;
 };
 
-type Chains = Blockchain | 'ETC' | 'zksync';
+export type Chains = Blockchain | 'ETC' | 'zksync';
 
 export type AssetExplorerUrls = {
   [key in Chains]: ExplorerUrls;
@@ -15,6 +15,10 @@ export const explorerUrls: AssetExplorerUrls = {
   ETH: {
     address: 'https://etherscan.io/address/',
     transaction: 'https://etherscan.io/tx/'
+  },
+  ETH2: {
+    address: 'https://beaconcha.in/validator/',
+    transaction: ''
   },
   BTC: {
     address: 'https://blockstream.info/address/',

@@ -1,10 +1,14 @@
 # -*- mode: python -*-
 from __future__ import print_function  # isort:skip
+import os
 import platform
 import sys
 from distutils.spawn import find_executable
 
+from PyInstaller.utils.hooks import collect_submodules
+
 from rotkehlchen.exchanges.manager import SUPPORTED_EXCHANGES
+from rotkehlchen.types import Location
 from rotkehlchen.utils.misc import get_system_spec
 
 """
@@ -59,7 +63,7 @@ def Entrypoint(dist, group, name, scripts=None, pathex=None, hiddenimports=None,
         hookspath=hookspath,
         excludes=excludes,
         runtime_hooks=runtime_hooks,
-        datas=datas
+        datas=datas,
     )
 
 
@@ -75,7 +79,11 @@ hiddenimports = ['cytoolz.utils', 'cytoolz._signatures']
 # by pyinstaller (https://github.com/rotki/rotki/issues/602) make sure they are
 # all included as imports in the created executable
 for exchange_name in SUPPORTED_EXCHANGES:
+    if exchange_name == Location.BINANCEUS:
+        continue
     hiddenimports.append(f'rotkehlchen.exchanges.{exchange_name}')
+dynamic_modules = collect_submodules('rotkehlchen.chain.ethereum.modules')
+hiddenimports.extend(dynamic_modules)
 
 a = Entrypoint(
     'rotkehlchen',
@@ -92,8 +100,16 @@ a = Entrypoint(
         ('rotkehlchen/data/uniswapv2_lp_tokens.meta', 'rotkehlchen/data'),
         ('rotkehlchen/data/global.db', 'rotkehlchen/data'),
         ('rotkehlchen/data/curve_pools.json', 'rotkehlchen/data'),
+        # TODO
+        # We probably should have a better way to specify some data should be loaded
+        # by a module in pynistaller. Should be loaded dynamically by rotki and not
+        # by pyinstaller if we want it to be truly modular
+        (
+            'rotkehlchen/chain/ethereum/modules/dxdaomesa/data/contracts.json',
+            'rotkehlchen/chain/ethereum/modules/dxdaomesa/data',
+        ),
     ],
-    excludes=['FixTk', 'tcl', 'tk', '_tkinter', 'tkinter', 'Tkinter', 'packaging'],
+    excludes=['FixTk', 'tcl', 'tk', '_tkinter', 'tkinter', 'Tkinter'],
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
@@ -110,7 +126,7 @@ if ONEFILE:
         strip=False,
         upx=False,
         runtime_tmpdir=None,
-        console=True
+        console=True,
     )
 else:
     exe = EXE(
@@ -121,7 +137,7 @@ else:
         debug=False,
         strip=False,
         upx=False,
-        console=True
+        console=True,
     )
     coll = COLLECT(
         exe,
@@ -130,5 +146,5 @@ else:
         a.datas,
         strip=False,
         upx=False,
-        name='rotkehlchen'
+        name='rotkehlchen',
     )

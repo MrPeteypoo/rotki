@@ -3,24 +3,29 @@
     class="tag font-weight-medium"
     label
     :small="small"
-    :color="`#${tag.background_color}`"
-    :text-color="`#${tag.foreground_color}`"
+    :color="`#${tag.backgroundColor}`"
+    :text-color="`#${tag.foregroundColor}`"
   >
-    {{ tag.name }}
+    <v-img
+      v-if="tag.icon"
+      class="mr-2"
+      :width="20"
+      :height="20"
+      :src="tag.icon"
+    />
+    <span>{{ tag.name }}</span>
   </v-chip>
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
-import { Tag } from '@/typing/types';
+import { defineComponent, PropType } from '@vue/composition-api';
+import { Tag } from '@/types/user';
 
-@Component({})
-export default class TagIcon extends Vue {
-  @Prop({ required: true })
-  tag!: Tag;
-  @Prop({ required: false, type: Boolean, default: false })
-  small!: boolean;
-}
+export default defineComponent({
+  name: 'TagIcon',
+  props: {
+    tag: { required: true, type: Object as PropType<Tag> },
+    small: { required: false, type: Boolean, default: false }
+  }
+});
 </script>
-
-<style scoped lang="scss"></style>

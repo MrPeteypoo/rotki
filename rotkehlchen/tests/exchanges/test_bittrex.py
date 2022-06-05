@@ -1,18 +1,19 @@
 import warnings as test_warnings
 from unittest.mock import patch
 
-from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.asset import WORLD_TO_BITTREX, Asset
 from rotkehlchen.assets.converters import UNSUPPORTED_BITTREX_ASSETS, asset_from_bittrex
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_LTC
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import UnknownAsset, UnsupportedAsset
+from rotkehlchen.db.filtering import AssetMovementsFilterQuery
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.exchanges.bittrex import Bittrex
 from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.fval import FVal
 from rotkehlchen.serialization.deserialize import deserialize_timestamp_from_date
 from rotkehlchen.tests.utils.history import TEST_END_TS
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import AssetMovementCategory, Location, TradeType
+from rotkehlchen.types import AssetMovementCategory, Location, TradeType
 
 
 def test_deserialize_timestamp_from_bittrex_date():
@@ -34,6 +35,9 @@ def test_name():
 
 
 def test_bittrex_assets_are_known(bittrex):
+    unsupported_assets = set(UNSUPPORTED_BITTREX_ASSETS)
+    common_items = unsupported_assets.intersection(set(WORLD_TO_BITTREX.values()))
+    assert not common_items, f'Bittrex assets {common_items} should not be unsupported'
     currencies = bittrex.get_currencies()
     for bittrex_asset in currencies:
         symbol = bittrex_asset['symbol']
@@ -179,7 +183,7 @@ def test_bittrex_query_trade_history_unexpected_data(bittrex):
         )
         with patch_get, patch_response:
             # Test that after querying the assets only ETH and BTC are there
-            trades = bittrex.query_online_trade_history(start_ts=0, end_ts=1564301134)
+            trades, _ = bittrex.query_online_trade_history(start_ts=0, end_ts=1564301134)
 
         assert len(trades) == 0
         errors = bittrex.msg_aggregator.consume_errors()
@@ -427,7 +431,10 @@ def test_bittrex_query_asset_movement_int_transaction_id(bittrex):
     assert movements[0].transaction_id == '9875231951530679373'
 
     # also make sure they are written in the db
-    db_movements = bittrex.db.get_asset_movements(from_ts=0, to_ts=TEST_END_TS)
+    db_movements = bittrex.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     assert len(db_movements) == 1
     assert db_movements[0] == movements[0]
 

@@ -1,7 +1,9 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional
 
+from rotkehlchen.accounting.mixins.event import AccountingEventMixin, AccountingEventType
+from rotkehlchen.accounting.structures.base import ActionType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.history.deserialization import deserialize_price
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -10,8 +12,11 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_optional,
     deserialize_timestamp,
 )
-from rotkehlchen.typing import AssetAmount, Location, Price, Timestamp, Tuple
+from rotkehlchen.types import AssetAmount, Location, Price, Timestamp, Tuple
 from rotkehlchen.utils.mixins.dbenum import DBEnumMixIn
+
+if TYPE_CHECKING:
+    from rotkehlchen.accounting.pot import AccountingPot
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -65,51 +70,8 @@ LedgerActionDBTupleWithIdentifier = Tuple[
 ]
 
 
-class GitcoinEventTxType(DBEnumMixIn):
-    ETHEREUM = 1
-    ZKSYNC = 2
-
-
-GitcoinEventDataDB = Tuple[
-    int,            # parent_id
-    str,            # tx_id
-    int,            # grant_id
-    Optional[int],  # clr_round
-    str,            # tx_type
-]
-
-
-class GitcoinEventData(NamedTuple):
-    tx_id: str
-    grant_id: int
-    clr_round: Optional[int]
-    tx_type: GitcoinEventTxType
-
-    def serialize_for_db(self, parent_id: int) -> GitcoinEventDataDB:
-        """Serializes Gitcoin event data to a tuple for writing to DB"""
-        return (
-            parent_id,
-            self.tx_id,
-            self.grant_id,
-            self.clr_round,
-            self.tx_type.serialize_for_db(),
-        )
-
-    @staticmethod
-    def deserialize_from_db(data: GitcoinEventDataDB) -> 'GitcoinEventData':
-        """May raise:
-        - DeserializationError
-        """
-        return GitcoinEventData(
-            tx_id=data[1],
-            grant_id=data[2],
-            clr_round=data[3],
-            tx_type=GitcoinEventTxType.deserialize_from_db(data[4]),
-        )
-
-
 @dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
-class LedgerAction:
+class LedgerAction(AccountingEventMixin):
     """Represents an income/loss/expense for accounting purposes"""
     identifier: int  # the unique id of the action and DB primary key
     timestamp: Timestamp
@@ -117,11 +79,10 @@ class LedgerAction:
     location: Location
     amount: AssetAmount
     asset: Asset
-    rate: Optional[Price]
-    rate_asset: Optional[Asset]
-    link: Optional[str]
-    notes: Optional[str]
-    extra_data: Optional[GitcoinEventData] = None
+    rate: Optional[Price] = None
+    rate_asset: Optional[Asset] = None
+    link: Optional[str] = None
+    notes: Optional[str] = None
 
     def __hash__(self) -> int:
         return hash(str(self))
@@ -150,20 +111,6 @@ class LedgerAction:
             'notes': self.notes,
         }
 
-    def serialize_for_gitcoin(self) -> Dict[str, Any]:
-        """Should only be called for actions that have gitcoin data"""
-        extra_data: GitcoinEventData = self.extra_data  # type: ignore
-        return {
-            'timestamp': self.timestamp,
-            'amount': str(self.amount),
-            'asset': self.asset.identifier,
-            'usd_value': str(self.amount * self.rate),  # type: ignore
-            'grant_id': extra_data.grant_id,
-            'tx_id': extra_data.tx_id,
-            'tx_type': str(extra_data.tx_type),
-            'clr_round': extra_data.clr_round,
-        }
-
     def serialize_for_db(self) -> LedgerActionDBTuple:
         """Serializes an action for writing in the DB.
         Identifier and extra_data are ignored"""
@@ -183,18 +130,11 @@ class LedgerAction:
     def deserialize_from_db(
             cls,
             data: LedgerActionDBTupleWithIdentifier,
-            given_gitcoin_map: Optional[Dict[int, GitcoinEventDataDB]] = None,
     ) -> 'LedgerAction':
         """May raise:
         - DeserializationError
         - UnknownAsset
         """
-        extra_data = None
-        gitcoin_map = {} if not given_gitcoin_map else given_gitcoin_map
-        gitcoin_data = gitcoin_map.get(data[0], None)
-        if gitcoin_data is not None:
-            extra_data = GitcoinEventData.deserialize_from_db(data=gitcoin_data)
-
         return cls(
             identifier=data[0],
             timestamp=deserialize_timestamp(data[1]),
@@ -206,8 +146,65 @@ class LedgerAction:
             rate_asset=deserialize_optional(data[7], Asset),
             link=data[8],
             notes=data[9],
-            extra_data=extra_data,
         )
 
     def is_profitable(self) -> bool:
         return self.action_type.is_profitable()
+
+    # -- Methods of AccountingEventMixin
+
+    def get_timestamp(self) -> Timestamp:
+        return self.timestamp
+
+    @staticmethod
+    def get_accounting_event_type() -> AccountingEventType:
+        return AccountingEventType.LEDGER_ACTION
+
+    def get_identifier(self) -> str:
+        return str(self.identifier)
+
+    def should_ignore(self, ignored_ids_mapping: Dict[ActionType, List[str]]) -> bool:
+        return self.get_identifier() in ignored_ids_mapping.get(ActionType.LEDGER_ACTION, [])
+
+    def get_assets(self) -> List[Asset]:
+        return [self.asset]
+
+    def process(
+            self,
+            accounting: 'AccountingPot',
+            events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
+    ) -> int:
+        given_price = None  # Determine if non-standard price should be used
+        if self.rate is not None and self.rate_asset is not None:
+            if self.rate_asset == accounting.profit_currency:
+                given_price = self.rate
+            else:
+                quote_rate = accounting.get_rate_in_profit_currency(self.rate_asset, self.timestamp)  # noqa: E501
+                given_price = Price(self.rate * quote_rate)
+
+        taxed = self.action_type in accounting.settings.taxable_ledger_actions
+        notes = self.notes if self.notes else f'{self.action_type} ledger action'
+        if self.is_profitable():
+            accounting.add_acquisition(
+                event_type=AccountingEventType.LEDGER_ACTION,
+                notes=notes,
+                location=self.location,
+                timestamp=self.timestamp,
+                asset=self.asset,
+                amount=self.amount,
+                taxable=taxed,
+                given_price=given_price,
+            )
+        else:
+            accounting.add_spend(
+                event_type=AccountingEventType.LEDGER_ACTION,
+                notes=notes,
+                location=self.location,
+                timestamp=self.timestamp,
+                asset=self.asset,
+                amount=self.amount,
+                taxable=taxed,
+                given_price=given_price,
+            )
+
+        return 1

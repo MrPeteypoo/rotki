@@ -8,9 +8,10 @@
             text
             fab
             depressed
+            color="primary"
             v-on="{ ...menu, ...tooltip }"
           >
-            <v-icon color="primary">mdi-cog</v-icon>
+            <v-icon>mdi-cog</v-icon>
           </v-btn>
         </template>
         <span>{{ $t('backend_settings_button.tooltip') }}</span>
@@ -21,20 +22,20 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
+import { defineComponent, ref } from '@vue/composition-api';
 import BackendSettings from '@/components/settings/BackendSettings.vue';
 
-@Component({
-  components: { BackendSettings }
-})
-export default class BackendSettingsButton extends Vue {
-  visible: boolean = false;
-}
+export default defineComponent({
+  name: 'BackendSettingsButton',
+  components: { BackendSettings },
+  setup() {
+    const visible = ref<boolean>(false);
+    return { visible };
+  }
+});
 </script>
 
 <style scoped lang="scss">
-@import '~@/scss/scroll';
-
 ::v-deep {
   .v-card {
     border-bottom-left-radius: 0 !important;

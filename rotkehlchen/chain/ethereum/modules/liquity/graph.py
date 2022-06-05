@@ -10,7 +10,7 @@ QUERY_TROVE = (
         owner {
             id
         }
-        changes {
+        changes(orderBy: sequenceNumber){
             id
             systemStateBefore {
                 id
@@ -25,6 +25,7 @@ QUERY_TROVE = (
             collateralAfter
             collateralBefore
             collateralChange
+            sequenceNumber
             borrowingFee
             transaction{
                 id
@@ -47,7 +48,7 @@ QUERY_STAKE = (
         ){
             id
             amount
-            changes{
+            changes(orderBy: sequenceNumber){
                 transaction {
                     id
                     sequenceNumber

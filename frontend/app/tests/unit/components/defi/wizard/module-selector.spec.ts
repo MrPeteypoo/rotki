@@ -1,14 +1,15 @@
 import { mount, Wrapper } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import Vue from 'vue';
 import Vuetify from 'vuetify';
 import ModuleSelector from '@/components/defi/wizard/ModuleSelector.vue';
 import { api } from '@/services/rotkehlchen-api';
-import { Module } from '@/services/session/consts';
 import store from '@/store/store';
-import { GeneralSettings } from '@/typing/types';
+import { Module } from '@/types/modules';
+import { GeneralSettings } from '@/types/user';
 import '../../../i18n';
 
-jest.mock('@/services/rotkehlchen-api');
+vi.mock('@/services/rotkehlchen-api');
 
 Vue.use(Vuetify);
 
@@ -17,10 +18,13 @@ describe('ModuleSelector.vue', () => {
 
   function createWrapper() {
     const vuetify = new Vuetify();
+    const pinia = createPinia();
+    setActivePinia(pinia);
     return mount(ModuleSelector, {
       store,
+      pinia,
       vuetify,
-      stubs: ['v-tooltip']
+      stubs: ['v-tooltip', 'card']
     });
   }
 
@@ -41,7 +45,7 @@ describe('ModuleSelector.vue', () => {
 
   test('removes active modules on click', async () => {
     expect.assertions(2);
-    api.setSettings = jest.fn().mockResolvedValue({ active_modules: [] });
+    api.setSettings = vi.fn().mockResolvedValue({ active_modules: [] });
     wrapper.find('#defi-module-aave').find('button').trigger('click');
     await wrapper.vm.$nextTick();
     expect(wrapper.find('#defi-module-aave').exists()).toBe(false);

@@ -51,12 +51,7 @@
         </template>
         <template #item="data">
           <div
-            class="
-              blockchain-account-selector__list__item
-              d-flex
-              justify-space-between
-              flex-grow-1
-            "
+            class="blockchain-account-selector__list__item d-flex align-center justify-space-between flex-grow-1"
           >
             <div class="blockchain-account-selector__list__item__address-label">
               <v-chip
@@ -68,15 +63,7 @@
                 <account-display :account="data.item" />
               </v-chip>
             </div>
-            <div class="blockchain-account-selector__list__item__tags">
-              <tag-icon
-                v-for="tag in data.item.tags"
-                :key="tag"
-                small
-                class="mr-1"
-                :tag="tags[tag]"
-              />
-            </div>
+            <tag-display :tags="data.item.tags" :small="true" />
           </div>
         </template>
       </v-autocomplete>
@@ -91,93 +78,115 @@
 <script lang="ts">
 import { GeneralAccount } from '@rotki/common/lib/account';
 import { Blockchain } from '@rotki/common/lib/blockchain';
-import { Component, Emit, Mixins, Prop } from 'vue-property-decorator';
-import { mapGetters, mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  ref,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import AccountDisplay from '@/components/display/AccountDisplay.vue';
-import TagIcon from '@/components/tags/TagIcon.vue';
+import TagDisplay from '@/components/tags/TagDisplay.vue';
+import { setupBlockchainAccounts } from '@/composables/balances';
+import { setupThemeCheck } from '@/composables/common';
+import i18n from '@/i18n';
 
-import ThemeMixin from '@/mixins/theme-mixin';
-import { Tags } from '@/typing/types';
-
-@Component({
-  components: { AccountDisplay, TagIcon },
-  computed: {
-    ...mapState('session', ['tags']),
-    ...mapGetters('balances', ['accounts'])
-  }
-})
-export default class BlockchainAccountSelector extends Mixins(ThemeMixin) {
-  @Prop({ required: false, type: String })
-  label!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  hint!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  loading!: boolean;
-  @Prop({ required: false, type: Array, default: () => [] })
-  usableAddresses!: string[];
-  @Prop({ required: false, type: Boolean, default: false })
-  multiple!: boolean;
-  @Prop({ required: true })
-  value!: GeneralAccount[] | GeneralAccount | null;
-  @Prop({ required: false, type: Array, default: () => [] })
-  chains!: Blockchain[];
-  @Prop({ required: false, type: Boolean, default: false })
-  outlined!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  dense!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  noPadding!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  hideOnEmptyUsable!: boolean;
-
-  accounts!: GeneralAccount[];
-  tags!: Tags;
-  search: string = '';
-
-  get selectableAccounts(): GeneralAccount[] {
-    if (this.chains.length === 0) {
-      return this.accounts;
-    }
-    return this.accounts.filter(({ chain }) => this.chains.includes(chain));
-  }
-
-  get hintText(): string {
-    const all = this.$t('blockchain_account_selector.all').toString();
-    if (Array.isArray(this.value)) {
-      return this.value.length > 0 ? this.value.length.toString() : all;
-    }
-    return this.value ? '1' : all;
-  }
-
-  @Emit()
-  input(_value: string) {}
-
-  get displayedAccounts(): GeneralAccount[] {
-    if (this.usableAddresses.length > 0) {
-      return this.selectableAccounts.filter(({ address }) =>
-        this.usableAddresses.includes(address)
+export default defineComponent({
+  components: { AccountDisplay, TagDisplay },
+  props: {
+    label: { required: false, type: String, default: '' },
+    hint: { required: false, type: Boolean, default: false },
+    loading: { required: false, type: Boolean, default: false },
+    usableAddresses: {
+      required: false,
+      type: Array as PropType<string[]>,
+      default: () => []
+    },
+    multiple: { required: false, type: Boolean, default: false },
+    value: {
+      required: false,
+      type: [Object, Array] as PropType<
+        GeneralAccount[] | GeneralAccount | null
+      >,
+      default: null
+    },
+    chains: {
+      required: false,
+      type: Array as PropType<Blockchain[]>,
+      default: () => []
+    },
+    outlined: { required: false, type: Boolean, default: false },
+    dense: { required: false, type: Boolean, default: false },
+    noPadding: { required: false, type: Boolean, default: false },
+    hideOnEmptyUsable: { required: false, type: Boolean, default: false }
+  },
+  emits: ['input'],
+  setup(props, { emit }) {
+    const { chains, value, usableAddresses, hideOnEmptyUsable } = toRefs(props);
+    const search = ref('');
+    const { accounts } = setupBlockchainAccounts();
+    const selectableAccounts = computed(() => {
+      const filteredChains = get(chains);
+      const blockchainAccounts = get(accounts);
+      if (filteredChains.length === 0) {
+        return blockchainAccounts;
+      }
+      return blockchainAccounts.filter(({ chain }) =>
+        filteredChains.includes(chain)
       );
-    }
-    return this.hideOnEmptyUsable ? [] : this.selectableAccounts;
+    });
+
+    const hintText = computed(() => {
+      const all = i18n.t('blockchain_account_selector.all').toString();
+      const selection = get(value);
+      if (Array.isArray(selection)) {
+        return selection.length > 0 ? selection.length.toString() : all;
+      }
+      return selection ? '1' : all;
+    });
+
+    const displayedAccounts = computed(() => {
+      const addresses = get(usableAddresses);
+      const accounts = get(selectableAccounts);
+      if (addresses.length > 0) {
+        return accounts.filter(({ address }) => addresses.includes(address));
+      }
+      return get(hideOnEmptyUsable) ? [] : accounts;
+    });
+
+    const filter = (item: GeneralAccount, queryText: string) => {
+      const text = item.label.toLocaleLowerCase();
+      const query = queryText.toLocaleLowerCase();
+      const address = item.address.toLocaleLowerCase();
+
+      const labelMatches = text.indexOf(query) > -1;
+      const addressMatches = address.indexOf(query) > -1;
+
+      const tagMatches =
+        item.tags
+          .map(tag => tag.toLocaleLowerCase())
+          .join(' ')
+          .indexOf(query) > -1;
+
+      return labelMatches || tagMatches || addressMatches;
+    };
+
+    const input = (value: string | null) => emit('input', value);
+
+    const { dark } = setupThemeCheck();
+
+    return {
+      search,
+      input,
+      filter,
+      hintText,
+      displayedAccounts,
+      selectableAccounts,
+      dark
+    };
   }
-
-  filter(item: GeneralAccount, queryText: string) {
-    const text = item.label.toLocaleLowerCase();
-    const query = queryText.toLocaleLowerCase();
-    const address = item.address.toLocaleLowerCase();
-
-    const labelMatches = text.indexOf(query) > -1;
-    const addressMatches = address.indexOf(query) > -1;
-
-    const tagMatches =
-      item.tags
-        .map(tag => tag.toLocaleLowerCase())
-        .join(' ')
-        .indexOf(query) > -1;
-
-    return labelMatches || tagMatches || addressMatches;
-  }
-}
+});
 </script>
 
 <style scoped lang="scss">

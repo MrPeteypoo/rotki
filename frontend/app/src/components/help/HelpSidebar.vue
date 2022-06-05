@@ -42,26 +42,50 @@
           <v-icon>mdi-chevron-right</v-icon>
         </v-list-item-action>
       </v-list-item>
-      <v-list-item v-if="!$interop.isPackaged" selectable @click="openAbout()">
-        <v-list-item-avatar>
-          <v-icon>mdi-information</v-icon>
-        </v-list-item-avatar>
-        <v-list-item-content>
-          <v-list-item-title>{{ $t('help_sidebar.about') }}</v-list-item-title>
-          <v-list-item-subtitle>
-            {{ $t('help_sidebar.about_subtitle') }}
-          </v-list-item-subtitle>
-        </v-list-item-content>
-        <v-list-item-action>
-          <v-icon>mdi-chevron-right</v-icon>
-        </v-list-item-action>
-      </v-list-item>
+      <template v-if="!$interop.isPackaged">
+        <v-list-item selectable @click="openAbout()">
+          <v-list-item-avatar>
+            <v-icon>mdi-information</v-icon>
+          </v-list-item-avatar>
+          <v-list-item-content>
+            <v-list-item-title>
+              {{ $t('help_sidebar.about.title') }}
+            </v-list-item-title>
+            <v-list-item-subtitle>
+              {{ $t('help_sidebar.about.subtitle') }}
+            </v-list-item-subtitle>
+          </v-list-item-content>
+          <v-list-item-action>
+            <v-icon>mdi-chevron-right</v-icon>
+          </v-list-item-action>
+        </v-list-item>
+        <v-list-item selectable @click="downloadBrowserLog()">
+          <v-list-item-avatar>
+            <v-icon>mdi-note-text</v-icon>
+          </v-list-item-avatar>
+          <v-list-item-content>
+            <v-list-item-title>
+              {{ $t('help_sidebar.browser_log.title') }}
+            </v-list-item-title>
+            <v-list-item-subtitle>
+              {{ $t('help_sidebar.browser_log.subtitle') }}
+            </v-list-item-subtitle>
+          </v-list-item-content>
+          <v-list-item-action>
+            <v-icon>mdi-chevron-right</v-icon>
+          </v-list-item-action>
+        </v-list-item>
+      </template>
     </v-list>
   </v-navigation-drawer>
 </template>
 
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent } from '@vue/composition-api';
+import i18n from '@/i18n';
+import { useNotifications } from '@/store/notifications';
+import { downloadFileByUrl } from '@/utils/download';
+import IndexedDb from '@/utils/indexed-db';
 
 type Entry = {
   readonly icon: string;
@@ -70,54 +94,87 @@ type Entry = {
   readonly link: string;
 };
 
-@Component({
-  name: 'HelpSidebar'
-})
-export default class HelpSidebar extends Vue {
-  @Prop({ required: true, type: Boolean })
-  visible!: boolean;
-
-  @Emit('visible:update')
-  visibleUpdate(_visible: boolean) {}
-
-  @Emit('about')
-  openAbout() {
-    this.visibleUpdate(false);
+const entries: Entry[] = [
+  {
+    icon: 'mdi-book-open-page-variant',
+    title: i18n.t('help_sidebar.user_guide.title').toString(),
+    subtitle: i18n.t('help_sidebar.user_guide.subtitle').toString(),
+    link: 'https://rotki.readthedocs.io/en/latest/usage_guide.html'
+  },
+  {
+    icon: 'mdi-frequently-asked-questions',
+    title: i18n.t('help_sidebar.faq.title').toString(),
+    subtitle: i18n.t('help_sidebar.faq.subtitle').toString(),
+    link: 'https://rotki.readthedocs.io/en/latest/faq.html'
+  },
+  {
+    icon: 'mdi-discord',
+    title: i18n.t('help_sidebar.support.title').toString(),
+    subtitle: i18n.t('help_sidebar.support.subtitle').toString(),
+    link: 'https://discord.gg/aGCxHG7'
+  },
+  {
+    icon: 'mdi-github',
+    title: i18n.t('help_sidebar.github.title').toString(),
+    subtitle: i18n.t('help_sidebar.github.subtitle').toString(),
+    link: 'https://github.com/rotki/rotki'
+  },
+  {
+    icon: 'mdi-twitter',
+    title: i18n.t('help_sidebar.twitter.title').toString(),
+    subtitle: i18n.t('help_sidebar.twitter.subtitle').toString(),
+    link: 'https://twitter.com/rotkiapp'
   }
+];
+export default defineComponent({
+  name: 'HelpSidebar',
+  props: {
+    visible: { required: true, type: Boolean }
+  },
+  emits: ['visible:update', 'about'],
+  setup(_, { emit }) {
+    const visibleUpdate = (_visible: boolean) => {
+      emit('visible:update', _visible);
+    };
 
-  readonly entries: Entry[] = [
-    {
-      icon: 'mdi-book-open-page-variant',
-      title: this.$t('help_sidebar.user_guide.title').toString(),
-      subtitle: this.$t('help_sidebar.user_guide.subtitle').toString(),
-      link: 'https://rotki.readthedocs.io/en/latest/usage_guide.html'
-    },
-    {
-      icon: 'mdi-frequently-asked-questions',
-      title: this.$t('help_sidebar.faq.title').toString(),
-      subtitle: this.$t('help_sidebar.faq.subtitle').toString(),
-      link: 'https://rotki.readthedocs.io/en/latest/faq.html'
-    },
-    {
-      icon: 'mdi-discord',
-      title: this.$t('help_sidebar.support.title').toString(),
-      subtitle: this.$t('help_sidebar.support.subtitle').toString(),
-      link: 'https://discord.gg/aGCxHG7'
-    },
-    {
-      icon: 'mdi-github',
-      title: this.$t('help_sidebar.github.title').toString(),
-      subtitle: this.$t('help_sidebar.github.subtitle').toString(),
-      link: 'https://github.com/rotki/rotki'
-    },
-    {
-      icon: 'mdi-twitter',
-      title: this.$t('help_sidebar.twitter.title').toString(),
-      subtitle: this.$t('help_sidebar.twitter.subtitle').toString(),
-      link: 'https://twitter.com/rotkiapp'
-    }
-  ];
-}
+    const openAbout = () => {
+      visibleUpdate(false);
+    };
+
+    const downloadBrowserLog = () => {
+      const loggerDb = new IndexedDb('db', 1, 'logs');
+
+      loggerDb.getAll((data: any) => {
+        if (data?.length === 0) {
+          const { notify } = useNotifications();
+          notify({
+            title: i18n
+              .t('help_sidebar.browser_log.error.empty.title')
+              .toString(),
+            message: i18n
+              .t('help_sidebar.browser_log.error.empty.message')
+              .toString(),
+            display: true
+          });
+          return;
+        }
+        const messages = data.map((item: any) => item.message).join('\n');
+
+        downloadFileByUrl(
+          'data:text/plain;charset=utf-8,' + encodeURIComponent(messages),
+          'frontend_log.txt'
+        );
+      });
+    };
+
+    return {
+      entries,
+      visibleUpdate,
+      openAbout,
+      downloadBrowserLog
+    };
+  }
+});
 </script>
 
 <style scoped lang="scss">

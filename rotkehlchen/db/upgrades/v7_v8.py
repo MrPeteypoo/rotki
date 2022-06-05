@@ -6,8 +6,8 @@ from rotkehlchen.db.upgrades.v6_v7 import (
     v6_deserialize_trade_type_from_db,
     v6_generate_trade_id,
 )
-from rotkehlchen.errors import DBUpgradeError
-from rotkehlchen.typing import AssetMovementCategory, Location
+from rotkehlchen.errors.misc import DBUpgradeError
+from rotkehlchen.types import AssetMovementCategory, Location
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -250,11 +250,11 @@ def _upgrade_multisettings_table(db: 'DBHandler') -> None:
 def _upgrade_timed_balances_table(db: 'DBHandler') -> None:
     """Upgrade the timed_balances table to switch any old DAI balances to SAI"""
     cursor = db.conn.cursor()
-    query_str = f"""
+    query_str = """
     UPDATE timed_balances SET currency="SAI"
-    WHERE CURRENCY=="DAI" and time<{MCDAI_LAUNCH_TS};
+    WHERE CURRENCY=="DAI" and time < ?;
     """
-    cursor.execute(query_str)
+    cursor.execute(query_str, (MCDAI_LAUNCH_TS,))
     db.conn.commit()
 
 

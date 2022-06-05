@@ -33,7 +33,9 @@ from rotkehlchen.db.upgrades.v26_v27 import upgrade_v26_to_v27
 from rotkehlchen.db.upgrades.v27_v28 import upgrade_v27_to_v28
 from rotkehlchen.db.upgrades.v28_v29 import upgrade_v28_to_v29
 from rotkehlchen.db.upgrades.v29_v30 import upgrade_v29_to_v30
-from rotkehlchen.errors import DBUpgradeError
+from rotkehlchen.db.upgrades.v30_v31 import upgrade_v30_to_v31
+from rotkehlchen.db.upgrades.v31_v32 import upgrade_v31_to_v32
+from rotkehlchen.errors.misc import DBUpgradeError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.utils.misc import ts_now
 
@@ -205,6 +207,14 @@ UPGRADES_LIST = [
         from_version=29,
         function=upgrade_v29_to_v30,
     ),
+    UpgradeRecord(
+        from_version=30,
+        function=upgrade_v30_to_v31,
+    ),
+    UpgradeRecord(
+        from_version=31,
+        function=upgrade_v31_to_v32,
+    ),
 ]
 
 
@@ -214,8 +224,10 @@ class DBUpgradeManager():
     def __init__(self, db: 'DBHandler'):
         self.db = db
 
-    def run_upgrades(self) -> None:
+    def run_upgrades(self) -> bool:
         """Run all required database upgrades
+
+        Returns true for fresh database and false otherwise.
 
         May raise:
         - DBUpgradeError if the user uses a newer version than the one we
@@ -224,7 +236,7 @@ class DBUpgradeManager():
         try:
             our_version = self.db.get_version()
         except sqlcipher.OperationalError:  # pylint: disable=no-member
-            return  # fresh database. Nothing to upgrade.
+            return True  # fresh database. Nothing to upgrade.
 
         if our_version > ROTKEHLCHEN_DB_VERSION:
             raise DBUpgradeError(
@@ -232,6 +244,18 @@ class DBUpgradeManager():
                 'executable. Did you perhaps try to revert to an older rotki version? '
                 'Please only use the latest version of the software.',
             )
+
+        cursor = self.db.conn.cursor()
+        version_query = cursor.execute(
+            'SELECT value FROM settings WHERE name=?;', ('version',),
+        )
+        if version_query.fetchone() is None:
+            # temporary due to https://github.com/rotki/rotki/issues/3744.
+            # Figure out if an upgrade needs to actually run.
+            cursor = self.db.conn.cursor()
+            result = cursor.execute('SELECT COUNT(*) FROM sqlite_master WHERE type="table" AND name="eth2_validators"')  # noqa: E501
+            if result.fetchone()[0] == 0:  # it's wrong and at least v30
+                self.db.set_version(30)
 
         for upgrade in UPGRADES_LIST:
             self._perform_single_upgrade(upgrade)
@@ -243,6 +267,7 @@ class DBUpgradeManager():
             ('version', str(ROTKEHLCHEN_DB_VERSION)),
         )
         self.db.conn.commit()
+        return False
 
     def _perform_single_upgrade(self, upgrade: UpgradeRecord) -> None:
         """
@@ -273,7 +298,7 @@ class DBUpgradeManager():
             try:
                 kwargs = upgrade.kwargs if upgrade.kwargs is not None else {}
                 upgrade.function(db=self.db, **kwargs)
-            except BaseException as e:
+            except BaseException as e:  # lgtm[py/catch-base-exception]
                 # Problem .. restore DB backup and bail out
                 error_message = (
                     f'Failed at database upgrade from version {upgrade.from_version} to '

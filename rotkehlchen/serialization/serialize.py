@@ -4,7 +4,8 @@ from hexbytes import HexBytes
 from web3.datastructures import AttributeDict
 
 from rotkehlchen.accounting.ledger_actions import LedgerActionType
-from rotkehlchen.accounting.structures import Balance, BalanceType
+from rotkehlchen.accounting.structures.balance import Balance, BalanceType
+from rotkehlchen.accounting.structures.base import StakingEvent
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalanceWithValue
 from rotkehlchen.chain.bitcoin.xpub import XpubData
@@ -19,6 +20,7 @@ from rotkehlchen.chain.ethereum.modules.aave.aave import (
     AaveHistory,
     AaveLendingBalance,
 )
+from rotkehlchen.chain.ethereum.modules.aave.structures import AaveEvent
 from rotkehlchen.chain.ethereum.modules.adex import ADXStakingHistory
 from rotkehlchen.chain.ethereum.modules.balancer import (
     BalancerBPTEventPoolToken,
@@ -27,7 +29,8 @@ from rotkehlchen.chain.ethereum.modules.balancer import (
     BalancerPoolEventsBalance,
     BalancerPoolTokenBalance,
 )
-from rotkehlchen.chain.ethereum.modules.compound import CompoundBalance, CompoundEvent
+from rotkehlchen.chain.ethereum.modules.compound.compound import CompoundBalance, CompoundEvent
+from rotkehlchen.chain.ethereum.modules.eth2.structures import Eth2Deposit
 from rotkehlchen.chain.ethereum.modules.liquity.trove import (
     LiquityStakeEvent,
     LiquityStakeEventType,
@@ -44,7 +47,7 @@ from rotkehlchen.chain.ethereum.modules.makerdao.vaults import (
     VaultEventType,
 )
 from rotkehlchen.chain.ethereum.modules.nfts import NFTResult
-from rotkehlchen.chain.ethereum.modules.pickle.pickle import DillBalance
+from rotkehlchen.chain.ethereum.modules.pickle_finance.main import DillBalance
 from rotkehlchen.chain.ethereum.modules.uniswap import (
     UniswapPool,
     UniswapPoolAsset,
@@ -55,20 +58,19 @@ from rotkehlchen.chain.ethereum.modules.yearn.vaults import (
     YearnVaultEvent,
     YearnVaultHistory,
 )
-from rotkehlchen.chain.ethereum.structures import AaveEvent
 from rotkehlchen.chain.ethereum.trades import AMMTrade
-from rotkehlchen.chain.ethereum.typing import Eth2Deposit
 from rotkehlchen.db.settings import DBSettings
 from rotkehlchen.db.utils import DBAssetBalance, LocationData, SingleDBAssetBalance
 from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.exchanges.kraken import KrakenAccountType
 from rotkehlchen.fval import FVal
-from rotkehlchen.history.typing import HistoricalPriceOracle
+from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.inquirer import CurrentPriceOracle
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     AssetMovementCategory,
     BlockchainAccountData,
     EthereumTransaction,
+    ExchangeLocationID,
     Location,
     TradeType,
 )
@@ -117,6 +119,8 @@ def _process_entry(entry: Any) -> Union[str, List[Any], Dict[str, Any], Any]:
             DefiProtocol,
             MakerdaoVault,
             XpubData,
+            Eth2Deposit,
+            StakingEvent,
     )):
         return entry.serialize()
     if isinstance(entry, (
@@ -143,10 +147,12 @@ def _process_entry(entry: Any) -> Union[str, List[Any], Dict[str, Any], Any]:
             BalancerPoolTokenBalance,
             LiquityTroveEvent,
             LiquityStakeEvent,
+            ManuallyTrackedBalanceWithValue,
             Trove,
             StakePosition,
             DillBalance,
             NFTResult,
+            ExchangeLocationID,
     )):
         return process_result(entry.serialize())
     if isinstance(entry, (
@@ -155,7 +161,6 @@ def _process_entry(entry: Any) -> Union[str, List[Any], Dict[str, Any], Any]:
             VersionCheckResult,
             DBSettings,
             DSRCurrentBalances,
-            ManuallyTrackedBalanceWithValue,
             VaultEvent,
             MakerdaoVaultDetails,
             AaveBalances,
@@ -164,7 +169,6 @@ def _process_entry(entry: Any) -> Union[str, List[Any], Dict[str, Any], Any]:
             DefiProtocolBalances,
             YearnVaultHistory,
             BlockchainAccountData,
-            Eth2Deposit,
     )):
         return process_result(entry._asdict())
     if isinstance(entry, tuple):

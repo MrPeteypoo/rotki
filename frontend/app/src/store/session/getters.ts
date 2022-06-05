@@ -1,19 +1,23 @@
-import { Currency } from '@/model/currency';
-import { Module } from '@/services/session/consts';
 import { Watcher, WatcherType } from '@/services/session/types';
-import { SessionState } from '@/store/session/types';
+import { PrivacyMode, SessionState } from '@/store/session/types';
 import { RotkehlchenState } from '@/store/types';
 import { Getters } from '@/store/typing';
-import { Tag } from '@/typing/types';
+import { Currency } from '@/types/currency';
+import { Module } from '@/types/modules';
+import { READ_ONLY_TAGS, Tag, Tags } from '@/types/user';
 
 interface SessionGetters {
   floatingPrecision: number;
   dateDisplayFormat: string;
   currency: Currency;
   tags: Tag[];
+  availableTags: Tags;
+  availableTagsArray: Tag[];
   loanWatchers: Watcher<WatcherType>[];
   activeModules: Module[];
   currencySymbol: string;
+  shouldShowAmount: boolean;
+  shouldShowPercentage: boolean;
 }
 
 export const getters: Getters<
@@ -23,7 +27,7 @@ export const getters: Getters<
   any
 > = {
   floatingPrecision: (state: SessionState) => {
-    return state.generalSettings.floatingPrecision;
+    return state.generalSettings.uiFloatingPrecision;
   },
 
   dateDisplayFormat: (state: SessionState) => {
@@ -31,15 +35,23 @@ export const getters: Getters<
   },
 
   currency: (state: SessionState) => {
-    return state.generalSettings.selectedCurrency;
+    return state.generalSettings.mainCurrency;
   },
 
   currencySymbol: (_, getters) => {
-    return getters.currency.ticker_symbol;
+    return getters.currency.tickerSymbol;
   },
 
   tags: (state: SessionState) => {
     return Object.values(state.tags);
+  },
+
+  availableTags: (state: SessionState) => {
+    return { ...state.tags, ...READ_ONLY_TAGS };
+  },
+
+  availableTagsArray: (state: SessionState) => {
+    return Object.values({ ...state.tags, ...READ_ONLY_TAGS });
   },
 
   loanWatchers: ({ watchers }) => {
@@ -52,5 +64,13 @@ export const getters: Getters<
 
   activeModules: ({ generalSettings }) => {
     return generalSettings.activeModules;
+  },
+
+  shouldShowAmount: ({ privacyMode }) => {
+    return privacyMode < PrivacyMode.SEMI_PRIVATE;
+  },
+
+  shouldShowPercentage: ({ privacyMode }) => {
+    return privacyMode < PrivacyMode.PRIVATE;
   }
 };

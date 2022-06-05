@@ -1,6 +1,7 @@
 import itertools
 import logging
 import shutil
+from http import HTTPStatus
 from pathlib import Path
 from typing import Optional, Set
 
@@ -8,9 +9,10 @@ import gevent
 import requests
 
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.assets.typing import AssetType
+from rotkehlchen.assets.types import AssetType
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import RemoteError, UnsupportedAsset
+from rotkehlchen.errors.asset import UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.externalapis.coingecko import DELISTED_ASSETS, Coingecko
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
@@ -66,7 +68,7 @@ class IconManager():
 
         return file_md5(path)
 
-    def _query_coingecko_for_icon(self, asset: Asset) -> bool:
+    def query_coingecko_for_icon(self, asset: Asset) -> bool:
         """Queries coingecko for icons of an asset
 
         If query was okay it returns True, else False
@@ -89,9 +91,12 @@ class IconManager():
             return False
 
         try:
-            response = requests.get(data.image_url, timeout=DEFAULT_TIMEOUT_TUPLE)
+            response = self.coingecko.session.get(data.image_url, timeout=DEFAULT_TIMEOUT_TUPLE)
         except requests.exceptions.RequestException:
             # Any problem getting the image skip it: https://github.com/rotki/rotki/issues/1370
+            return False
+
+        if response.status_code != HTTPStatus.OK:
             return False
 
         with open(self.iconfile_path(asset), 'wb') as f:
@@ -130,7 +135,7 @@ class IconManager():
             return image_data
 
         # else query coingecko for the icons and cache all of them
-        if self._query_coingecko_for_icon(asset) is False:
+        if self.query_coingecko_for_icon(asset) is False:
             return None
 
         if not needed_path.is_file():
@@ -169,7 +174,7 @@ class IconManager():
             f'Uncached assets: {len(uncached_asset_ids)}. Cached assets: {len(cached_asset_ids)}',
         )
         for asset_name in itertools.islice(uncached_asset_ids, batch_size):
-            self._query_coingecko_for_icon(Asset(asset_name))
+            self.query_coingecko_for_icon(Asset(asset_name))
 
         return len(uncached_asset_ids) > batch_size
 
@@ -198,3 +203,16 @@ class IconManager():
             icon_path,
             self.custom_icons_dir / f'{asset.identifier}{icon_path.suffix}',
         )
+
+    def delete_icon(self, asset: Asset) -> None:
+        """
+        Tries to find and delete the cache of an icon in both the custom icons
+        and default icons directory.
+        """
+        icon_path = self.custom_iconfile_path(asset)
+        if icon_path is not None:
+            icon_path.unlink()
+
+        icon_path = self.iconfile_path(asset)
+        if icon_path.is_file():
+            icon_path.unlink()

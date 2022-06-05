@@ -18,21 +18,27 @@
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import { interop } from '@/electron-interop';
 
-@Component({})
-export default class HelpLink extends Vue {
-  @Prop({ required: true, type: String })
-  url!: string;
-  @Prop({ required: true, type: String })
-  tooltip!: string;
-  @Prop({ required: false, default: false, type: Boolean })
-  small!: boolean;
+export default defineComponent({
+  name: 'HelpLink',
+  props: {
+    url: { required: true, type: String },
+    tooltip: { required: true, type: String },
+    small: { required: false, type: Boolean, default: false }
+  },
+  setup(props) {
+    const { url } = toRefs(props);
 
-  openLink() {
-    this.$interop.openUrl(this.url);
+    const openLink = () => {
+      interop.openUrl(get(url));
+    };
+
+    return {
+      openLink
+    };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

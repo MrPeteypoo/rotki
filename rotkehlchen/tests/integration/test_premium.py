@@ -5,7 +5,7 @@ import pytest
 
 from rotkehlchen.constants.assets import A_EUR
 from rotkehlchen.db.settings import ModifiableDBSettings
-from rotkehlchen.errors import (
+from rotkehlchen.errors.api import (
     IncorrectApiKeyFormat,
     PremiumAuthenticationError,
     RotkehlchenPermissionError,
@@ -14,7 +14,6 @@ from rotkehlchen.premium.premium import PremiumCredentials
 from rotkehlchen.tests.utils.constants import A_GBP, DEFAULT_TESTS_MAIN_CURRENCY
 from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.tests.utils.premium import (
-    INVALID_BUT_BIGGER_REMOTE_DATA,
     REMOTE_DATA_OLDER_DB,
     VALID_PREMIUM_KEY,
     VALID_PREMIUM_SECRET,
@@ -158,6 +157,7 @@ def test_upload_data_to_server_smaller_db(rotkehlchen_instance, db_password):
         assert not put_mock.called
 
 
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_try_premium_at_start_new_account_can_pull_data(
         rotkehlchen_instance,
@@ -177,6 +177,30 @@ def test_try_premium_at_start_new_account_can_pull_data(
         db_can_sync_setting=False,
     )
     assert_db_got_replaced(rotkehlchen_instance=rotkehlchen_instance, username=username)
+
+
+@pytest.mark.parametrize('start_with_valid_premium', [True])
+def test_try_premium_at_start_new_account_rejects_data(
+        rotkehlchen_instance,
+        username,
+        db_password,
+        rotki_premium_credentials,
+):
+    # Test that even with can_sync False, at start of new account we attempt data pull
+    setup_starting_environment(
+        rotkehlchen_instance=rotkehlchen_instance,
+        username=username,
+        db_password=db_password,
+        premium_credentials=rotki_premium_credentials,
+        first_time=True,
+        same_hash_with_remote=False,
+        newer_remote_db=True,
+        db_can_sync_setting=False,
+        sync_database=False,
+    )
+    msg = 'Test default main currency should be different from the restored currency'
+    assert DEFAULT_TESTS_MAIN_CURRENCY != A_GBP, msg
+    assert rotkehlchen_instance.data.db.get_main_currency() == DEFAULT_TESTS_MAIN_CURRENCY
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
@@ -273,27 +297,6 @@ def test_try_premium_at_start_old_account_doesnt_pull_data_with_no_premium_sync(
 
 
 @pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_try_premium_at_start_old_account_same_hash(
-        rotkehlchen_instance,
-        username,
-        db_password,
-        rotki_premium_credentials,
-):
-    setup_starting_environment(
-        rotkehlchen_instance=rotkehlchen_instance,
-        username=username,
-        db_password=db_password,
-        premium_credentials=rotki_premium_credentials,
-        first_time=False,
-        same_hash_with_remote=True,
-        newer_remote_db=True,
-        db_can_sync_setting=True,
-    )
-    # DB should not have changed
-    assert rotkehlchen_instance.data.db.get_main_currency() == DEFAULT_TESTS_MAIN_CURRENCY
-
-
-@pytest.mark.parametrize('start_with_valid_premium', [True])
 def test_try_premium_at_start_old_account_older_remote_ts_smaller_remote_size(
         rotkehlchen_instance,
         username,
@@ -333,29 +336,6 @@ def test_try_premium_at_start_old_account_newer_remote_ts_smaller_remote_size(
             newer_remote_db=True,
             db_can_sync_setting=True,
             sync_approval='unknown',
-        )
-
-
-@pytest.mark.parametrize('start_with_valid_premium', [True])
-def test_try_premium_at_start_old_account_older_remote_ts_bigger_remote_size(
-        rotkehlchen_instance,
-        username,
-        db_password,
-        rotki_premium_credentials,
-):
-    """Assure that older remote ts but bigger remote size asks the user for sync"""
-    with pytest.raises(RotkehlchenPermissionError):
-        setup_starting_environment(
-            rotkehlchen_instance=rotkehlchen_instance,
-            username=username,
-            db_password=db_password,
-            premium_credentials=rotki_premium_credentials,
-            first_time=False,
-            same_hash_with_remote=False,
-            newer_remote_db=False,
-            db_can_sync_setting=True,
-            sync_approval='unknown',
-            remote_data=INVALID_BUT_BIGGER_REMOTE_DATA,
         )
 
 

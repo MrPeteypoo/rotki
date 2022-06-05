@@ -4,25 +4,20 @@ import json
 import logging
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from urllib.parse import urlencode
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_bittrex
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import (
-    DeserializationError,
-    RemoteError,
-    UnknownAsset,
-    UnprocessableTradePair,
-    UnsupportedAsset,
-)
+from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
@@ -34,11 +29,10 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount_force_positive,
     deserialize_fee,
     deserialize_timestamp_from_date,
-    deserialize_trade_type,
     get_pair_position_str,
     pair_get_assets,
 )
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetMovementCategory,
@@ -47,6 +41,7 @@ from rotkehlchen.typing import (
     Price,
     Timestamp,
     TradePair,
+    TradeType,
 )
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import timestamp_to_iso8601, ts_now_in_ms
@@ -120,7 +115,7 @@ def trade_from_bittrex(bittrex_trade: Dict[str, Any]) -> Trade:
             deserialize_asset_amount(bittrex_trade['proceeds']) /
             deserialize_asset_amount(bittrex_trade['fillQuantity']),
         )
-    order_type = deserialize_trade_type(bittrex_trade['direction'])
+    order_type = TradeType.deserialize(bittrex_trade['direction'])
     fee = deserialize_fee(bittrex_trade['commission'])
     base_asset, quote_asset = bittrex_pair_to_world(bittrex_trade['marketSymbol'])
     log.debug(
@@ -403,7 +398,7 @@ class Bittrex(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             start_ts: Timestamp,
             end_ts: Timestamp,
             market: Optional[TradePair] = None,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         options: Dict[str, Union[str, int]] = {
             'pageSize': 200,  # max page size according to their docs
             'startDate': timestamp_to_iso8601(start_ts, utc_as_z=True),
@@ -454,7 +449,7 @@ class Bittrex(ExchangeInterface):  # lgtm[py/missing-call-to-init]
 
             trades.append(trade)
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def _deserialize_asset_movement(self, raw_data: Dict[str, Any]) -> Optional[AssetMovement]:
         """Processes a single deposit/withdrawal from bittrex and deserializes it

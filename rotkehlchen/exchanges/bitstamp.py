@@ -10,6 +10,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Literal,
     NamedTuple,
     Optional,
     Tuple,
@@ -20,14 +21,15 @@ from urllib.parse import urlencode
 
 import requests
 from requests.adapters import Response
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_bitstamp
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
     AssetMovement,
     AssetMovementCategory,
@@ -46,7 +48,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_int_from_str,
     deserialize_timestamp_from_bitstamp_date,
 )
-from rotkehlchen.typing import ApiKey, ApiSecret, AssetAmount, Location, Timestamp
+from rotkehlchen.types import ApiKey, ApiSecret, AssetAmount, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now_in_ms
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
@@ -251,14 +253,15 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             'offset': 0,
         }
         if start_ts != Timestamp(0):
-            db_asset_movements = self.db.get_asset_movements(
-                to_ts=start_ts,
-                location=Location.BITSTAMP,
-            )
-            # NB: sort asset_movements by int(link) in asc mode
-            db_asset_movements.sort(key=lambda asset_movement: int(asset_movement.link))
-            if db_asset_movements:
-                options.update({'since_id': int(db_asset_movements[-1].link) + 1})
+            # Get latest link from the DB to know where to resume from
+            cursor = self.db.conn.cursor()
+            query_result = cursor.execute(
+                'SELECT link FROM asset_movements WHERE location=? AND time <= ? ORDER BY time DESC LIMIT 1',  # noqa: E501
+                (Location.BITSTAMP.serialize_for_db(), start_ts),
+            ).fetchone()
+            if query_result is not None:
+                since_id = int(query_result[0]) + 1
+                options.update({'since_id': since_id})
 
         asset_movements: List[AssetMovement] = self._api_query_paginated(
             start_ts=start_ts,
@@ -272,7 +275,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         """Return the account trades on Bitstamp.
 
         NB: when `since_id` is used, the Bitstamp API v2 will return by default
@@ -287,14 +290,15 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             'offset': 0,
         }
         if start_ts != Timestamp(0):
-            db_trades = self.db.get_trades(
-                to_ts=start_ts,
-                location=Location.BITSTAMP,
-            )
-            # NB: sort trades by int(link) in asc mode. Type ignore is since we always got a link
-            db_trades.sort(key=lambda trade: int(trade.link))  # type: ignore
-            if db_trades:
-                options.update({'since_id': int(db_trades[-1].link) + 1})  # type: ignore
+            # Get latest link from the DB to know where to resume from
+            cursor = self.db.conn.cursor()
+            query_result = cursor.execute(
+                'SELECT link FROM trades WHERE location=? AND time <= ? ORDER BY time DESC LIMIT 1',  # noqa: E501
+                (Location.BITSTAMP.serialize_for_db(), start_ts),
+            ).fetchone()
+            if query_result is not None:
+                since_id = int(query_result[0]) + 1
+                options.update({'since_id': since_id})
 
         trades: List[Trade] = self._api_query_paginated(
             start_ts=start_ts,
@@ -302,7 +306,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             options=options,
             case='trades',
         )
-        return trades
+        return trades, (start_ts, end_ts)
 
     def validate_api_key(self) -> Tuple[bool, str]:
         """Validates that the Bitstamp API key is good for usage in rotki
@@ -406,7 +410,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             end_ts: Timestamp,
             options: Dict[str, Any],
             case: Literal['trades', 'asset_movements'],
-    ) -> Union[List[Trade], List[AssetMovement]]:
+    ) -> Union[List[Trade], List[AssetMovement], List]:
         """Request a Bitstamp API v2 endpoint paginating via an options
         attribute.
 
@@ -447,7 +451,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
 
         call_options = options.copy()
         limit = options.get('limit', API_MAX_LIMIT)
-        results: Union[List[Trade], List[AssetMovement]] = []  # type: ignore
+        results = []
         while True:
             response = self._api_query(
                 endpoint=endpoint,
@@ -467,8 +471,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 self.msg_aggregator.add_error(
                     f'Got remote error while querying Bistamp trades: {msg}',
                 )
-                no_results: Union[List[Trade], List[AssetMovement]] = []  # type: ignore
-                return no_results
+                return []
 
             has_results = False
             is_result_timestamp_gt_end_ts = False
@@ -503,7 +506,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                     )
                     continue
 
-                results.append(result)  # type: ignore
+                results.append(result)
                 has_results = True  # NB: endpoint agnostic
 
             if len(response_list) < limit or is_result_timestamp_gt_end_ts:
@@ -721,7 +724,7 @@ class Bitstamp(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             raise AssertionError(f'Unexpected Bitstamp response_case: {case}.') from e
 
         error_code = response_dict.get('code', None)
-        if error_code in set(API_KEY_ERROR_CODE_ACTION.keys()):
+        if error_code in API_KEY_ERROR_CODE_ACTION:
             msg = API_KEY_ERROR_CODE_ACTION[error_code]
         else:
             reason = response_dict.get('reason', None) or response.text

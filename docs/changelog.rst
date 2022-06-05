@@ -2,13 +2,192 @@
 Changelog
 =========
 
+* :release:`1.24.1 <2022-06-03>`
+* :bug:`4383` Removing an address while running a PnL report should now work.
+* :bug:`4379` For many ethereum transactions the entire app should no longer hang. This is a temporary fix until a proper one is implemented. With this fix we temporarily remove the ability to filter in the ethereum transactions view.
+* :bug:`4425` Makes periodic premium checking task less strict. Also introduces automatic reactivation.
+* :bug:`4398` Fix asset type selection that cannot be enabled for new asset addition.
+* :feature:`4401` The options for remember username and password are now separated.
+* :bug:`4386` Blockfi import for transactions now supports 'Crypto Transfer'
+* :bug:`4420` Transactions with the old WETH contract and other contracts that don't have decimals, symbol and name should now be decoded properly.
+* :bug:`4378` Ask for users permission to access keychain only when `Remember Me` option at login screen is enabled.
+* :bug:`4384` Price caches filter should now be working again.
+* :bug:`-` Acquisitions for which no price can be found will still appear and not count as missing acquisitions.
+* :bug:`4122` Kucoin users should be able to retrieve information for old trades again.
+* :bug:`-` COMP price before 20/06/2020 will not be hardcoded to $239.13 if queried via cryptocompare.
+* :bug:`-` Prevent error while importing CSVs from cointracking when one trade row had a 0 amount bought.
+* :bug:`4381` Fixes a problem at the DB upgrade between v1.23.4 and 1.24.0 which affected a subset of some kraken users.
+* :bug:`4422` Account balances in blockchain accounts that contain ignored assets will now show the correct sum total net value.
+
+* :release:`1.24.0 <2022-05-27>`
+* :feature:`2221` All missing yearn v1 vaults should now have their balances detected and their historical accounting taken into account.
+* :feature:`1797` All missing acquisitions and missing prices found during a PnL period are now gathered and shown to the user as actionable items at the end of the report generation.
+* :feature:`4154` Binance data (trades, deposits, staking, etc.) can now be imported via csv file.
+* :feature:`1115` Apply ENS reverse resolution to all Ethereum addresses shown in the frontend and if any have an ENS name associated with them, display that instead of raw address.
+* :feature:`2890` Transactions in the PnL report are now clickable and have a link to the chosen blockchain explorer via the transaction hash.
+* :feature:`1680` Users will now be able to see their 1inch v1 and v2 trades.
+* :feature:`718` Users can now ignore an exchange from the PnL report using the same option as the one for exchange syncing.
+* :feature:`2219` Users will now be able to delete balance snapshots.
+* :feature:`4219` Users will now be able to import a balance snapshot manually.
+* :bug:`4261` Fixes a problem were the docker container image size would increase on every restart.
+* :feature:`1219` Introduces basic global search (you can go to any page in the app, do some basic actions such as adding a new trade or a ledger action, and also see prices of owned asset).
+* :feature:`4249` Allow users to ignore asset from the asset overview page.
+* :feature:`1106` Balance snapshots will now be created automatically without the need to restart the application or force a save.
+* :feature:`2853` Add option to disable sync for connected exchanges.
+* :feature:`3894` Users will now be able to download a balance snapshot by clicking a point at dashboard graph.
+* :bug:`4172` Disallow addition and editing of external trade that could result in invalid trade fees.
+* :bug:`4060` Treat reimbursement as a ledger action for crypto.com imports.
+* :feature:`3370` Manual balance labels are now editable even after their creation.
+* :feature:`4125` Introduces auto login mechanism for electron app.
+* :feature:`1477` Adds classification for ETH transactions and their events.
+* :bug:`4078` Adjust scrollbar color in dark mode for better visibility.
+* :feature:`4071` Add option to reduce the animations effect.
+* :feature:`3669` Users can export and import their custom assets.
+* :feature:`4068` Introduces location overview page.
+* :feature:`-` rotki no longer uses the gitcoin api or gitcoin CSVs to import information from gitcoin.
+* :feature:`4030` Add copy functionality for amount display.
+* :feature:`3987` Users will now be able to delete multiple database backups.
+* :feature:`2934` Users will now be able to deploy the docker image under a sub directory behind a proxy.
+* :feature:`569` Users will now be able to see assets staked, and amounts gained on Kraken's staking feature.
+* :feature:`3838` Support for FTX.US has been added.
+* :feature:`2216` Users will now be able to use Uniswap V2 and Uniswap V3 as price oracles.
+
+* :release:`1.23.4 <2022-03-23>`
+* :bug:`4072` Prevent users from inputting future date on trade and ledger action form.
+* :bug:`4077` stkAave balance should no longer be double counted. Also unclaimed stkAave will appear in the balance (as Aave).
+* :bug:`4059` Nexo importer won't consider `LockingTermDeposit` as another deposit.
+* :bug:`-` BlockFi import for trades will use the correct rate.
+* :bug:`3661` NFT won't be displayed as option while adding custom assets since the logic there is not compatible with NFTs.
+* :bug:`4142` If an owned NFT has no image URL, NFTs will still be properly queried and shown in the frontend.
+
+* :release:`1.23.3 <2022-02-04>`
+* :bug:`4034` If a new premium user is created, with DB sync on, premium api keys being correct but wrong password is given then creating same user with right password will now work.
+* :bug:`4013` Fix Bitpanda icon missing in exchange selector.
+* :bug:`3983` Add loading indicator to data directory field.
+* :bug:`4039` Rewards and cashbacks from crypto.com will now be correctly categorized as ledger actions.
+* :bug:`3993` Fix app bar icons misbehavior when windows is resized.
+* :bug:`3998` FTX subaccounts should now be working again.
+* :bug:`-` If binance returns a delisted market as active and rotki queries it, the entire binance trade history query will not fail.
+* :bug:`4010` Crypto.com users won't see errors for rows containing zeros.
+* :bug:`-` All Liquity events will now always be correctly queried.
+* :bug:`3947` Coinbase conversions will now choose in a better way the asset to nominate the fees.
+* :feature:`-` Support for LUNA and card top ups has been added to the crypto.com importer.
+
+* :release:`1.23.2 <2022-01-21>`
+* :bug:`-` Users will now be properly prompted to restart the application after the auto-updater downloads the update.
+* :bug:`3943` Users will now be able to properly add multiple accounts on Avalance even if they exist on Ethereum.
+* :bug:`3964` Liquity Troves managed by a DSProxy will now see their events properly listed.
+* :bug:`-` The application will now notify the user and exit if multiple backend binaries exist due to a failed update.
+* :bug:`-` Kraken's KFEE will use the price of 0.01 USD when it is needed.
+* :bug:`-` If a PnL report is ran for a specific period and there is more events after the period a warning for missing events and prompt to upgrade to premium won't show mistakenly anymore.
+* :bug:`-` Query for AVAX balances will be more reliable now.
+* :feature:`-` Users can now add an OpenSea API key to the external api keys page. Also some changes were made to try and improve opensea retrievals even without the user needing to input a key.
+* :feature:`3952` Maker's WBTC-B, WBTC-C and MATIC-A vaults are now supported.
+
+* :release:`1.23.1 <2022-01-14>`
+* :bug:`3929` Prevent users from using invalid character for thousands and decimal separator.
+* :bug:`3913` NFT Balances table at dashboard should be updated when users remove an ethereum account.
+* :bug:`3916` Users with ethereum transactions that deploy contracts will now be able to load the transactions view properly.
+* :bug:`-` Fix coinbase/pro detection for GTC, TRU and FARM.
+* :bug:`3896` Fix dashboard balance search that does not show ethereum tokens.
+* :bug:`3895` Popup for successful forced sync operation should show correct icon.
+* :bug:`3899` Crypto.com users will now be able to import supercharger events and recurring buy orders. Viban purchases will also now be correct categorized.
+* :bug:`-` Restores arm64 docker images.
+* :bug:`-` AVAX balances should now be always correctly queried.
+* :bug:`-` PnL report will correctly detect asset cost basis when the fee of a trade is nominated in the received asset.
+* :bug:`3903` The application should now run on macOS 10.14 (Mojave) without errors.
+* :bug:`3901` Coinbase accounts with intenal subaccount movements will now display the Coinbase withdrawals properly.
+
+* :release:`1.23.0 <2021-12-31>`
+* :feature:`3324` Users will be able to set the percentage of ownership for jointly held eth2 validators.
+* :feature:`3425` Users will be able to enter multiple pairs at once for binance exchange settings.
+* :bug:`3847` Remove whitespace when inputting address in new asset form.
+* :feature:`3842` Users will now be taken directly to create account when downloading the application for the first time.
+* :feature:`-` Any ethereum transactions that were ignored for accounting will now need to be re-ignored.
+* :feature:`1242` Users will be asked first whether to activate premium feature, and enable database sync when create new account.
+* :feature:`2876` The application users will now be able to start the auto update mechanism manually from the update indicator.
+* :feature:`2386` Users will see a separate section of L2 balances in Blockchain Balances section.
+* :feature:`2382` Users will now be able to filter specific accounts such as the ones from Loopring using an automatically added tag.
+* :feature:`2901` Users will now be able to select between a full privacy mode and a semi-privacy mode that keeps the percentages visible.
+* :feature:`2624` Users will now be able to filter by tag in the asset details page.
+* :feature:`2265` Users will now be able to see a hint for the trade rate when adding an external trade.
+* :feature:`2848` Users will now get taken to the top of the table automatically when changing a page.
+* :feature:`2121` Users can now select a different timezone when selecting a date to input.
+* :feature:`1875` Users can now enable or disable specific time frames in the graph timeframe
+* :feature:`2446` Users can now switch between adding an external trade using quote asset amount or trade rate.
+* :feature:`2297` The application will now perform an update check every 24h (user-configurable) while the application is running.
+* :feature:`3470` Users can now customize the date input format.
+* :feature:`2918` Users can now select how the percentage column is calculated in the dashboard. Either based on total net value or based on current group (assets, liabilities, or nft).
+* :feature:`3753` Application users will now be able to (copy, cut and paste) using the context menu .
+* :feature:`3525` Users can now see the NFT icon at the NFT Balance table, and Non Fungible Balance table.
+* :feature:`3176` Amount inputs will now adhere to the user specified amount formatting.
+* :feature:`1214` Users will now be able to load and manage previously generated profit and loss reports.
+* :feature:`3716` Users can now see if any of their addresses have PSP available to claim from the PSP airdrop.
+* :feature:`824` Users will now be able to import their trade history from bisq.
+* :feature:`1864` Users will now be able to see trades, deposits and withdrawals imported in CSV from exchanges not connected using API keys.
+* :feature:`3685` Users will now be able to correctly read more transaction types in CSV files imported from crypto.com.
+* :feature:`3497` Users will now be able to add ETH2 validators via index or public key.
+* :feature:`3725` Users can now see if any of their addresses have SDL available to claim from the SDL airdrop.
+* :feature:`3708` Users will now be able to see trades from kraken made from their phone APP and in the kraken's swap UI.
+* :feature:`3549` Users will now be able to select whether to include or not NFT total value in total net worth and graphs.
+* :feature:`3712` Users will now be able to choose a custom date format while importing CSV files.
+* :bug:`3767` The module selector will now properly clear after selecting a module by clicking.
+* :bug:`3128` Bigger net worth values on dashboard should not overlap with the net worth graph.
+* :bug:`3641` Users should now be able to view profit and loss reports that have many thousands of events without the UI freezing.
+* :bug:`-` Deposits and withdrawals in files from cointracking will now be correctly registered.
+* :bug:`-` ShapeShift CSV includes minerFee in rate, but outputAmount does not include minerFee.  Fix to account for the true transacted base amount.
+* :bug:`-` Bitfinex users that used Spankchain in the exchange will now be able to see it properly in their trades, deposits/withdrawals and balances.
+* :bug:`-` Users connected to Alchemy as a node will be able to properly retrieve old ethereum transactions.
+* :bug:`-` Users whose only interaction with a yearn vault was a deposit will no longer see the entire deposit as loss in the PnL.
+* :bug:`3804` Bitpanda users should now be able to see their crypto deposits and withdrawals.
+* :bug:`3847` Inputting an address in the asset form with extra whitespace will now work properly thanks to trimming.
+* :bug:`3859` Trades imported from crypto.com CSV should now have the correct rate imported.
+
+* :release:`1.22.2 <2021-11-30>`
+* :feature:`-` rotki will now detect locked SRM balances in FTX.
+* :bug:`-` Kraken margin trades are not yet supported, so they won't show up or be taken into account in kraken trade history.
+* :bug:`3744` Freshly created users who don't open the app again before an upgrade will now be able to update to new DB versions again.
+* :bug:`3749` Users using multiple instances of the same exchange should now correctly see all their trades.
+* :bug:`-` Liquity users won't make extra balances queries when using DSProxies.
+* :bug:`3767` At module selection clicking on the module chip won't keep the text in the selection field.
+* :bug:`-` Users will now be able to edit exchanges names for Kucoin and Coinbase Pro.
+
+* :release:`1.22.1 <2021-11-19>`
+* :bug:`3726` Manual liabilities should not count as assets and should be deducted from total net value when taking a snapshot. Also multiple liabilities of same asset should now be properly summed.
+* :bug:`3722` Trades details will now properly expand one at a time.
+* :bug:`3714` Airdrops section will now work again for Windows users.
+* :bug:`-` Uniswap trades will be queried correctly now.
+* :bug:`3724` Users should see their per asset liabilities properly aggregated on dashboard.
+* :bug:`3702` RMRK for Kucoin and BCH for Bitfinex should now be properly recognized by rotki again.
+
+* :release:`1.22.0 <2021-11-12>`
+* :feature:`1146` Bitpanda exchange is now supported. Bitpanda balances are now shown and rotki can query trades and deposit/withdrawals from the exchange.
+* :feature:`2483` Users will now get properly notified when saving the balance snapshot fails.
 * :feature:`3579` Users will now be able to sort the NFTs in the gallery by name, collection and price.
+* :feature:`3640` Liquity users that created troves using DefiSaver will be now able to track them.
 * :feature:`1451` Improves performance of the Transactions page.
 * :feature:`3594` Users can now sort the dashboard assets and blockchain balance per asset tables using the price field.
 * :bug:`3328` The asset update resolution dialog should now be usable on mobile screens.
 * :feature:`1513` Users will now be able to add manual liabilities.
 * :feature:`1536` The Account & Balances add button will now be fixed to the right bottom of the screen. The blockchain balances add button will now properly select the appropriate blockchain based on the visible table.
+* :feature:`3686` Users can now see if any of their addresses have ENS available to claim from the ENS airdrop.
 * :feature:`3335` Users will now be able to find the pending tasks in the notification sidebar.
+* :feature:`3235` Users will now be able to create and manage database backups, and view information related to the rotki databases.
+* :bug:`3676` NFT collection floor price should now be properly retrieved again and shown as the valuation for user NFTs that have had no previous sales.
+* :bug:`3667` Users should be able to upload asset icons to docker instances when using a remote connection via the application.
+* :bug:`3664` Binance US users will no longer see errors regarding the fiat payments and orders endpoints.
+* :bug:`3666` An ethereum token's address will be properly filled when navigating to the asset edit from the asset overview page.
+* :bug:`-` Transaction receipts will now be processed properly even for nodes(such as open ethereum) that do not return the type field for non EIP1559 transactions.
+
+* :release:`1.21.3 <2021-10-28>`
+* :bug:`2178` Premium DB sync popup should no longer popup if you only use one instance of rotki in one system.
+* :bug:`3643` The price currency will now be properly visible on the NFT balance header sorting when using a mobile device.
+* :bug:`3629` Kraken api rate limiting should no longer cause a query to get stuck in a loop.
+* :bug:`3624` Editing a CEX api key should now work properly again.
+* :bug:`3619` Binance users should now be able to properly process fiat payments, deposits and withdrawals.
+* :bug:`3613` Users should be now able to save a ledger action without specifying seconds.
+* :bug:`3630` Users will be able to properly see their MakerDAO vault loans
+* :bug:`3647` It should be now possible for users to properly ignore DEX trades in the trade history page.
 
 * :release:`1.21.2 <2021-10-14>`
 * :bug:`-` Users can now ignore any errors when force saving balances.

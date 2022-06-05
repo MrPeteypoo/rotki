@@ -87,14 +87,14 @@
               <asset-select
                 v-model="assetToIgnore"
                 outlined
-                :label="$t('account_settings.asset_settings.labels.ignore')"
+                :label="$tc('account_settings.asset_settings.labels.ignore')"
                 :success-messages="settingsMessages['addIgnoreAsset'].success"
                 :error-messages="settingsMessages['addIgnoreAsset'].error"
-                :hint="$t('account_settings.asset_settings.ignore_tags_hint')"
+                :hint="$tc('account_settings.asset_settings.ignore_tags_hint')"
                 class="accounting-settings__asset-to-ignore"
               />
             </v-col>
-            <v-col cols="auto">
+            <v-col cols="auto" class="ml-4">
               <v-btn
                 class="accounting-settings__buttons__add mt-3"
                 text
@@ -112,18 +112,18 @@
               <asset-select
                 v-model="assetToRemove"
                 outlined
-                :label="$t('account_settings.asset_settings.labels.unignore')"
-                value="test"
+                show-ignored
+                :label="$tc('account_settings.asset_settings.labels.unignore')"
                 :items="ignoredAssets"
                 :success-messages="settingsMessages['remIgnoreAsset'].success"
                 :error-messages="settingsMessages['remIgnoreAsset'].error"
                 :hint="
-                  $t('account_settings.asset_settings.labels.unignore_hint')
+                  $tc('account_settings.asset_settings.labels.unignore_hint')
                 "
                 class="accounting-settings__ignored-assets"
               />
             </v-col>
-            <v-col cols="auto">
+            <v-col cols="auto" class="ml-4">
               <v-btn
                 width="110px"
                 class="accounting-settings__buttons__remove mt-3"
@@ -150,6 +150,16 @@
               </v-badge>
             </v-col>
           </v-row>
+          <div class="pt-6">
+            <v-btn
+              color="primary"
+              :loading="isUpdateIgnoredAssetsLoading"
+              :disabled="isUpdateIgnoredAssetsLoading"
+              @click="updateIgnoredAssets"
+            >
+              {{ $t('accounting_settings.fetch_from_cryptoscamdb') }}
+            </v-btn>
+          </div>
         </card>
       </v-col>
     </v-row>
@@ -192,14 +202,19 @@
 </template>
 
 <script lang="ts">
+import { Ref } from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import { mapState, mapActions } from 'pinia';
 import { Component, Mixins } from 'vue-property-decorator';
-import { mapActions, mapState } from 'vuex';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import LedgerActionSettings from '@/components/settings/accounting/LedgerActionSettings.vue';
 import { settingsMessages } from '@/components/settings/utils';
 import AssetMixin from '@/mixins/asset-mixin';
 import SettingsMixin from '@/mixins/settings-mixin';
+import { useIgnoredAssetsStore } from '@/store/assets';
+import { useTasks } from '@/store/tasks';
 import { ActionStatus } from '@/store/types';
+import { TaskType } from '@/types/task-type';
 
 const haveCSVSummary = 'haveCSVSummary';
 const exportCSVFormulas = 'exportCSVFormulas';
@@ -233,10 +248,15 @@ type SettingsEntries = typeof SETTINGS[number];
     AssetSelect
   },
   computed: {
-    ...mapState('session', ['ignoredAssets'])
+    ...mapState(useIgnoredAssetsStore, ['ignoredAssets']),
+    ...mapState(useTasks, ['isTaskRunning'])
   },
   methods: {
-    ...mapActions('session', ['ignoreAsset', 'unignoreAsset'])
+    ...mapActions(useIgnoredAssetsStore, [
+      'ignoreAsset',
+      'unignoreAsset',
+      'updateIgnoredAssets'
+    ])
   }
 })
 export default class Accounting extends Mixins<
@@ -245,6 +265,8 @@ export default class Accounting extends Mixins<
   ignoredAssets!: string[];
   ignoreAsset!: (asset: string) => Promise<ActionStatus>;
   unignoreAsset!: (asset: string) => Promise<ActionStatus>;
+  updateIgnoredAssets!: () => Promise<ActionStatus>;
+  isTaskRunning!: (type: TaskType) => Ref<boolean>;
 
   haveCSVSummary: boolean = false;
   exportCSVFormulas: boolean = false;
@@ -272,14 +294,14 @@ export default class Accounting extends Mixins<
   }
 
   mounted() {
-    this.haveCSVSummary = this.accountingSettings.haveCSVSummary;
-    this.exportCSVFormulas = this.accountingSettings.exportCSVFormulas;
-    this.crypto2CryptoTrades = this.accountingSettings.includeCrypto2Crypto;
+    this.haveCSVSummary = this.accountingSettings.pnlCsvHaveSummary;
+    this.exportCSVFormulas = this.accountingSettings.pnlCsvWithFormulas;
+    this.crypto2CryptoTrades = this.accountingSettings.includeCrypto2crypto;
     this.gasCosts = this.accountingSettings.includeGasCosts;
-    if (this.accountingSettings.taxFreeAfterPeriod) {
+    if (this.accountingSettings.taxfreeAfterPeriod) {
       this.taxFreePeriod = true;
       this.taxFreeAfterPeriod =
-        this.accountingSettings.taxFreeAfterPeriod / 86400;
+        this.accountingSettings.taxfreeAfterPeriod / 86400;
     } else {
       this.taxFreePeriod = false;
       this.taxFreeAfterPeriod = null;
@@ -290,13 +312,17 @@ export default class Accounting extends Mixins<
       this.accountingSettings.calculatePastCostBasis;
   }
 
+  get isUpdateIgnoredAssetsLoading(): boolean {
+    return get(this.isTaskRunning(TaskType.UPDATE_IGNORED_ASSETS));
+  }
+
   onTaxFreeChange(enabled: boolean) {
     let taxFreeAfterPeriod: number | null;
 
     if (!enabled) {
       taxFreeAfterPeriod = null;
     } else {
-      const period = this.accountingSettings.taxFreeAfterPeriod;
+      const period = this.accountingSettings.taxfreeAfterPeriod;
       if (period) {
         taxFreeAfterPeriod = period / 86400;
       } else {
@@ -312,7 +338,7 @@ export default class Accounting extends Mixins<
       this.taxFreeAfterPeriod = null;
     }
     this.$api
-      .setSettings({ taxfree_after_period: taxFreeAfterPeriod! })
+      .setSettings({ taxfreeAfterPeriod: taxFreeAfterPeriod! })
       .then(settings => {
         this.validateSettingChange(
           'taxFreePeriod',
@@ -324,7 +350,7 @@ export default class Accounting extends Mixins<
 
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          taxFreeAfterPeriod: settings.taxfree_after_period
+          taxfreeAfterPeriod: settings.accounting.taxfreeAfterPeriod
         });
       })
       .catch((reason: Error) => {
@@ -347,7 +373,7 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ taxfree_after_period: period })
+      .setSettings({ taxfreeAfterPeriod: period })
       .then(settings => {
         this.validateSettingChange(
           'taxFreePeriodAfter',
@@ -359,7 +385,7 @@ export default class Accounting extends Mixins<
 
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          taxFreeAfterPeriod: settings.taxfree_after_period
+          taxfreeAfterPeriod: settings.accounting.taxfreeAfterPeriod
         });
       })
       .catch((reason: Error) => {
@@ -376,11 +402,11 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ include_crypto2crypto: enabled })
+      .setSettings({ includeCrypto2crypto: enabled })
       .then(settings => {
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          includeCrypto2Crypto: settings.include_crypto2crypto
+          includeCrypto2crypto: settings.accounting.includeCrypto2crypto
         });
         this.validateSettingChange('crypto2crypto', 'success');
       })
@@ -399,11 +425,11 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ include_gas_costs: enabled })
+      .setSettings({ includeGasCosts: enabled })
       .then(settings => {
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          includeGasCosts: settings.include_gas_costs
+          includeGasCosts: settings.accounting.includeGasCosts
         });
         this.validateSettingChange('gasCostChange', 'success');
       })
@@ -422,11 +448,12 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ account_for_assets_movements: enabled })
+      .setSettings({ accountForAssetsMovements: enabled })
       .then(settings => {
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          accountForAssetsMovements: settings.account_for_assets_movements
+          accountForAssetsMovements:
+            settings.accounting.accountForAssetsMovements
         });
         this.validateSettingChange('accountForAssetsMovements', 'success');
       })
@@ -449,11 +476,11 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ pnl_csv_have_summary: enabled })
+      .setSettings({ pnlCsvHaveSummary: enabled })
       .then(settings => {
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          haveCSVSummary: settings.pnl_csv_have_summary
+          pnlCsvHaveSummary: settings.accounting.pnlCsvHaveSummary
         });
         this.validateSettingChange('haveCSVSummary', 'success');
       })
@@ -472,11 +499,11 @@ export default class Accounting extends Mixins<
     const { commit } = this.$store;
 
     this.$api
-      .setSettings({ pnl_csv_with_formulas: enabled })
+      .setSettings({ pnlCsvWithFormulas: enabled })
       .then(settings => {
         commit('session/accountingSettings', {
           ...this.accountingSettings,
-          exportCSVFormulas: settings.pnl_csv_with_formulas
+          pnlCsvWithFormulas: settings.accounting.pnlCsvWithFormulas
         });
         this.validateSettingChange('exportCSVFormulas', 'success');
       })
@@ -492,63 +519,63 @@ export default class Accounting extends Mixins<
   }
 
   async onCalculatePastCostBasisChange(enabled: boolean) {
-    const { success, message } = await this.settingsUpdate({
-      calculate_past_cost_basis: enabled
+    const result = await this.settingsUpdate({
+      calculatePastCostBasis: enabled
     });
     this.validateSettingChange(
       'calculatePastCostBasis',
-      success ? 'success' : 'error',
-      success
+      result.success ? 'success' : 'error',
+      result.success
         ? enabled
           ? this.$t('account_settings.messages.cost_basics.enabled').toString()
           : this.$t('account_settings.messages.cost_basics.disabled').toString()
         : this.$t('account_settings.messages.cost_basics.error', {
-            message
+            message: result.message
           }).toString()
     );
   }
 
   async addAsset() {
     const identifier = this.assetToIgnore;
-    const { message, success } = await this.ignoreAsset(identifier);
+    const result = await this.ignoreAsset(identifier);
     const asset = this.getSymbol(identifier);
 
-    const validationMessage = success
+    const validationMessage = result.success
       ? this.$tc('account_settings.messages.ignored_success', 0, { asset })
       : this.$tc('account_settings.messages.ignored_failure', 0, {
           asset,
-          message
+          message: result.message
         });
     this.validateSettingChange(
       'addIgnoreAsset',
-      success ? 'success' : 'error',
+      result.success ? 'success' : 'error',
       validationMessage
     );
 
-    if (success) {
+    if (result.success) {
       this.assetToIgnore = '';
     }
   }
 
   async removeAsset() {
     const identifier = this.assetToRemove;
-    const { message, success } = await this.unignoreAsset(identifier);
+    const result = await this.unignoreAsset(identifier);
     const asset = this.getSymbol(identifier);
 
-    const validationMessage = success
+    const validationMessage = result.success
       ? this.$tc('account_settings.messages.unignored_success', 0, { asset })
       : this.$tc('account_settings.messages.unignored_failure', 0, {
           asset,
-          message
+          message: result.message
         });
 
     this.validateSettingChange(
       'remIgnoreAsset',
-      success ? 'success' : 'error',
+      result.success ? 'success' : 'error',
       validationMessage
     );
 
-    if (success) {
+    if (result.success) {
       this.assetToRemove = '';
     }
   }

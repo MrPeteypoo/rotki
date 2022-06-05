@@ -5,25 +5,21 @@ from web3 import HTTPProvider, Web3
 from web3.datastructures import MutableAttributeDict
 from web3.exceptions import BadFunctionCallOutput
 
+from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
 from rotkehlchen.chain.ethereum.graph import Graph
-from rotkehlchen.errors import (
-    BlockchainQueryError,
-    DeserializationError,
-    RemoteError,
-)
+from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.errors.misc import BlockchainQueryError, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.covalent import Covalent
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.types import ChecksumEthAddress
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import from_wei, hex_or_bytes_to_str
-from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
-
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-AVAX_ADDRESS = '0x9debca6ea3af87bf422cea9ac955618ceb56efb4'
 WEB3_LOGQUERY_BLOCK_RANGE = 250000
 
 
@@ -63,13 +59,13 @@ class AvalancheManager():
         if result is None:
             balance = from_wei(FVal(self.w3.eth.get_balance(account)))
         else:
-            def filter_avax(value: Dict) -> bool:
-                if 'contract_address' in value:
-                    return value['contract_address'] == AVAX_ADDRESS
-                return False
-
-            avax_coin = list(filter(filter_avax, result))
-            balance = from_wei(FVal(avax_coin[0]['balance']))
+            balance = ZERO
+            for entry in result:
+                if entry.get('contract_ticker_symbol') == 'AVAX':
+                    balance = from_wei(FVal(entry.get('balance', 0)))
+                    break
+            if balance == ZERO:
+                balance = from_wei(FVal(self.w3.eth.get_balance(account)))
         return FVal(balance)
 
     def get_multiavax_balance(
@@ -93,6 +89,8 @@ class AvalancheManager():
         May raise:
         - RemoteError if an external service such as Covalent is queried and
         there is a problem with its query.
+        - BlockNotFound if number used to lookup the block can't be found. Raised
+        by web3.eth.get_block().
         """
         block_data: MutableAttributeDict = MutableAttributeDict(self.w3.eth.get_block(num))  # type: ignore # pylint: disable=no-member  # noqa: E501
         block_data['hash'] = hex_or_bytes_to_str(block_data['hash'])
@@ -126,6 +124,9 @@ class AvalancheManager():
             successful = tx_receipt.pop('successful', None)
             tx_receipt['status'] = 1 if successful else 0
             tx_receipt['transactionIndex'] = 0
+            txhash = tx_receipt.pop('tx_hash')
+            tx_receipt['hash'] = txhash
+
             # TODO input and nonce is decoded in Covalent api, encoded in future
             tx_receipt['input'] = '0x'
             tx_receipt['nonce'] = 0

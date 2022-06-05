@@ -2,17 +2,11 @@ import base64
 import logging
 import shutil
 from enum import Enum
-from typing import Any, Dict, NamedTuple, Optional, Tuple
-
-from typing_extensions import Literal
+from typing import Any, Dict, Literal, NamedTuple, Optional, Tuple, Union
 
 from rotkehlchen.data_handler import DataHandler
-from rotkehlchen.errors import (
-    PremiumAuthenticationError,
-    RemoteError,
-    RotkehlchenPermissionError,
-    UnableToDecryptRemoteData,
-)
+from rotkehlchen.errors.api import PremiumAuthenticationError, RotkehlchenPermissionError
+from rotkehlchen.errors.misc import RemoteError, UnableToDecryptRemoteData
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium, PremiumCredentials, premium_create_and_verify
 from rotkehlchen.utils.misc import ts_now
@@ -56,11 +50,9 @@ class PremiumSyncManager():
         if self.premium is None:
             return SyncCheckResult(can_sync=CanSync.NO, message='', payload=None)
 
-        b64_encoded_data, our_hash = self.data.compress_and_encrypt_db(self.password)
-
         try:
             metadata = self.premium.query_last_data_metadata()
-        except RemoteError as e:
+        except (RemoteError, PremiumAuthenticationError) as e:
             log.debug('can sync data from server failed', error=str(e))
             return SyncCheckResult(can_sync=CanSync.NO, message='', payload=None)
 
@@ -71,40 +63,16 @@ class PremiumSyncManager():
             # If it's not a new account and the db setting for premium syncing is off stop
             return SyncCheckResult(can_sync=CanSync.NO, message='', payload=None)
 
-        log.debug(
-            'CAN_PULL',
-            ours=our_hash,
-            theirs=metadata.data_hash,
-        )
-        if our_hash == metadata.data_hash:
-            log.debug('sync from server stopped -- same hash')
-            # same hash -- no need to get anything
-            return SyncCheckResult(can_sync=CanSync.NO, message='', payload=None)
-
         our_last_write_ts = self.data.db.get_last_write_ts()
-        data_bytes_size = len(base64.b64decode(b64_encoded_data))
-
         local_more_recent = our_last_write_ts >= metadata.last_modify_ts
-        local_bigger = data_bytes_size >= metadata.data_size
-
-        if local_more_recent and local_bigger:
-            log.debug('sync from server stopped -- local is both newer and bigger')
+        if local_more_recent:
+            log.debug('sync from server stopped -- local is newer')
             return SyncCheckResult(can_sync=CanSync.NO, message='', payload=None)
-
-        if local_more_recent is False:  # remote is more recent
-            message = (
-                'Detected remote database with more recent modification timestamp '
-                'than the local one. '
-            )
-        else:  # remote is bigger
-            message = 'Detected remote database with bigger size than the local one. '
 
         return SyncCheckResult(
             can_sync=CanSync.ASK_USER,
-            message=message,
+            message='Detected remote database more recent than local. ',
             payload={
-                'local_size': data_bytes_size,
-                'remote_size': metadata.data_size,
                 'local_last_modified': our_last_write_ts,
                 'remote_last_modified': metadata.last_modify_ts,
             },
@@ -126,7 +94,7 @@ class PremiumSyncManager():
 
         try:
             result = self.premium.pull_data()
-        except RemoteError as e:
+        except (RemoteError, PremiumAuthenticationError) as e:
             log.debug('sync from server -- pulling failed.', error=str(e))
             return False, f'Pulling failed: {str(e)}'
 
@@ -159,7 +127,7 @@ class PremiumSyncManager():
 
         try:
             metadata = self.premium.query_last_data_metadata()
-        except RemoteError as e:
+        except (RemoteError, PremiumAuthenticationError) as e:
             log.debug('upload to server -- fetching metadata error', error=str(e))
             return False
         b64_encoded_data, our_hash = self.data.compress_and_encrypt_db(self.password)
@@ -200,7 +168,7 @@ class PremiumSyncManager():
                 last_modify_ts=our_last_write_ts,
                 compression_type='zlib',
             )
-        except RemoteError as e:
+        except (RemoteError, PremiumAuthenticationError) as e:
             log.debug('upload to server -- upload error', error=str(e))
             return False
 
@@ -222,12 +190,51 @@ class PremiumSyncManager():
 
         return self._sync_data_from_server_and_replace_local()
 
+    def _sync_if_allowed(
+        self,
+        sync_approval: Literal['yes', 'no', 'unknown'],
+        result: SyncCheckResult,
+    ) -> None:
+        if result.can_sync == CanSync.ASK_USER:
+            if sync_approval == 'unknown':
+                log.info('Remote DB is possibly newer. Ask user.')
+                raise RotkehlchenPermissionError(result.message, result.payload)
+
+            if sync_approval == 'yes':
+                log.info('User approved data sync from server')
+                # this may raise due to password
+                self._sync_data_from_server_and_replace_local()
+
+            else:
+                log.debug('Could sync data from server but user refused')
+        elif result.can_sync == CanSync.YES:
+            log.info('User approved data sync from server')
+            self._sync_data_from_server_and_replace_local()  # this may raise due to password
+
+    def _abort_new_syncing_premium_user(
+            self,
+            username: str,
+            original_exception: Union[PremiumAuthenticationError, RemoteError],
+    ) -> None:
+        """At this point we are at a new user trying to create an account with
+        premium API keys and we failed. But a directory was created. Remove it.
+        But create a backup of it in case something went really wrong
+        and the directory contained data we did not want to lose"""
+        shutil.move(
+            self.data.user_data_dir,  # type: ignore
+            self.data.data_directory / f'auto_backup_{username}_{ts_now()}',
+        )
+        raise PremiumAuthenticationError(
+            f'Could not verify keys for the new account. {str(original_exception)}',  # noqa: E501
+        ) from original_exception
+
     def try_premium_at_start(
             self,
             given_premium_credentials: Optional[PremiumCredentials],
             username: str,
             create_new: bool,
             sync_approval: Literal['yes', 'no', 'unknown'],
+            sync_database: bool,
     ) -> Optional[Premium]:
         """
         Check if new user provided api pair or we already got one in the DB
@@ -244,20 +251,8 @@ class PremiumSyncManager():
 
             try:
                 self.premium = premium_create_and_verify(given_premium_credentials)
-            except PremiumAuthenticationError as e:
-                log.error('Given API key is invalid')
-                # At this point we are at a new user trying to create an account with
-                # premium API keys and we failed. But a directory was created. Remove it.
-                # But create a backup of it in case something went really wrong
-                # and the directory contained data we did not want to lose
-                shutil.move(
-                    self.data.user_data_dir,  # type: ignore
-                    self.data.data_directory / f'auto_backup_{username}_{ts_now()}',
-                )
-                raise PremiumAuthenticationError(
-                    'Could not verify keys for the new account. '
-                    '{}'.format(str(e)),
-                ) from e
+            except (PremiumAuthenticationError, RemoteError) as e:
+                self._abort_new_syncing_premium_user(username=username, original_exception=e)
 
         # else, if we got premium data in the DB initialize it and try to sync with the server
         db_credentials = self.data.db.get_rotkehlchen_premium()
@@ -265,7 +260,7 @@ class PremiumSyncManager():
             assert not create_new, 'We should never get here for a new account'
             try:
                 self.premium = premium_create_and_verify(db_credentials)
-            except PremiumAuthenticationError as e:
+            except (PremiumAuthenticationError, RemoteError) as e:
                 message = (
                     f'Could not authenticate with the rotkehlchen server with '
                     f'the API keys found in the Database. Error: {str(e)}'
@@ -277,25 +272,18 @@ class PremiumSyncManager():
             return None
 
         result = self._can_sync_data_from_server(new_account=create_new)
-        if result.can_sync == CanSync.ASK_USER:
-            if sync_approval == 'unknown':
-                log.info('Remote DB is possibly newer. Ask user.')
-                raise RotkehlchenPermissionError(result.message, result.payload)
-
-            if sync_approval == 'yes':
-                log.info('User approved data sync from server')
-                self._sync_data_from_server_and_replace_local()  # this may raise due to password
-
-            else:
-                log.debug('Could sync data from server but user refused')
-        elif result.can_sync == CanSync.YES:
-            log.info('User approved data sync from server')
-            self._sync_data_from_server_and_replace_local()  # this may raise due to password
-
         if create_new:
             # if this is a new account, make sure the api keys are properly stored
             # in the DB
+            if sync_database:
+                try:
+                    self._sync_if_allowed(sync_approval, result)
+                except PremiumAuthenticationError as e:
+                    self._abort_new_syncing_premium_user(username=username, original_exception=e)
+
             self.data.db.set_rotkehlchen_premium(self.premium.credentials)
+        else:
+            self._sync_if_allowed(sync_approval, result)
 
         # Success, return premium
         return self.premium

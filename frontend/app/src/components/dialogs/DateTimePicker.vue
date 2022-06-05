@@ -2,7 +2,7 @@
   <div>
     <v-menu
       ref="menu"
-      v-model="menu"
+      v-model="showMenu"
       :close-on-content-click="false"
       transition="scale-transition"
       offset-y
@@ -11,8 +11,8 @@
     >
       <template #activator="{ on }">
         <v-text-field
-          ref="input"
-          :value="value"
+          ref="inputField"
+          :value="inputtedDate"
           :label="label"
           :hint="hint"
           :disabled="disabled"
@@ -28,18 +28,33 @@
         />
       </template>
 
-      <div class="menu-body">
-        <v-date-picker
-          :value="dateModel"
-          :max="maxDate"
-          @change="onDateChange($event)"
-        />
-        <v-time-picker
-          :value="timeModel"
-          :max="maxTime"
-          format="24hr"
-          :use-seconds="seconds"
-          @change="onTimeChange($event)"
+      <div :class="$style.menu">
+        <div>
+          <v-date-picker
+            elevation="0"
+            class="rounded-0"
+            :value="dateModel"
+            :max="maxDate"
+            @change="onDateChange($event)"
+          />
+          <v-time-picker
+            elevation="0"
+            class="rounded-0"
+            :value="timeModel"
+            :max="maxTime"
+            format="24hr"
+            :use-seconds="seconds"
+            @change="onTimeChange($event)"
+          />
+        </div>
+        <v-autocomplete
+          v-model="selectedTimezone"
+          class="pa-4 pb-0"
+          outlined
+          persistent-hint
+          menu-pros="auto"
+          :items="timezones"
+          :rules="timezoneRule"
         />
       </div>
     </v-menu>
@@ -47,176 +62,319 @@
 </template>
 
 <script lang="ts">
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  PropType,
+  Ref,
+  ref,
+  toRefs,
+  watch
+} from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import dayjs from 'dayjs';
-import { Component, Emit, Prop, Vue, Watch } from 'vue-property-decorator';
+import { setupSettings } from '@/composables/settings';
+import { timezones } from '@/data/timezones';
+import i18n from '@/i18n';
+import { DateFormat } from '@/types/date-format';
+import {
+  changeDateFormat,
+  convertDateByTimezone,
+  getDateInputISOFormat,
+  isValidDate
+} from '@/utils/date';
 
-@Component({})
-export default class DateTimePicker extends Vue {
-  private static dateFormat = 'YYYY-MM-DD';
+const defaultDateFormat = 'YYYY-MM-DD';
 
-  @Prop({ required: true })
-  label!: string;
-  @Prop({ required: false, default: '' })
-  hint!: string;
-  @Prop({ required: false, default: false, type: Boolean })
-  persistentHint!: boolean;
-  @Prop({ default: '' })
-  value!: string;
-  @Prop({ default: () => [] })
-  rules!: ((v: string) => boolean | string)[];
-  @Prop({ required: false, default: false, type: Boolean })
-  limitNow!: boolean;
-  @Prop({ required: false, default: false, type: Boolean })
-  seconds!: boolean;
-  @Prop({ required: false, default: false, type: Boolean })
-  outlined!: boolean;
-  @Prop({ required: false, default: false, type: Boolean })
-  disabled!: boolean;
-  @Prop({ required: false, default: () => [], type: Array })
-  errorMessages!: string[];
+const isValid = (
+  date: string,
+  format: DateFormat,
+  seconds: boolean = false
+): boolean => {
+  let dateFormat = getDateInputISOFormat(format);
 
-  private date =
-    /^([0-2]\d|[3][0-1])\/([0]\d|[1][0-2])\/([2][01]|[1][6-9])\d{2}(\s([0-1]\d|[2][0-3])(:[0-5]\d))?$/;
-  private withSeconds =
-    /^([0-2]\d|[3][0-1])\/([0]\d|[1][0-2])\/([2][01]|[1][6-9])\d{2}(\s([0-1]\d|[2][0-3])(:[0-5]\d)(:[0-5]\d))?$/;
+  if (seconds) {
+    return (
+      isValidDate(date, dateFormat) ||
+      isValidDate(date, `${dateFormat} HH:mm:ss`)
+    );
+  }
+  return (
+    isValidDate(date, dateFormat) || isValidDate(date, `${dateFormat} HH:mm`)
+  );
+};
 
-  private dateFormatRule(v: string) {
-    if (this.seconds) {
+const useRules = (
+  rules: Ref<ValidationRules>,
+  dateInputFormat: Ref<DateFormat>,
+  seconds: Ref<boolean>,
+  allowEmpty: Ref<boolean>
+) => {
+  const dateFormatRule = (date: string) => {
+    const format = get(dateInputFormat);
+    const dateFormat = getDateInputISOFormat(format);
+
+    if (get(allowEmpty) && !date) {
+      return true;
+    }
+
+    if (get(seconds)) {
       return (
-        (v && this.withSeconds.test(v)) ||
-        this.$t('date_time_picker.seconds_format').toString()
+        isValid(date, format, true) ||
+        i18n
+          .t('date_time_picker.seconds_format', {
+            dateFormat
+          })
+          .toString()
       );
     }
     return (
-      (v && this.date.test(v)) ||
-      this.$t('date_time_picker.default_format').toString()
+      isValid(date, format) ||
+      i18n
+        .t('date_time_picker.default_format', {
+          dateFormat
+        })
+        .toString()
     );
-  }
+  };
 
-  timeModel: string = dayjs().format(this.timeFormat);
-  dateModel: string = '';
+  const allRules = computed(() => get(rules).concat(dateFormatRule));
+  const timezoneRule = computed(() => [
+    (v: string) =>
+      !!v || i18n.t('date_time_picker.timezone_field.non_empty').toString()
+  ]);
 
-  get maxDate(): string {
-    if (this.limitNow) {
-      return dayjs().format(DateTimePicker.dateFormat);
+  return { allRules, timezoneRule };
+};
+
+type ValidationRules = ((v: string) => boolean | string)[];
+
+export default defineComponent({
+  name: 'DateTimePicker',
+  props: {
+    label: { required: true, type: String },
+    hint: { required: false, default: '', type: String },
+    persistentHint: { required: false, default: false, type: Boolean },
+    value: { default: '', required: false, type: String },
+    rules: {
+      default: () => [],
+      required: false,
+      type: Array as PropType<ValidationRules>
+    },
+    limitNow: { required: false, default: false, type: Boolean },
+    allowEmpty: { required: false, default: false, type: Boolean },
+    seconds: { required: false, default: false, type: Boolean },
+    outlined: { required: false, default: false, type: Boolean },
+    disabled: { required: false, default: false, type: Boolean },
+    errorMessages: {
+      required: false,
+      default: () => [],
+      type: Array as PropType<string[]>
     }
-    return '';
-  }
+  },
+  emits: ['input'],
+  setup(props, { emit }) {
+    const { dateInputFormat } = setupSettings();
 
-  get maxTime(): string {
-    if (this.limitNow && dayjs(this.dateModel).isToday()) {
-      return dayjs().format(this.timeFormat);
-    }
-    return '';
-  }
-
-  menu: boolean = false;
-
-  private get timeFormat(): string {
-    let format = 'HH:mm';
-    if (this.seconds) {
-      format += ':ss';
-    }
-    return format;
-  }
-
-  get allRules(): ((v: string) => boolean | string)[] {
-    return this.rules.concat([this.dateFormatRule.bind(this)]);
-  }
-
-  private updateActualDate() {
-    let value = this.formatDate(this.dateModel);
-    if (this.timeModel) {
-      value += ` ${this.timeModel}`;
-    }
-    this.emitIfValid(value);
-  }
-
-  private emitIfValid(value: string) {
-    if (this.isValid(value)) {
-      this.input(value);
-    }
-  }
-
-  private isValid(date: string): boolean {
-    return this.seconds ? this.withSeconds.test(date) : this.date.test(date);
-  }
-
-  mounted() {
-    this.onValueChange(this.value);
-  }
-
-  onTimeChange(time: string) {
-    this.timeModel = time;
-    this.updateActualDate();
-  }
-
-  onDateChange(date: string) {
-    this.dateModel = date;
-    this.updateActualDate();
-  }
-
-  @Watch('value')
-  onValueChange(value?: string) {
-    if (!value) {
-      this.dateModel = '';
-      this.timeModel = '';
-    } else if (this.isValid(value)) {
-      const [date, time] = value.split(' ');
-      const [day, month, year] = date.split('/');
-      const formattedDate = `${year}-${month}-${day}`;
-      if (formattedDate !== this.dateModel) {
-        this.dateModel = formattedDate;
+    const { seconds, rules, limitNow, value, allowEmpty } = toRefs(props);
+    const timeFormat = computed(() => {
+      let format = 'HH:mm';
+      if (get(seconds)) {
+        format += ':ss';
       }
-      if (time !== this.timeModel) {
-        this.timeModel = time;
+      return format;
+    });
+    const showMenu = ref(false);
+    const inputtedDate = ref('');
+    const selectedTimezone = ref('');
+    const timeModel = ref(dayjs().format(get(timeFormat)));
+    const dateModel = ref('');
+    const inputField = ref();
+
+    const maxDate = computed(() => {
+      if (get(limitNow)) {
+        return dayjs().format(defaultDateFormat);
+      }
+      return '';
+    });
+
+    const maxTime = computed(() => {
+      if (get(limitNow) && dayjs(get(dateModel)).isToday()) {
+        return dayjs().format(get(timeFormat));
+      }
+      return '';
+    });
+
+    function onValueChange(value: string) {
+      const changedDateTimezone = convertDateByTimezone(
+        value,
+        DateFormat.DateMonthYearHourMinuteSecond,
+        dayjs.tz.guess(),
+        get(selectedTimezone)
+      );
+      set(
+        inputtedDate,
+        changeDateFormat(
+          changedDateTimezone,
+          DateFormat.DateMonthYearHourMinuteSecond,
+          get(dateInputFormat)
+        )
+      );
+
+      if (!value) {
+        set(dateModel, '');
+        set(timeModel, '');
+      } else if (
+        isValid(value, DateFormat.DateMonthYearHourMinuteSecond, get(seconds))
+      ) {
+        const [date, time] = changedDateTimezone.split(' ');
+        const [day, month, year] = date.split('/');
+        const formattedDate = `${year}-${month}-${day}`;
+        if (formattedDate !== get(dateModel)) {
+          set(dateModel, formattedDate);
+        }
+        if (time !== get(timeModel)) {
+          set(timeModel, time);
+        }
       }
     }
+
+    watch(value, onValueChange);
+    watch(selectedTimezone, () => onValueChange(get(value)));
+    onMounted(() => onValueChange(get(value)));
+
+    const getDefaultTimezoneName = (offset: number) => {
+      let hour = offset / 60;
+      if (!Number.isInteger(offset)) hour = 0;
+
+      const isPositive = hour > 0;
+      return `Etc/GMT${isPositive ? '+' : ''}hour`;
+    };
+
+    const setCurrentTimezone = () => {
+      const guessedTimezone = dayjs.tz.guess();
+      const offset = dayjs().utcOffset() / 60;
+
+      const doesTimezoneExist = timezones.filter(
+        timezone => timezone === guessedTimezone
+      );
+
+      set(
+        selectedTimezone,
+        doesTimezoneExist ? guessedTimezone : getDefaultTimezoneName(offset)
+      );
+    };
+
+    const formatDate = (date: string) => {
+      if (!date) return '';
+
+      const [year, month, day] = date.split('-');
+      return `${day}/${month}/${year}`;
+    };
+
+    const input = (dateTime: string) => {
+      emit('input', dateTime);
+    };
+
+    const emitIfValid = (
+      value: string,
+      format: DateFormat = get(dateInputFormat)
+    ) => {
+      if (isValid(value, format, get(seconds))) {
+        const formattedDate = changeDateFormat(
+          value,
+          format,
+          DateFormat.DateMonthYearHourMinuteSecond
+        );
+        input(
+          convertDateByTimezone(
+            formattedDate,
+            DateFormat.DateMonthYearHourMinuteSecond,
+            get(selectedTimezone),
+            dayjs.tz.guess()
+          )
+        );
+      }
+    };
+
+    const updateActualDate = () => {
+      let value = formatDate(get(dateModel));
+      const time = get(timeModel);
+      if (time) {
+        value += ` ${time}`;
+      }
+
+      emitIfValid(value, DateFormat.DateMonthYearHourMinuteSecond);
+    };
+
+    const onTimeChange = (time: string) => {
+      set(timeModel, time);
+      updateActualDate();
+    };
+
+    const onDateChange = (date: string) => {
+      set(dateModel, date);
+      updateActualDate();
+    };
+
+    const setNow = () => {
+      const now = dayjs();
+      set(timeModel, now.format(get(timeFormat)));
+      set(dateModel, now.format(defaultDateFormat));
+      updateActualDate();
+    };
+
+    const reset = () => {
+      const field = get(inputField);
+      field?.reset();
+    };
+
+    setCurrentTimezone();
+
+    return {
+      dateModel,
+      timeModel,
+      maxDate,
+      maxTime,
+      inputtedDate,
+      selectedTimezone,
+      timezones,
+      showMenu,
+      inputField,
+      ...useRules(rules, dateInputFormat, seconds, allowEmpty),
+      setNow,
+      onTimeChange,
+      onDateChange,
+      reset,
+      emitIfValid
+    };
   }
-
-  @Emit()
-  public input(_value?: string) {}
-
-  formatDate(date: string) {
-    if (!date) return '';
-
-    const [year, month, day] = date.split('-');
-    return `${day}/${month}/${year}`;
-  }
-
-  setNow() {
-    const now = dayjs();
-    this.timeModel = now.format(this.timeFormat);
-    this.dateModel = now.format(DateTimePicker.dateFormat);
-    this.updateActualDate();
-  }
-
-  reset() {
-    (this.$refs.input as any).reset();
-  }
-}
+});
 </script>
 
-<style scoped lang="scss">
-.menu-body {
+<style module lang="scss">
+.menu {
   z-index: 999;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
 
-  ::v-deep {
+  > * {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  :global {
     .v-picker {
       &__title {
         height: 102px;
       }
     }
-
-    .v-card {
-      box-shadow: none !important;
-    }
   }
 
   &:first-child {
-    ::v-deep {
+    :global {
       .v-picker {
         border-top-right-radius: 0 !important;
         border-bottom-right-radius: 0 !important;
@@ -225,7 +383,7 @@ export default class DateTimePicker extends Vue {
   }
 
   &:last-child {
-    ::v-deep {
+    :global {
       .v-picker {
         border-top-left-radius: 0 !important;
         border-bottom-left-radius: 0 !important;

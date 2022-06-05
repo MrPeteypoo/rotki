@@ -1,26 +1,28 @@
 import { mount, Wrapper } from '@vue/test-utils';
 import flushPromises from 'flush-promises';
+import { createPinia, Pinia, setActivePinia } from 'pinia';
 import Vue from 'vue';
 import Vuetify from 'vuetify';
 import ExternalServices from '@/components/settings/api-keys/ExternalServices.vue';
-import { ExternalServiceKeys } from '@/model/action-result';
-import store from '@/store/store';
+import store, { useMainStore } from '@/store/store';
 import '../../../i18n';
+import { ExternalServiceKeys } from '@/types/user';
 
 Vue.use(Vuetify);
 
 describe('ExternalServices.vue', () => {
   let wrapper: Wrapper<ExternalServices>;
-  let queryExternalServices: jest.Mock;
-  let setExternalServices: jest.Mock;
-  let deleteExternalServices: jest.Mock;
+  let queryExternalServices: any;
+  let setExternalServices: any;
+  let deleteExternalServices: any;
+  let pinia: Pinia;
 
   const mockResponse: ExternalServiceKeys = {
     etherscan: {
-      api_key: '123'
+      apiKey: '123'
     },
     cryptocompare: {
-      api_key: '123'
+      apiKey: '123'
     }
   };
 
@@ -28,8 +30,9 @@ describe('ExternalServices.vue', () => {
     const vuetify = new Vuetify();
     return mount(ExternalServices, {
       store,
+      pinia,
       vuetify,
-      stubs: ['v-dialog', 'card-title'],
+      stubs: ['v-dialog', 'card-title', 'card'],
       propsData: {
         value: ''
       },
@@ -44,9 +47,11 @@ describe('ExternalServices.vue', () => {
   }
 
   beforeEach(() => {
-    queryExternalServices = jest.fn();
-    setExternalServices = jest.fn();
-    deleteExternalServices = jest.fn();
+    pinia = createPinia();
+    setActivePinia(pinia);
+    queryExternalServices = vi.fn();
+    setExternalServices = vi.fn();
+    deleteExternalServices = vi.fn();
   });
 
   afterEach(() => {
@@ -70,7 +75,7 @@ describe('ExternalServices.vue', () => {
         .trigger('click');
       await flushPromises();
       expect(setExternalServices).toHaveBeenCalledWith([
-        { name: 'etherscan', api_key: '123' }
+        { name: 'etherscan', apiKey: '123' }
       ]);
     });
 
@@ -86,9 +91,10 @@ describe('ExternalServices.vue', () => {
         )
         .trigger('click');
       await flushPromises();
-      expect(store.state.message.description).toMatch('cryptocompare');
+      const store = useMainStore();
+      expect(store.message.description).toMatch('cryptocompare');
       expect(setExternalServices).toHaveBeenCalledWith([
-        { name: 'cryptocompare', api_key: '123' }
+        { name: 'cryptocompare', apiKey: '123' }
       ]);
     });
 
@@ -100,7 +106,8 @@ describe('ExternalServices.vue', () => {
         .find('.external-services__etherscan-key .service-key__buttons__save')
         .trigger('click');
       await flushPromises();
-      expect(store.state.message.description).toMatch('mock failure');
+      const store = useMainStore();
+      expect(store.message.description).toMatch('mock failure');
     });
 
     test('delete is disabled', async () => {
@@ -158,7 +165,9 @@ describe('ExternalServices.vue', () => {
       // @ts-ignore
       expect(wrapper.vm.serviceToDelete).toBe('etherscan');
 
-      wrapper.find('.confirm-dialog__buttons__confirm').trigger('click');
+      wrapper
+        .find('[data-cy="confirm-dialog"] [data-cy="button-confirm"]')
+        .trigger('click');
       await wrapper.vm.$nextTick();
       await flushPromises();
 
@@ -180,7 +189,9 @@ describe('ExternalServices.vue', () => {
       // @ts-ignore
       expect(wrapper.vm.serviceToDelete).toBe('cryptocompare');
 
-      wrapper.find('.confirm-dialog__buttons__confirm').trigger('click');
+      wrapper
+        .find('[data-cy="confirm-dialog"] [data-cy="button-confirm"]')
+        .trigger('click');
       await wrapper.vm.$nextTick();
       await flushPromises();
 
@@ -188,7 +199,8 @@ describe('ExternalServices.vue', () => {
 
       // @ts-ignore
       expect(wrapper.vm.serviceToDelete).toBe('');
-      expect(store.state.message.description).toMatch('mock failure');
+      const store = useMainStore();
+      expect(store.message.description).toMatch('mock failure');
     });
   });
 });

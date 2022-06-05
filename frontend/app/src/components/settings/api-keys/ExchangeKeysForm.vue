@@ -9,6 +9,7 @@
           :label="$t('exchange_keys_form.exchange')"
           data-cy="exchange"
           :disabled="edit"
+          auto-select-first
           @change="onExchangeChange($event)"
         >
           <template #selection="{ item, attrs, on }">
@@ -93,6 +94,7 @@
       />
 
       <revealable-input
+        v-if="exchange.location !== 'bitpanda'"
         outlined
         :disabled="edit && !editKeys"
         :value="exchange.apiSecret"
@@ -109,7 +111,7 @@
         :disabled="edit && !editKeys"
         outlined
         :value="exchange.passphrase"
-        :rules="passphraseRules"
+        :rules="!edit || editKeys ? passphraseRules : []"
         prepend-icon="mdi-key-plus"
         data-cy="passphrase"
         :label="$t('exchange_settings.inputs.passphrase')"
@@ -117,7 +119,7 @@
       />
     </div>
 
-    <div v-if="exchange.location === 'ftx'">
+    <div v-if="exchange.location === 'ftx' || exchange.location === 'ftxus'">
       <v-text-field
         v-if="edit"
         outlined
@@ -137,8 +139,8 @@
     </div>
 
     <binance-pairs-selector
-      v-if="isBinance & edit"
-      :value="binancePairs"
+      v-if="isBinance"
+      outlined
       :name="exchange.name"
       :location="exchange.location"
       @input="onUpdateExchange({ ...exchange, binanceMarkets: $event })"
@@ -153,17 +155,12 @@ import ExchangeDisplay from '@/components/display/ExchangeDisplay.vue';
 import BinancePairsSelector from '@/components/helper/BinancePairsSelector.vue';
 import { tradeLocations } from '@/components/history/consts';
 import RevealableInput from '@/components/inputs/RevealableInput.vue';
-import {
-  EXCHANGE_BINANCE,
-  EXCHANGE_BINANCEUS,
-  EXCHANGE_COINBASEPRO,
-  EXCHANGE_KRAKEN,
-  EXCHANGE_KUCOIN,
-  SUPPORTED_EXCHANGES
-} from '@/data/defaults';
-import { SupportedExchange } from '@/services/balances/types';
-import { KRAKEN_ACCOUNT_TYPES } from '@/store/balances/const';
 import { ExchangePayload } from '@/store/balances/types';
+import {
+  KrakenAccountType,
+  SUPPORTED_EXCHANGES,
+  SupportedExchange
+} from '@/types/exchanges';
 import { trimOnPaste } from '@/utils/event';
 
 @Component({
@@ -174,7 +171,7 @@ import { trimOnPaste } from '@/utils/event';
   }
 })
 export default class ExchangeKeysForm extends Vue {
-  readonly krakenAccountTypes = KRAKEN_ACCOUNT_TYPES;
+  readonly krakenAccountTypes = KrakenAccountType.options;
   readonly exchanges = SUPPORTED_EXCHANGES;
   exchangeNonce!: (exchange: SupportedExchange) => number;
 
@@ -229,12 +226,18 @@ export default class ExchangeKeysForm extends Vue {
 
   get requiresPassphrase(): boolean {
     const exchange = this.exchange.location;
-    return exchange === EXCHANGE_COINBASEPRO || exchange === EXCHANGE_KUCOIN;
+    return (
+      exchange === SupportedExchange.COINBASEPRO ||
+      exchange === SupportedExchange.KUCOIN
+    );
   }
 
   get isBinance(): boolean {
     const exchange = this.exchange.location;
-    return exchange === EXCHANGE_BINANCE || exchange === EXCHANGE_BINANCEUS;
+    return (
+      exchange === SupportedExchange.BINANCE ||
+      exchange === SupportedExchange.BINANCEUS
+    );
   }
 
   mounted() {
@@ -255,9 +258,10 @@ export default class ExchangeKeysForm extends Vue {
       newName: null,
       location: exchange,
       apiKey: null,
-      apiSecret: null,
+      apiSecret: exchange === SupportedExchange.BITPANDA ? '' : null,
       passphrase: null,
-      krakenAccountType: exchange === EXCHANGE_KRAKEN ? 'starter' : null,
+      krakenAccountType:
+        exchange === SupportedExchange.KRAKEN ? 'starter' : null,
       binanceMarkets: null,
       ftxSubaccount: null
     });
@@ -296,16 +300,6 @@ export default class ExchangeKeysForm extends Vue {
           .v-label {
             color: green !important;
           }
-        }
-      }
-    }
-  }
-
-  .v-text-field {
-    &--outlined {
-      .v-input {
-        &__append-inner {
-          margin-top: 10px;
         }
       }
     }

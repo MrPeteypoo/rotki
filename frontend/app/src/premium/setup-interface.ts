@@ -1,10 +1,7 @@
 import {
-  GitcoinGrantEventsPayload,
-  GitcoinReportPayload
-} from '@rotki/common/lib/gitcoin';
-import {
   DataUtilities,
   DateUtilities,
+  PremiumInterface,
   SettingsApi
 } from '@rotki/common/lib/premium';
 import {
@@ -14,18 +11,30 @@ import {
   TimeUnit
 } from '@rotki/common/lib/settings';
 import * as CompositionAPI from '@vue/composition-api';
+import * as BigNumber from 'bignumber.js';
 import Chart from 'chart.js';
 import dayjs from 'dayjs';
 import Vue from 'vue';
-import Vuex from 'vuex';
+import * as zod from 'zod';
 import { displayDateFormatter } from '@/data/date_formatter';
 import { DARK_COLORS, LIGHT_COLORS } from '@/plugins/theme';
+import {
+  adexApi,
+  assetsApi,
+  balancerApi,
+  balancesApi,
+  compoundApi,
+  dexTradeApi,
+  statisticsApi,
+  sushiApi,
+  userSettings,
+  utilsApi
+} from '@/premium/premium-apis';
 import { registerComponents } from '@/premium/register-components';
-import { statisticsApi } from '@/premium/statistics-api';
-import { api } from '@/services/rotkehlchen-api';
-import { HistoryActions } from '@/store/history/consts';
-import { FrontendSettingsPayload } from '@/store/settings/types';
 import store from '@/store/store';
+import { DateFormat } from '@/types/date-format';
+import { FrontendSettingsPayload } from '@/types/frontend-settings';
+import { convertToTimestamp, getDateInputISOFormat } from '@/utils/date';
 
 const date: DateUtilities = {
   epoch(): number {
@@ -51,34 +60,28 @@ const date: DateUtilities = {
       new Date(timestamp * 1000),
       store.getters['session/dateDisplayFormat']
     );
+  },
+  getDateInputISOFormat(format: string): string {
+    return getDateInputISOFormat(format as DateFormat);
+  },
+  convertToTimestamp(date: string, dateFormat: string): number {
+    return convertToTimestamp(date, dateFormat as DateFormat);
   }
 };
 
-const data: DataUtilities = {
-  assetInfo: (identifier: string) => {
-    return store.getters['balances/assetInfo'](identifier);
-  },
-  getIdentifierForSymbol: (symbol: string) => {
-    return store.getters['balances/getIdentifierForSymbol'](symbol);
-  },
-  gitcoin: {
-    generateReport(payload: GitcoinReportPayload) {
-      return api.history.generateReport(payload);
-    },
-    deleteGrant(grantId: number) {
-      return api.history.deleteGitcoinGrantEvents(grantId);
-    },
-    fetchGrantEvents(payload: GitcoinGrantEventsPayload) {
-      return store.dispatch(
-        `history/${HistoryActions.FETCH_GITCOIN_GRANT}`,
-        payload
-      );
-    }
-  },
-  statistics: statisticsApi
-};
+const data = (): DataUtilities => ({
+  assets: assetsApi(),
+  statistics: statisticsApi(),
+  adex: adexApi(),
+  balances: balancesApi(),
+  balancer: balancerApi(),
+  compound: compoundApi(),
+  dexTrades: dexTradeApi(),
+  sushi: sushiApi(),
+  utils: utilsApi()
+});
 
-const settings: SettingsApi = {
+const settings = (): SettingsApi => ({
   async update(settings: FrontendSettingsPayload): Promise<void> {
     await store.dispatch('settings/updateSetting', settings);
   },
@@ -94,22 +97,25 @@ const settings: SettingsApi = {
       light: settings[LIGHT_THEME],
       dark: settings[DARK_THEME]
     };
+  },
+  user: userSettings()
+});
+
+export const usePremiumApi = (): PremiumInterface => ({
+  useHostComponents: true,
+  version: 16,
+  api: {
+    date,
+    data: data(),
+    settings: settings()
   }
-};
+});
 
 export const setupPremium = () => {
   window.Vue = Vue;
   window.Chart = Chart;
-  window.Vue.use(Vuex);
   window['@vue/composition-api'] = CompositionAPI;
-  window.rotki = {
-    useHostComponents: true,
-    version: 15,
-    utils: {
-      date,
-      data,
-      settings
-    }
-  };
+  window.zod = zod;
+  window.bn = BigNumber;
   registerComponents();
 };

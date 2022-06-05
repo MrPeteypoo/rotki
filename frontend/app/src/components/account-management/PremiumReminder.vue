@@ -11,7 +11,7 @@
         <v-col cols="10">{{ $t('premium_reminder.description') }}</v-col>
       </v-row>
     </v-card-text>
-    <v-card-actions>
+    <v-card-actions class="pa-4">
       <v-spacer />
       <v-btn
         color="primary"
@@ -25,6 +25,8 @@
       <v-btn
         color="primary"
         depressed
+        target="_blank"
+        :href="$interop.isPackaged ? undefined : $interop.premiumURL"
         class="premium-reminder__buttons__confirm"
         @click="upgrade"
       >
@@ -34,35 +36,44 @@
   </v-card>
 </template>
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import {
+  defineComponent,
+  onBeforeMount,
+  onBeforeUnmount,
+  toRefs
+} from '@vue/composition-api';
 
-@Component({})
-export default class PremiumReminder extends Vue {
-  @Prop({ required: true, type: Boolean })
-  display!: boolean;
-  @Emit()
-  loginComplete() {}
-  @Emit()
-  upgrade() {}
+export default defineComponent({
+  name: 'PremiumReminder',
+  props: {
+    display: { required: true, type: Boolean }
+  },
+  emits: ['login-complete', 'upgrade'],
+  setup(props, { emit }) {
+    const { display } = toRefs(props);
 
-  keyHandler(event: KeyboardEvent) {
-    if (!this.display) {
-      return;
-    }
+    const loginComplete = () => emit('login-complete');
+    const upgrade = () => emit('upgrade');
 
-    const keys = ['Escape', 'Esc'];
-    if (!keys.includes(event.key)) {
-      return;
-    }
-    this.loginComplete();
+    const keyHandler = (event: KeyboardEvent) => {
+      if (!display.value) {
+        return;
+      }
+
+      const keys = ['Escape', 'Esc'];
+      if (!keys.includes(event.key)) {
+        return;
+      }
+      loginComplete();
+    };
+    onBeforeMount(() => {
+      document.addEventListener('keydown', keyHandler);
+    });
+    onBeforeUnmount(() => {
+      document.removeEventListener('keydown', keyHandler);
+    });
+
+    return { upgrade, loginComplete };
   }
-
-  created() {
-    document.addEventListener('keydown', this.keyHandler);
-  }
-
-  destroyed() {
-    document.removeEventListener('keydown', this.keyHandler);
-  }
-}
+});
 </script>

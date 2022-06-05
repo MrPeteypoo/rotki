@@ -1,102 +1,116 @@
 <template>
-  <v-tooltip top open-delay="400">
-    <template #activator="{ on, attrs }">
-      <div v-bind="attrs" :style="styled" v-on="on">
-        <generated-icon
-          v-if="!!currency || error"
-          :asset="displayAsset"
-          :currency="!!currency"
-          :size="size"
-        />
-        <v-img
-          v-else-if="!error"
-          :src="url"
-          :max-width="size"
-          :min-width="size"
-          contain
-          @error="error = true"
-        />
-      </div>
-    </template>
-    <span>
-      {{
-        $t('asset_icon.tooltip', {
-          symbol: getSymbol(identifier),
-          name: getAssetName(identifier)
-        })
-      }}
-    </span>
-  </v-tooltip>
+  <adaptive-wrapper>
+    <v-tooltip top open-delay="400" :disabled="noTooltip">
+      <template #activator="{ on, attrs }">
+        <div v-bind="attrs" :style="styled" class="d-flex" v-on="on">
+          <generated-icon
+            v-if="!!currency || error"
+            :asset="displayAsset"
+            :currency="!!currency"
+            :size="size"
+          />
+          <v-img
+            v-else-if="!error"
+            :src="url"
+            :max-height="size"
+            :min-height="size"
+            :max-width="size"
+            :min-width="size"
+            contain
+            @error="error = true"
+          />
+        </div>
+      </template>
+      <span>
+        {{ $t('asset_icon.tooltip', tooltip) }}
+      </span>
+    </v-tooltip>
+  </adaptive-wrapper>
 </template>
 
 <script lang="ts">
 import { Blockchain } from '@rotki/common/lib/blockchain';
-import { Component, Mixins, Prop, Watch } from 'vue-property-decorator';
+import {
+  computed,
+  defineComponent,
+  ref,
+  toRefs,
+  watch
+} from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import GeneratedIcon from '@/components/helper/display/icons/GeneratedIcon.vue';
 import { currencies } from '@/data/currencies';
-import AssetMixin from '@/mixins/asset-mixin';
+import { api } from '@/services/rotkehlchen-api';
+import { useAssetInfoRetrieval } from '@/store/assets';
 
-@Component({
-  components: { GeneratedIcon }
-})
-export default class AssetIcon extends Mixins(AssetMixin) {
-  @Prop({ required: true })
-  identifier!: string;
-  @Prop({ required: false, type: String, default: '' })
-  symbol!: string;
-  @Prop({ required: true, type: String })
-  size!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  changeable!: boolean;
-  @Prop({ required: false, type: Object, default: () => null })
-  styled!: any;
+export default defineComponent({
+  name: 'AssetIcon',
+  components: { AdaptiveWrapper, GeneratedIcon },
+  props: {
+    identifier: { required: true, type: String },
+    symbol: { required: false, type: String, default: '' },
+    size: { required: true, type: String },
+    changeable: { required: false, type: Boolean, default: false },
+    styled: { required: false, type: Object, default: () => null },
+    noTooltip: { required: false, type: Boolean, default: false }
+  },
+  setup(props) {
+    const { symbol, changeable, identifier } = toRefs(props);
+    const error = ref<boolean>(false);
 
-  error: boolean = false;
+    const { assetSymbol, assetName, assetIdentifierForSymbol } =
+      useAssetInfoRetrieval();
 
-  @Watch('symbol')
-  onSymbolChange() {
-    this.error = false;
+    watch([symbol, changeable, identifier], () => set(error, false));
+
+    const currency = computed<string | undefined>(() => {
+      const id = get(identifier);
+      if ([Blockchain.BTC, Blockchain.ETH].includes(id as Blockchain)) {
+        return undefined;
+      }
+      return currencies.find(({ tickerSymbol }) => tickerSymbol === id)
+        ?.unicodeSymbol;
+    });
+
+    const displayAsset = computed<string>(() => {
+      const id = get(identifier);
+      const matchedSymbol = get(assetSymbol(id));
+      if (get(error)) {
+        return get(symbol) || matchedSymbol;
+      }
+      return get(currency) || matchedSymbol || id;
+    });
+
+    const tooltip = computed(() => {
+      const id = get(identifier);
+      return {
+        symbol: get(assetSymbol(id)),
+        name: get(assetName(id))
+      };
+    });
+
+    const url = computed<string>(() => {
+      let id = get(identifier);
+      if (
+        get(symbol) === 'WETH' ||
+        get(assetIdentifierForSymbol('WETH')) === id
+      ) {
+        return `/assets/images/defi/weth.svg`;
+      }
+      const url = `${api.serverUrl}/api/1/assets/${id}/icon`;
+      return get(changeable) ? `${url}?t=${Date.now()}` : url;
+    });
+
+    return {
+      currency,
+      error,
+      displayAsset,
+      tooltip,
+      url,
+      assetSymbol,
+      assetName
+    };
   }
-
-  @Watch('changeable')
-  onChange() {
-    this.error = false;
-  }
-
-  @Watch('identifier')
-  onIdentifierChange() {
-    this.error = false;
-  }
-
-  get asset(): string {
-    return this.identifier;
-  }
-
-  get displayAsset(): string {
-    const symbol = this.symbol ? this.symbol : this.getSymbol(this.identifier);
-    if (this.error && symbol) {
-      return symbol;
-    }
-    return this.currency || this.asset;
-  }
-
-  get currency(): string | undefined {
-    if (this.asset === Blockchain.BTC || this.asset === Blockchain.ETH) {
-      return undefined;
-    }
-    return currencies.find(({ ticker_symbol }) => ticker_symbol === this.asset)
-      ?.unicode_symbol;
-  }
-
-  get url(): string {
-    if (
-      this.symbol === 'WETH' ||
-      this.getIdentifierForSymbol('WETH') === this.identifier
-    ) {
-      return require(`@/assets/images/defi/weth.svg`);
-    }
-    const url = `${this.$api.serverUrl}/api/1/assets/${this.asset}/icon`;
-    return this.changeable ? `${url}?t=${Date.now()}` : url;
-  }
-}
+});
 </script>

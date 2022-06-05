@@ -1,3 +1,5 @@
+vi.mock('@/i18n');
+
 import Vue from 'vue';
 
 function stringify(value: { [key: string]: any }): string {
@@ -6,9 +8,11 @@ function stringify(value: { [key: string]: any }): string {
     .join(', ');
 }
 
+export const mockT = (key: any, args?: any) =>
+  args ? `${key}::${stringify(args)}` : key;
+
 function I18n(vue: typeof Vue): void {
-  vue.prototype.$t = (key: string, args?: object) =>
-    args ? `${key}::${stringify(args)}` : key;
+  vue.prototype.$t = mockT;
   vue.prototype.$tc = (key: string, choice?: number, args?: object) =>
     args ? `${key}::${choice}::${stringify(args)}` : key;
 }

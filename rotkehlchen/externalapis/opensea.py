@@ -1,25 +1,38 @@
 import dataclasses
-import json
 import logging
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Tuple, Union, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Tuple,
+    Union,
+    overload,
+)
 
 import gevent
 import requests
+from cryptography.fernet import Fernet
 from eth_utils import to_checksum_address
-from typing_extensions import Literal
 
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.constants.assets import A_ETH
 from rotkehlchen.constants.misc import NFT_DIRECTIVE, ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import Inquirer
-from rotkehlchen.serialization.deserialize import deserialize_optional_fval
-from rotkehlchen.typing import ChecksumEthAddress, ExternalService
+from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.serialization.deserialize import deserialize_optional_to_optional_fval
+from rotkehlchen.types import ChecksumEthAddress, ExternalService
 from rotkehlchen.user_messages import MessagesAggregator
 
 if TYPE_CHECKING:
@@ -29,6 +42,7 @@ ASSETS_MAX_LIMIT = 50  # according to opensea docs
 CONTRACTS_MAX_LIMIT = 300  # according to opensea docs
 
 logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 
 @dataclasses.dataclass(init=True, repr=True, eq=False, order=False, unsafe_hash=False, frozen=False)  # noqa: E501
@@ -80,13 +94,54 @@ class Opensea(ExternalServiceWithApiKey):
         super().__init__(database=database, service_name=ExternalService.OPENSEA)
         self.msg_aggregator = msg_aggregator
         self.session = requests.session()
-        self.session.headers.update({'User-Agent': 'rotkehlchen'})
+        # Their API seems to get limited by cloudflare after 1-2 requests ... unless
+        # the user agent is a browser. We lose nothing by doing this and may revert if they fix
+        # https://twitter.com/LefterisJP/status/1483017589869711364
+        self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0'})  # noqa: E501
         self.collections: Dict[str, Collection] = {}
+        self.backup_key: Optional[str] = None
+
+    def maybe_get_backup_key(self) -> Optional[str]:
+        """This will attempt to fetch the backup key from our server if not already fetched"""
+        if self.backup_key is not None:
+            return self.backup_key
+
+        try:
+            response = requests.get('https://rotki.com/api/1/credentials', json={'name': 'opensea'})  # noqa: E501
+        except requests.exceptions.RequestException as e:
+            log.error(f'Could not connect to rotki server for fetching backup opensea key due to {str(e)}')  # noqa: E501
+            return None
+
+        try:
+            json_ret = response.json()
+        except JSONDecodeError as e:
+            log.error(f'Could not decode rotki server response for opensea key: {response.text} due to {str(e)}')  # noqa: E501
+            return None
+
+        if response.status_code != 200:
+            log.error(
+                f'Call to rotki server for opensea key failed with status {response.status_code} '
+                f'and text: {response.text}',
+            )
+            return None
+
+        encrypted_key = json_ret.get('result')
+        if encrypted_key is None:
+            log.error(
+                f'Could not get result from json response of rotki server for '
+                f'opensea key: {json_ret}',
+            )
+            return None
+
+        f = Fernet('draq3jF_MZR2MAV4tYTtGNjZQGAyEQkE-hr1cYF8kIc='.encode())
+        computed_key = f.decrypt(encrypted_key.encode()).decode()
+        self.backup_key = computed_key
+        return self.backup_key
 
     @overload
     def _query(  # pylint: disable=no-self-use
             self,
-            endpoint: Literal['assets'],
+            endpoint: Literal['assets', 'collectionstats'],
             options: Optional[Dict[str, Any]] = None,
             timeout: Optional[Tuple[int, int]] = None,
     ) -> Dict[str, Any]:
@@ -103,17 +158,24 @@ class Opensea(ExternalServiceWithApiKey):
 
     def _query(
             self,
-            endpoint: Literal['assets', 'collections'],
+            endpoint: Literal['assets', 'collections', 'collectionstats'],
             options: Optional[Dict[str, Any]] = None,
             timeout: Optional[Tuple[int, int]] = None,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
         """May raise RemoteError"""
-        query_str = f'https://api.opensea.io/api/v1/{endpoint}'
+        api_key = self._get_api_key()
+        if api_key is not None:
+            self.session.headers.update({'X-API-KEY': api_key})
+
+        if endpoint == 'collectionstats':
+            query_str = f'https://api.opensea.io/api/v1/collection/{options["name"]}/stats'  # type: ignore  # noqa: E501
+        else:
+            query_str = f'https://api.opensea.io/api/v1/{endpoint}'
 
         backoff = 1
         backoff_limit = 33
         while backoff < backoff_limit:
-            logger.debug(f'Querying opensea: {query_str}')
+            log.debug(f'Querying opensea: {query_str}')
             try:
                 response = self.session.get(
                     query_str,
@@ -125,9 +187,14 @@ class Opensea(ExternalServiceWithApiKey):
                     f'Opensea API request {query_str} failed due to {str(e)}',
                 ) from e
 
-            if response.status_code == 429:
-                logger.debug(
-                    f'Got 429 from opensea. Will backoff for {backoff} seconds',
+            if response.status_code != 200:
+                if api_key is None and self.backup_key is None:
+                    backup_key = self.maybe_get_backup_key()
+                    if backup_key is not None:
+                        self.session.headers.update({'X-API-KEY': backup_key})
+
+                log.debug(
+                    f'Got {response.status_code} response from opensea. Will backoff for {backoff} seconds',  # noqa: E501
                 )
                 gevent.sleep(backoff)
                 backoff = backoff * 2
@@ -148,7 +215,7 @@ class Opensea(ExternalServiceWithApiKey):
             )
 
         try:
-            json_ret = json.loads(response.text)
+            json_ret = response.json()
         except JSONDecodeError as e:
             raise RemoteError(
                 f'Opensea API request {response.url} returned invalid '
@@ -252,16 +319,23 @@ class Opensea(ExternalServiceWithApiKey):
             if len(entry['primary_asset_contracts']) == 0:
                 continue  # skip if no contract (opensea makes everything a collection of 1)
             name = entry['name']
+            if name in self.collections:
+                continue  # do not requery already queried collection
+
+            # To get the floor price we need to query a different endpoint since opensea are idiots
+            # https://github.com/rotki/rotki/issues/3676
+            stats_result = self._query(endpoint='collectionstats', options={'name': entry['slug']})
+            floor_price = deserialize_optional_to_optional_fval(
+                value=stats_result['stats']['floor_price'],  # pylint: disable=unsubscriptable-object  # noqa: E501
+                name='floor price',
+                location='opensea',
+            )
             self.collections[name] = Collection(
                 name=name,
                 banner_image=entry['banner_image_url'],
                 description=entry['description'],
                 large_image=entry['large_image_url'],
-                floor_price=deserialize_optional_fval(
-                    value=entry['stats']['floor_price'],
-                    name='floor_price',
-                    location='opensea',
-                ),
+                floor_price=floor_price,
             )
 
     def get_account_nfts(self, account: ChecksumEthAddress) -> List[NFT]:
@@ -294,7 +368,7 @@ class Opensea(ExternalServiceWithApiKey):
                     f'Skipping detected NFT for {account} due to {str(e)}. '
                     f'Check out logs for more details',
                 )
-                logger.warning(
+                log.warning(
                     f'Skipping detected NFT for {account} due to {str(e)}. '
                     f'Problematic entry: {entry} ',
                 )

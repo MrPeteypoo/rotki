@@ -1,8 +1,11 @@
 import { Nullable } from '@rotki/common';
 import { Blockchain } from '@rotki/common/lib/blockchain';
 import { ActionResult } from '@rotki/common/lib/data';
+import {
+  Eth2ValidatorEntry,
+  Eth2Validators
+} from '@rotki/common/lib/staking/eth2';
 import { AxiosInstance } from 'axios';
-import { PriceOracles } from '@/model/action-result';
 import {
   axiosSnakeCaseTransformer,
   setupTransformer
@@ -10,22 +13,26 @@ import {
 import {
   ManualBalance,
   ManualBalances,
-  OracleCacheMeta,
-  SupportedExchange
+  OracleCacheMeta
 } from '@/services/balances/types';
 import {
   balanceAxiosTransformer,
   basicAxiosTransformer
 } from '@/services/consts';
-import { Module } from '@/services/session/consts';
 import { ApiImplementation, PendingTask } from '@/services/types-api';
 import {
   fetchExternalAsync,
   handleResponse,
   validStatus,
   validWithParamsSessionAndExternalService,
-  validWithSessionAndExternalService
+  validWithSessionAndExternalService,
+  validWithSessionStatus
 } from '@/services/utils';
+import { EnsNames } from '@/store/balances/types';
+import { Eth2Validator } from '@/types/balances';
+import { SupportedExchange } from '@/types/exchanges';
+import { Module } from '@/types/modules';
+import { PriceOracle } from '@/types/user';
 
 export class BalancesApi {
   private readonly axios: AxiosInstance;
@@ -104,10 +111,10 @@ export class BalancesApi {
       .then(handleResponse);
   }
 
-  async deleteManualBalances(labels: string[]): Promise<ManualBalances> {
+  async deleteManualBalances(ids: number[]): Promise<ManualBalances> {
     return this.axios
       .delete<ActionResult<ManualBalances>>('balances/manual', {
-        data: { labels },
+        data: { ids },
         transformResponse: balanceAxiosTransformer,
         validateStatus: validWithParamsSessionAndExternalService
       })
@@ -134,6 +141,36 @@ export class BalancesApi {
       .then(handleResponse);
   }
 
+  async internalEnsNames<T>(
+    ethereumAddresses: string[],
+    asyncQuery: boolean = false
+  ): Promise<T> {
+    return this.axios
+      .post<ActionResult<T>>(
+        '/ens/reverse',
+        axiosSnakeCaseTransformer({
+          ethereumAddresses,
+          asyncQuery,
+          ignoreCache: asyncQuery
+        }),
+        {
+          validateStatus: validWithSessionAndExternalService,
+          transformResponse: basicAxiosTransformer
+        }
+      )
+      .then(handleResponse);
+  }
+
+  async getEnsNamesTask(ethereumAddresses: string[]): Promise<PendingTask> {
+    return this.internalEnsNames<PendingTask>(ethereumAddresses, true);
+  }
+
+  async getEnsNames(ethereumAddresses: string[]): Promise<EnsNames> {
+    const response = await this.internalEnsNames<EnsNames>(ethereumAddresses);
+
+    return EnsNames.parse(response);
+  }
+
   async prices(
     assets: string[],
     targetAsset: string,
@@ -157,7 +194,7 @@ export class BalancesApi {
   }
 
   async createPriceCache(
-    source: PriceOracles,
+    source: PriceOracle,
     fromAsset: string,
     toAsset: string,
     purgeOld: boolean = false
@@ -180,7 +217,7 @@ export class BalancesApi {
   }
 
   async deletePriceCache(
-    source: PriceOracles,
+    source: PriceOracle,
     fromAsset: string,
     toAsset: string
   ): Promise<boolean> {
@@ -196,7 +233,7 @@ export class BalancesApi {
       .then(handleResponse);
   }
 
-  async getPriceCache(source: PriceOracles): Promise<OracleCacheMeta[]> {
+  async getPriceCache(source: PriceOracle): Promise<OracleCacheMeta[]> {
     return this.axios
       .get<ActionResult<OracleCacheMeta[]>>(`/oracles/${source}/cache`, {
         validateStatus: validWithSessionAndExternalService,
@@ -248,5 +285,62 @@ export class BalancesApi {
       params = axiosSnakeCaseTransformer(payload);
     }
     return fetchExternalAsync(this.api, url, params);
+  }
+
+  async addEth2Validator(payload: Eth2Validator): Promise<PendingTask> {
+    const response = await this.axios.put<ActionResult<PendingTask>>(
+      '/blockchains/ETH2/validators',
+      axiosSnakeCaseTransformer({ ...payload, asyncQuery: true }),
+      {
+        transformResponse: basicAxiosTransformer,
+        validateStatus: validWithSessionAndExternalService
+      }
+    );
+
+    return handleResponse(response);
+  }
+
+  async getEth2Validators(): Promise<Eth2Validators> {
+    const response = await this.axios.get<ActionResult<Eth2Validators>>(
+      '/blockchains/ETH2/validators',
+      {
+        transformResponse: basicAxiosTransformer,
+        validateStatus: validWithSessionStatus
+      }
+    );
+    const result = handleResponse(response);
+    return Eth2Validators.parse(result);
+  }
+
+  async deleteEth2Validators(
+    validators: Eth2ValidatorEntry[]
+  ): Promise<boolean> {
+    const response = await this.axios.delete<ActionResult<boolean>>(
+      '/blockchains/ETH2/validators',
+      {
+        data: axiosSnakeCaseTransformer({
+          validators
+        }),
+        transformResponse: basicAxiosTransformer,
+        validateStatus: validWithSessionStatus
+      }
+    );
+    return handleResponse(response);
+  }
+
+  async editEth2Validator({
+    ownershipPercentage,
+    validatorIndex
+  }: Eth2Validator) {
+    const response = await this.axios.patch<ActionResult<boolean>>(
+      '/blockchains/ETH2/validators',
+      axiosSnakeCaseTransformer({ ownershipPercentage, validatorIndex }),
+      {
+        transformResponse: basicAxiosTransformer,
+        validateStatus: validWithSessionAndExternalService
+      }
+    );
+
+    return handleResponse(response);
   }
 }

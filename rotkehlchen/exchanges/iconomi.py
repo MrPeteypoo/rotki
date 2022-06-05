@@ -5,17 +5,20 @@ import json
 import logging
 import time
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import UNSUPPORTED_ICONOMI_ASSETS, asset_from_iconomi
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.constants import ZERO
+from rotkehlchen.constants.assets import A_AUST
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
     AssetMovement,
     Location,
@@ -27,8 +30,12 @@ from rotkehlchen.exchanges.data_structures import (
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.serialization.deserialize import deserialize_asset_amount, deserialize_fee
-from rotkehlchen.typing import ApiKey, ApiSecret, Timestamp
+from rotkehlchen.serialization.deserialize import (
+    deserialize_asset_amount,
+    deserialize_fee,
+    deserialize_fval,
+)
+from rotkehlchen.types import ApiKey, ApiSecret, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 
 if TYPE_CHECKING:
@@ -225,29 +232,31 @@ class Iconomi(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             try:
                 asset = asset_from_iconomi(ticker)
 
-                # There seems to be a bug in the ICONOMI API regarding balance_info['value'].
-                # The value is supposed to be in USD, but is actually returned
-                # in EUR. So let's use the Inquirer for now.
                 try:
-                    usd_price = Inquirer().find_usd_price(asset=asset)
-                except RemoteError as e:
-                    self.msg_aggregator.add_error(
-                        f'Error processing ICONOMI balance entry due to inability to '
-                        f'query USD price: {str(e)}. Skipping balance entry',
+                    usd_value = deserialize_fval(balance_info['value'], 'usd_value', 'iconomi')
+                except (DeserializationError, KeyError) as e:
+                    msg = str(e)
+                    if isinstance(e, KeyError):
+                        msg = f'missing key entry for {msg}.'
+                    self.msg_aggregator.add_warning(
+                        f'Skipping iconomi balance entry {balance_info} due to {msg}',
                     )
                     continue
 
                 try:
                     amount = deserialize_asset_amount(balance_info['balance'])
-                except DeserializationError as e:
+                except (DeserializationError, KeyError) as e:
+                    msg = str(e)
+                    if isinstance(e, KeyError):
+                        msg = f'missing key entry for {msg}.'
                     self.msg_aggregator.add_warning(
-                        f'Skipping iconomi balance entry {balance_info} due to {str(e)}',
+                        f'Skipping iconomi balance entry {balance_info} due to {msg}',
                     )
                     continue
 
                 assets_balance[asset] = Balance(
                     amount=amount,
-                    usd_value=amount * usd_price,
+                    usd_value=usd_value,
                 )
             except (UnknownAsset, UnsupportedAsset) as e:
                 asset_tag = 'unknown' if isinstance(e, UnknownAsset) else 'unsupported'
@@ -259,10 +268,47 @@ class Iconomi(ExchangeInterface):  # lgtm[py/missing-call-to-init]
 
         for balance_info in resp_info['daaList']:
             ticker = balance_info['ticker']
-            self.msg_aggregator.add_warning(
-                f'Found unsupported ICONOMI strategy {ticker}. '
-                f' Ignoring its balance query.',
-            )
+
+            if ticker == 'AUSTS':
+                # The AUSTS strategy is 'ICONOMI Earn'. We know that this strategy holds its
+                # value in Anchor UST (AUST). That's why we report the user balance for this
+                # strategy as usd_value / AUST price.
+                try:
+                    aust_usd_price = Inquirer().find_usd_price(asset=A_AUST)
+                except RemoteError as e:
+                    self.msg_aggregator.add_error(
+                        f'Error processing ICONOMI balance entry due to inability to '
+                        f'query USD price: {str(e)}. Skipping balance entry',
+                    )
+                    continue
+
+                if aust_usd_price == ZERO:
+                    self.msg_aggregator.add_error(
+                        'Error processing ICONOMI balance entry because the USD price '
+                        'for AUST was reported as 0. Skipping balance entry',
+                    )
+                    continue
+
+                try:
+                    usd_value = deserialize_fval(balance_info['value'], 'usd_value', 'iconomi')
+                except (DeserializationError, KeyError) as e:
+                    msg = str(e)
+                    if isinstance(e, KeyError):
+                        msg = f'missing key entry for {msg}.'
+                    self.msg_aggregator.add_warning(
+                        f'Skipping iconomi balance entry {balance_info} due to {msg}',
+                    )
+                    continue
+
+                assets_balance[A_AUST] = Balance(
+                    amount=usd_value / aust_usd_price,
+                    usd_value=usd_value,
+                )
+            else:
+                self.msg_aggregator.add_warning(
+                    f'Found unsupported ICONOMI strategy {ticker}. '
+                    f' Ignoring its balance query.',
+                )
 
         return assets_balance, ''
 
@@ -270,7 +316,7 @@ class Iconomi(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
 
         page = 0
         all_transactions = []
@@ -315,7 +361,7 @@ class Iconomi(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                         trade=tx,
                     )
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def query_supported_tickers(
             self,

@@ -1,24 +1,25 @@
-from enum import Enum
 from sqlite3 import Cursor
-from typing import TYPE_CHECKING, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Dict, List, Literal, NamedTuple, Optional, Tuple, Union
 
 from eth_utils import is_checksum_address
-from typing_extensions import Literal
 
-from rotkehlchen.accounting.structures import BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.assets.asset import Asset
-from rotkehlchen.chain.substrate.typing import KusamaAddress, PolkadotAddress
+from rotkehlchen.chain.substrate.types import KusamaAddress, PolkadotAddress
 from rotkehlchen.chain.substrate.utils import is_valid_kusama_address, is_valid_polkadot_address
-from rotkehlchen.typing import (
+from rotkehlchen.fval import FVal
+from rotkehlchen.types import (
     BlockchainAccountData,
     BTCAddress,
     ChecksumEthAddress,
     HexColorCode,
     ListOfBlockchainAddresses,
+    Location,
+    Price,
     SupportedBlockchain,
     Timestamp,
 )
-from rotkehlchen.utils.misc import rgetattr
+from rotkehlchen.utils.misc import rgetattr, timestamp_to_date
 
 if TYPE_CHECKING:
     from rotkehlchen.balances.manual import ManuallyTrackedBalance
@@ -54,6 +55,23 @@ class DBAssetBalance(NamedTuple):
     amount: str
     usd_value: str
 
+    def serialize(self, export_data: Optional[Tuple[Asset, Price]] = None) -> Dict[str, str]:
+        if export_data:
+            return {
+                'timestamp': timestamp_to_date(self.time, '%Y-%m-%d %H:%M:%S'),
+                'category': self.category.serialize(),
+                'asset': str(self.asset),
+                'amount': self.amount,
+                f'{export_data[0].symbol.lower()}_value': str(FVal(self.usd_value) * export_data[1]),  # noqa: 501
+            }
+        return {
+            'timestamp': str(self.time),
+            'category': self.category.serialize(),
+            'asset_identifier': str(self.asset.identifier),
+            'amount': self.amount,
+            'usd_value': self.usd_value,
+        }
+
 
 class SingleDBAssetBalance(NamedTuple):
     category: BalanceType
@@ -67,6 +85,19 @@ class LocationData(NamedTuple):
     location: str  # Location serialized in a DB enum
     usd_value: str
 
+    def serialize(self, export_data: Optional[Tuple[Asset, Price]] = None) -> Dict[str, str]:
+        if export_data:
+            return {
+                'timestamp': timestamp_to_date(self.time, '%Y-%m-%d %H:%M:%S'),
+                'location': Location.deserialize_from_db(self.location).serialize(),
+                f'{export_data[0].symbol.lower()}_value': str(FVal(self.usd_value) * export_data[1]),   # noqa: 501
+            }
+        return {
+            'timestamp': str(self.time),
+            'location': Location.deserialize_from_db(self.location).serialize(),
+            'usd_value': self.usd_value,
+        }
+
 
 class Tag(NamedTuple):
     name: str
@@ -76,12 +107,6 @@ class Tag(NamedTuple):
 
     def serialize(self) -> Dict[str, str]:
         return self._asdict()  # pylint: disable=no-member
-
-
-class DBStartupAction(Enum):
-    NOTHING = 1
-    UPGRADE_3_4 = 2
-    STUCK_4_3 = 3
 
 
 def str_to_bool(s: str) -> bool:
@@ -131,7 +156,7 @@ def insert_tag_mappings(
         cursor: Cursor,
         data: Union[List['ManuallyTrackedBalance'], List[BlockchainAccountData], List['XpubData']],
         object_reference_keys: List[
-            Literal['label', 'address', 'xpub.xpub', 'derivation_path'],
+            Literal['id', 'address', 'xpub.xpub', 'derivation_path'],
         ],
 ) -> None:
     """
@@ -145,7 +170,7 @@ def insert_tag_mappings(
             for key in object_reference_keys:
                 value = rgetattr(entry, key)
                 if value is not None:
-                    reference += value
+                    reference += str(value)
             mapping_tuples.extend([(reference, tag) for tag in entry.tags])
 
     cursor.executemany(

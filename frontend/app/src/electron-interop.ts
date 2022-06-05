@@ -1,3 +1,4 @@
+import { getBackendUrl } from '@/components/account-management/utils';
 import { BackendCode } from '@/electron-main/backend-code';
 import { BackendOptions, SystemVersion, TrayUpdate } from '@/electron-main/ipc';
 import { WebVersion } from '@/types';
@@ -13,6 +14,15 @@ export class ElectronInterop {
 
   get isPackaged(): boolean {
     return this.packagedApp;
+  }
+
+  get appSession(): boolean {
+    const { url } = getBackendUrl();
+    return this.isPackaged && !url;
+  }
+
+  logToFile(message: string) {
+    return window.interop?.logToFile(message);
   }
 
   navigate(url: string) {
@@ -36,7 +46,7 @@ export class ElectronInterop {
   }
 
   openUrl(url: string) {
-    window.interop?.openUrl(url);
+    this.isPackaged ? window.interop?.openUrl(url) : window.open(url, '_blank');
   }
 
   openPath(path: string) {
@@ -83,6 +93,15 @@ export class ElectronInterop {
     return window.interop?.version();
   }
 
+  async isMac(): Promise<boolean> {
+    const version = await this.version();
+
+    return (
+      (version as SystemVersion)?.os === 'darwin' ||
+      (version as WebVersion)?.platform?.startsWith?.('Mac')
+    );
+  }
+
   onAbout(cb: () => void) {
     window.interop?.onAbout(cb);
   }
@@ -94,6 +113,25 @@ export class ElectronInterop {
   updateTray(update: TrayUpdate) {
     window.interop?.updateTray(update);
   }
+
+  async storePassword(
+    username: string,
+    password: string
+  ): Promise<boolean | undefined> {
+    assert(window.interop);
+    return await window.interop.storePassword(username, password);
+  }
+
+  async getPassword(username: string): Promise<string | undefined> {
+    assert(window.interop);
+    return await window.interop.getPassword(username);
+  }
+
+  async clearPassword() {
+    window.interop?.clearPassword();
+  }
 }
 
 export const interop = new ElectronInterop();
+
+export const useInterop = () => interop;

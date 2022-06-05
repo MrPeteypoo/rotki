@@ -2,19 +2,20 @@ import logging
 import os
 import time
 from copy import deepcopy
-from shutil import copyfile
 from unittest.mock import patch
 
 import pytest
 
 from rotkehlchen.accounting.ledger_actions import LedgerActionType
-from rotkehlchen.accounting.structures import ActionType, BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
+from rotkehlchen.accounting.structures.base import ActionType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants import YEAR_IN_SECONDS
 from rotkehlchen.constants.assets import A_1INCH, A_BTC, A_DAI, A_ETH, A_USD
 from rotkehlchen.data_handler import DataHandler
-from rotkehlchen.db.dbhandler import DBINFO_FILENAME, DBHandler, detect_sqlcipher_version
+from rotkehlchen.db.dbhandler import DBHandler, detect_sqlcipher_version
+from rotkehlchen.db.filtering import AssetMovementsFilterQuery, TradesFilterQuery
 from rotkehlchen.db.queried_addresses import QueriedAddresses
 from rotkehlchen.db.settings import (
     DEFAULT_ACCOUNT_FOR_ASSETS_MOVEMENTS,
@@ -28,6 +29,7 @@ from rotkehlchen.db.settings import (
     DEFAULT_HISTORICAL_PRICE_ORACLES,
     DEFAULT_INCLUDE_CRYPTO2CRYPTO,
     DEFAULT_INCLUDE_GAS_COSTS,
+    DEFAULT_LAST_DATA_MIGRATION,
     DEFAULT_MAIN_CURRENCY,
     DEFAULT_PNL_CSV_HAVE_SUMMARY,
     DEFAULT_PNL_CSV_WITH_FORMULAS,
@@ -39,15 +41,12 @@ from rotkehlchen.db.settings import (
     ModifiableDBSettings,
 )
 from rotkehlchen.db.utils import BlockchainAccounts, DBAssetBalance, LocationData
-from rotkehlchen.errors import AuthenticationError, InputError
+from rotkehlchen.errors.api import AuthenticationError
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
 from rotkehlchen.fval import FVal
 from rotkehlchen.premium.premium import PremiumCredentials
-from rotkehlchen.serialization.deserialize import (
-    deserialize_asset_movement_category,
-    deserialize_trade_type,
-    deserialize_trade_type_from_db,
-)
+from rotkehlchen.serialization.deserialize import deserialize_asset_movement_category
 from rotkehlchen.tests.utils.constants import (
     A_DAO,
     A_DOGE,
@@ -59,9 +58,8 @@ from rotkehlchen.tests.utils.constants import (
     A_XMR,
     DEFAULT_TESTS_MAIN_CURRENCY,
 )
-from rotkehlchen.tests.utils.database import mock_dbhandler_update_owned_assets
-from rotkehlchen.tests.utils.rotkehlchen import add_starting_balances
-from rotkehlchen.typing import (
+from rotkehlchen.tests.utils.rotkehlchen import add_starting_balances, add_starting_nfts
+from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
@@ -78,7 +76,6 @@ from rotkehlchen.typing import (
 )
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now
-from rotkehlchen.utils.serialization import rlk_jsondumps
 
 TABLES_AT_INIT = [
     'assets',
@@ -96,9 +93,12 @@ TABLES_AT_INIT = [
     'multisettings',
     'trades',
     'ethereum_transactions',
+    'ethereum_internal_transactions',
     'ethtx_receipts',
     'ethtx_receipt_logs',
     'ethtx_receipt_log_topics',
+    'ethtx_address_mappings',
+    'evm_tx_mappings',
     'manually_tracked_balances',
     'trade_type',
     'location',
@@ -114,16 +114,17 @@ TABLES_AT_INIT = [
     'amm_events',
     'eth2_deposits',
     'eth2_daily_staking_details',
+    'eth2_validators',
     'adex_events',
     'ledger_actions',
     'ledger_action_type',
     'ignored_actions',
     'action_type',
     'balancer_events',
-    'ledger_actions_gitcoin_data',
-    'gitcoin_tx_type',
-    'gitcoin_grant_metadata',
     'nfts',
+    'history_events',
+    'history_events_mappings',
+    'ens_mappings',
 ]
 
 
@@ -235,6 +236,7 @@ def test_export_import_db(data_dir, username):
     data = DataHandler(data_dir, msg_aggregator)
     data.unlock(username, '123', create_new=True)
     starting_balance = ManuallyTrackedBalance(
+        id=-1,
         asset=A_EUR,
         label='foo',
         amount=FVal(10),
@@ -301,7 +303,7 @@ def test_writing_fetching_data(data_dir, username):
     result, _ = data.add_ignored_assets([A_DOGE])
     assert result
     result, _ = data.add_ignored_assets([A_DOGE])
-    assert not result
+    assert result is None
 
     ignored_assets = data.db.get_ignored_assets()
     assert all(isinstance(asset, Asset) for asset in ignored_assets)
@@ -309,7 +311,7 @@ def test_writing_fetching_data(data_dir, username):
     # Test removing asset that is not in the list
     result, msg = data.remove_ignored_assets([A_RDN])
     assert 'not in ignored assets' in msg
-    assert not result
+    assert result is None
     result, _ = data.remove_ignored_assets([A_DOGE])
     assert result
     assert data.db.get_ignored_assets() == [A_DAO]
@@ -349,6 +351,8 @@ def test_writing_fetching_data(data_dir, username):
         'pnl_csv_with_formulas': DEFAULT_PNL_CSV_WITH_FORMULAS,
         'pnl_csv_have_summary': DEFAULT_PNL_CSV_HAVE_SUMMARY,
         'ssf_0graph_multiplier': DEFAULT_SSF_0GRAPH_MULTIPLIER,
+        'last_data_migration': DEFAULT_LAST_DATA_MIGRATION,
+        'non_syncing_exchanges': [],
     }
     assert len(expected_dict) == len(DBSettings()), 'One or more settings are missing'
 
@@ -416,58 +420,12 @@ def test_balance_save_frequency_check(data_dir, username):
         time=data_save_ts, location=Location.KRAKEN.serialize_for_db(), usd_value='1500',  # pylint: disable=no-member  # noqa: E501
     )])
 
-    assert not data.should_save_balances()
+    assert not data.db.should_save_balances()
     data.db.set_settings(ModifiableDBSettings(balance_save_frequency=5))
-    assert data.should_save_balances()
+    assert data.db.should_save_balances()
 
     last_save_ts = data.db.get_last_balance_save_time()
     assert last_save_ts == data_save_ts
-
-
-def test_upgrade_sqlcipher_v3_to_v4_without_dbinfo(user_data_dir):
-    """Test that we can upgrade from an sqlcipher v3 to v4 rotkehlchen database
-    Issue: https://github.com/rotki/rotki/issues/229
-    """
-    sqlcipher_version = detect_sqlcipher_version()
-    if sqlcipher_version != 4:
-        # nothing to test
-        return
-
-    # get the v3 database file and copy it into the user's data directory
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    copyfile(
-        os.path.join(os.path.dirname(dir_path), 'data', 'sqlcipher_v3_rotkehlchen.db'),
-        user_data_dir / 'rotkehlchen.db',
-    )
-
-    # the constructor should migrate it in-place and we should have a working DB
-    msg_aggregator = MessagesAggregator()
-    with mock_dbhandler_update_owned_assets():
-        db = DBHandler(user_data_dir, '123', msg_aggregator, None)
-        assert db.get_version() == ROTKEHLCHEN_DB_VERSION
-        del db  # explicit delete the db so update_owned_assets still runs mocked
-
-
-def test_upgrade_sqlcipher_v3_to_v4_with_dbinfo(user_data_dir):
-    sqlcipher_version = detect_sqlcipher_version()
-    if sqlcipher_version != 4:
-        # nothing to test
-        return
-
-    # get the v3 database file and copy it into the user's data directory
-    dir_path = os.path.dirname(os.path.realpath(__file__))
-    copyfile(
-        os.path.join(os.path.dirname(dir_path), 'data', 'sqlcipher_v3_rotkehlchen.db'),
-        user_data_dir / 'rotkehlchen.db',
-    )
-    dbinfo = {'sqlcipher_version': 3, 'md5_hash': '20c910c28ca42370e4a5f24d6d4a73d2'}
-    with open(os.path.join(user_data_dir, DBINFO_FILENAME), 'w') as f:
-        f.write(rlk_jsondumps(dbinfo))
-
-    # the constructor should migrate it in-place and we should have a working DB
-    msg_aggregator = MessagesAggregator()
-    db = DBHandler(user_data_dir, '123', msg_aggregator, None)
-    assert db.get_version() == ROTKEHLCHEN_DB_VERSION
 
 
 def test_sqlcipher_detect_version():
@@ -698,7 +656,7 @@ def test_query_owned_assets(data_dir, username):
     ])
 
     assets_list = data.db.query_owned_assets()
-    assert set(assets_list) == {A_USD, A_ETH, A_DAI, A_BTC, A_XMR, A_SDC, A_SDT2, A_SUSHI, A_1INCH}  # noqa: E501
+    assert set(assets_list) == {A_USD, A_ETH, A_BTC, A_XMR, A_SDC, A_SDT2, A_SUSHI, A_1INCH}  # noqa: E501
     assert all(isinstance(x, Asset) for x in assets_list)
     warnings = data.db.msg_aggregator.consume_warnings()
     assert len(warnings) == 0
@@ -774,6 +732,34 @@ def test_get_netvalue_data_from_date(data_dir, username):
     assert values[0] == '10700.5'
 
 
+def test_get_netvalue_without_nfts(data_dir, username):
+    """
+    Test that the netvalue in a range of time is correctly queried with and without NFTs
+    counted in the total.
+    """
+    msg_aggregator = MessagesAggregator()
+    data = DataHandler(data_dir, msg_aggregator)
+    data.unlock(username, '123', create_new=True)
+    add_starting_nfts(data)
+    start_ts = Timestamp(1488326400)
+
+    times, values = data.db.get_netvalue_data(start_ts)
+    assert len(times) == 4
+    assert len(values) == 4
+    assert values[0] == '3000'
+    assert values[3] == '5500'
+
+    times, values = data.db.get_netvalue_data(
+        from_ts=start_ts,
+        include_nfts=False,
+    )
+    assert len(times) == 4
+    assert len(values) == 4
+    assert values[0] == '2000'
+    assert values[2] == '3000'
+    assert values[3] == '4500'
+
+
 def test_add_trades(data_dir, username, caplog):
     """Test that adding and retrieving trades from the DB works fine.
 
@@ -829,14 +815,14 @@ def test_add_trades(data_dir, username, caplog):
     warnings = msg_aggregator.consume_warnings()
     assert len(errors) == 0
     assert len(warnings) == 0
-    returned_trades = data.db.get_trades()
+    returned_trades = data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
     assert returned_trades == [trade1, trade2]
 
     # Add the last 2 trades. Since trade2 already exists in the DB it should be
     # ignored and a warning should be logged
     data.db.add_trades([trade2, trade3])
     assert 'Did not add "buy trade with id a1ed19c8284940b4e59bdac941db2fd3c0ed004ddb10fdd3b9ef0a3a9b2c97bc' in caplog.text  # noqa: E501
-    returned_trades = data.db.get_trades()
+    returned_trades = data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
     assert returned_trades == [trade1, trade2, trade3]
 
 
@@ -955,7 +941,10 @@ def test_add_asset_movements(data_dir, username, caplog):
     warnings = msg_aggregator.consume_warnings()
     assert len(errors) == 0
     assert len(warnings) == 0
-    returned_movements = data.db.get_asset_movements()
+    returned_movements = data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     assert returned_movements == [movement1, movement2]
 
     # Add the last 2 movements. Since movement2 already exists in the DB it should be
@@ -965,7 +954,10 @@ def test_add_asset_movements(data_dir, username, caplog):
         'Did not add "withdrawal of ETH with id 94405f38c7b86dd2e7943164d'
         '67ff44a32d56cef25840b3f5568e23c037fae0a'
     ) in caplog.text
-    returned_movements = data.db.get_asset_movements()
+    returned_movements = data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     assert returned_movements == [movement1, movement2, movement3]
 
 
@@ -1026,6 +1018,10 @@ def test_can_unlock_db_with_disabled_taxfree_after_period(data_dir, username):
 
 
 def test_timed_balances_primary_key_works(user_data_dir):
+    """
+    Test that adding two timed_balances with the same primary key
+    i.e (time, currency, category) fails.
+    """
     msg_aggregator = MessagesAggregator()
     db = DBHandler(user_data_dir, '123', msg_aggregator, None)
     balances = [
@@ -1043,13 +1039,13 @@ def test_timed_balances_primary_key_works(user_data_dir):
             usd_value='9100',
         ),
     ]
-    db.add_multiple_balances(balances)
-    warnings = msg_aggregator.consume_warnings()
-    errors = msg_aggregator.consume_errors()
-    assert len(warnings) == 1
-    assert len(errors) == 0
+    with pytest.raises(InputError) as exc_info:
+        db.add_multiple_balances(balances)
+    assert exc_info.errisinstance(InputError)
+    assert 'Adding timed_balance failed' in str(exc_info.value)
+
     balances = db.query_timed_balances(asset=A_BTC)
-    assert len(balances) == 1
+    assert len(balances) == 0
 
     balances = [
         DBAssetBalance(
@@ -1067,17 +1063,13 @@ def test_timed_balances_primary_key_works(user_data_dir):
         ),
     ]
     db.add_multiple_balances(balances)
-    warnings = msg_aggregator.consume_warnings()
-    errors = msg_aggregator.consume_errors()
-    assert len(warnings) == 0
-    assert len(errors) == 0
-    balances = db.query_timed_balances(asset=A_ETH)
     assert len(balances) == 2
 
 
 def test_multiple_location_data_and_balances_same_timestamp(user_data_dir):
-    """Test that adding location and balance data with same timestamp does not crash.
-
+    """
+    Test that adding location and balance data with same timestamp raises an error
+    and no balance/location is added.
     Regression test for https://github.com/rotki/rotki/issues/1043
     """
     msg_aggregator = MessagesAggregator()
@@ -1098,9 +1090,13 @@ def test_multiple_location_data_and_balances_same_timestamp(user_data_dir):
             usd_value='9100',
         ),
     ]
-    db.add_multiple_balances(balances)
+    with pytest.raises(InputError) as exc_info:
+        db.add_multiple_balances(balances)
+    assert 'Adding timed_balance failed.' in str(exc_info.value)
+    assert exc_info.errisinstance(InputError)
+
     balances = db.query_timed_balances(from_ts=0, to_ts=1590676728, asset=A_BTC)
-    assert len(balances) == 1
+    assert len(balances) == 0
 
     locations = [
         LocationData(
@@ -1113,10 +1109,13 @@ def test_multiple_location_data_and_balances_same_timestamp(user_data_dir):
             usd_value='56',
         ),
     ]
-    db.add_multiple_location_data(locations)
+    with pytest.raises(InputError) as exc_info:
+        db.add_multiple_location_data(locations)
+    assert 'Tried to add a timed_location_data for' in str(exc_info.value)
+    assert exc_info.errisinstance(InputError)
+
     locations = db.get_latest_location_value_distribution()
-    assert len(locations) == 1
-    assert locations[0].usd_value == '55'
+    assert len(locations) == 0
 
 
 def test_set_get_rotkehlchen_premium_credentials(data_dir, username):
@@ -1249,7 +1248,7 @@ def test_int_overflow_at_tuple_insertion(database, caplog):
     (Location, 'SELECT location, seq from location',
         Location.deserialize_from_db, Location.deserialize),
     (TradeType, 'SELECT type, seq from trade_type',
-        deserialize_trade_type_from_db, deserialize_trade_type),
+        TradeType.deserialize_from_db, TradeType.deserialize),
     (ActionType, 'SELECT type, seq from action_type',
         ActionType.deserialize_from_db, ActionType.deserialize),
     (LedgerActionType, 'SELECT type, seq from ledger_action_type',
@@ -1328,3 +1327,18 @@ def test_binance_pairs(user_data_dir):
     db.set_binance_pairs('binance', [], Location.BINANCE)
     query = db.get_binance_pairs('binance', Location.BINANCE)
     assert query == []
+
+
+def test_fresh_db_adds_version(user_data_dir):
+    """Test that the DB version gets committed to a fresh DB.
+
+    Regression test for https://github.com/rotki/rotki/issues/3744"""
+    msg_aggregator = MessagesAggregator()
+    db = DBHandler(user_data_dir, '123', msg_aggregator, None)
+    cursor = db.conn.cursor()
+    query = cursor.execute(
+        'SELECT value FROM settings WHERE name=?;', ('version',),
+    )
+    query = query.fetchall()
+    assert len(query) != 0
+    assert int(query[0][0]) == ROTKEHLCHEN_DB_VERSION

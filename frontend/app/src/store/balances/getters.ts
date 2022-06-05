@@ -2,33 +2,26 @@ import {
   AssetBalance,
   AssetBalanceWithPrice,
   Balance,
-  HasBalance,
-  BigNumber
+  BigNumber,
+  HasBalance
 } from '@rotki/common';
 import { GeneralAccount } from '@rotki/common/lib/account';
 import { Blockchain } from '@rotki/common/lib/blockchain';
-import { SupportedAsset } from '@rotki/common/lib/data';
+import { get } from '@vueuse/core';
 import isEmpty from 'lodash/isEmpty';
 import map from 'lodash/map';
 import { TRADE_LOCATION_BLOCKCHAIN } from '@/data/defaults';
-import {
-  BlockchainAssetBalances,
-  ManualBalanceWithValue,
-  SupportedExchange
-} from '@/services/balances/types';
+import { BlockchainAssetBalances } from '@/services/balances/types';
 import { GeneralAccountData } from '@/services/types-api';
+import { useAssetInfoRetrieval, useIgnoredAssetsStore } from '@/store/assets';
 import {
   AccountAssetBalances,
   AssetBreakdown,
-  AssetInfoGetter,
-  AssetPriceInfo,
-  AssetSymbolGetter,
   BalanceByLocation,
   BalanceState,
   BlockchainAccountWithBalance,
   BlockchainTotal,
   ExchangeRateGetter,
-  IdentifierForSymbolGetter,
   L2Totals,
   LocationBalance,
   NonFungibleBalance
@@ -36,8 +29,11 @@ import {
 import { Section, Status } from '@/store/const';
 import { RotkehlchenState } from '@/store/types';
 import { Getters } from '@/store/typing';
+import { getStatus } from '@/store/utils';
 import { Writeable } from '@/types';
-import { ExchangeInfo, L2_LOOPRING } from '@/typing/types';
+import { ExchangeInfo, SupportedExchange } from '@/types/exchanges';
+import { L2_LOOPRING } from '@/types/protocols';
+import { ReadOnlyTag } from '@/types/user';
 import { assert } from '@/utils/assertions';
 import { Zero } from '@/utils/bignumbers';
 import { assetSum, balanceSum } from '@/utils/calculation';
@@ -45,11 +41,13 @@ import { uniqueStrings } from '@/utils/data';
 
 export interface BalanceGetters {
   ethAccounts: BlockchainAccountWithBalance[];
+  eth2Balances: BlockchainAccountWithBalance[];
   ethAddresses: string[];
   btcAccounts: BlockchainAccountWithBalance[];
   kusamaBalances: BlockchainAccountWithBalance[];
   avaxAccounts: BlockchainAccountWithBalance[];
   polkadotBalances: BlockchainAccountWithBalance[];
+  loopringAccounts: BlockchainAccountWithBalance[];
   totals: AssetBalance[];
   exchangeRate: ExchangeRateGetter;
   exchanges: ExchangeInfo[];
@@ -58,7 +56,6 @@ export interface BalanceGetters {
   aggregatedAssets: string[];
   liabilities: AssetBalanceWithPrice[];
   manualBalanceByLocation: LocationBalance[];
-  manualBalanceWithLiabilities: ManualBalanceWithValue[];
   blockchainTotal: BigNumber;
   blockchainTotals: BlockchainTotal[];
   accountAssets: (account: string) => AssetBalance[];
@@ -67,14 +64,11 @@ export interface BalanceGetters {
   manualLabels: string[];
   accounts: GeneralAccount[];
   account: (address: string) => GeneralAccount | undefined;
-  assetInfo: AssetInfoGetter;
-  assetSymbol: AssetSymbolGetter;
   isEthereumToken: (asset: string) => boolean;
-  assetPriceInfo: (asset: string) => AssetPriceInfo;
-  breakdown: (asset: string) => AssetBreakdown[];
+  assetBreakdown: (asset: string) => AssetBreakdown[];
   loopringBalances: (address: string) => AssetBalance[];
   blockchainAssets: AssetBalanceWithPrice[];
-  getIdentifierForSymbol: IdentifierForSymbolGetter;
+  locationBreakdown: (location: string) => AssetBalanceWithPrice[];
   byLocation: BalanceByLocation;
   exchangeNonce: (exchange: SupportedExchange) => number;
   nfTotalValue: BigNumber;
@@ -116,9 +110,52 @@ export const getters: Getters<
 > = {
   ethAccounts({
     eth,
-    ethAccounts
+    ethAccounts,
+    loopringBalances
   }: BalanceState): BlockchainAccountWithBalance[] {
-    return balances(ethAccounts, eth, Blockchain.ETH);
+    const accounts = balances(ethAccounts, eth, Blockchain.ETH);
+
+    // check if account is loopring account
+    return accounts.map(ethAccount => {
+      const address = ethAccount.address;
+      const balances = loopringBalances[address];
+      const tags = ethAccount.tags || [];
+      if (balances) {
+        tags.push(ReadOnlyTag.LOOPRING);
+      }
+
+      return { ...ethAccount, tags: tags.filter(uniqueStrings) };
+    });
+  },
+  eth2Balances({
+    eth2,
+    eth2Validators
+  }: BalanceState): BlockchainAccountWithBalance[] {
+    const balances: BlockchainAccountWithBalance[] = [];
+    for (const {
+      publicKey,
+      validatorIndex,
+      ownershipPercentage
+    } of eth2Validators.entries) {
+      const validatorBalances = eth2[publicKey];
+      let balance: Balance = { amount: Zero, usdValue: Zero };
+      if (validatorBalances && validatorBalances.assets) {
+        const assets = validatorBalances.assets;
+        balance = {
+          amount: assets[Blockchain.ETH2].amount,
+          usdValue: assetSum(assets)
+        };
+      }
+      balances.push({
+        address: publicKey,
+        chain: Blockchain.ETH2,
+        balance,
+        label: validatorIndex.toString() ?? '',
+        tags: [],
+        ownershipPercentage
+      });
+    }
+    return balances;
   },
   ethAddresses: ({ ethAccounts }) => {
     return ethAccounts.map(({ address }) => address);
@@ -176,7 +213,10 @@ export const getters: Getters<
 
       for (const { address, label, tags } of addresses) {
         const { xpubs } = btc;
-        const index = xpubs?.findIndex(xpub => xpub.addresses[address]) ?? -1;
+        if (!xpubs) {
+          continue;
+        }
+        const index = xpubs.findIndex(xpub => xpub.addresses[address]) ?? -1;
         const balance =
           index >= 0 ? xpubs[index].addresses[address] : zeroBalance();
         accounts.push({
@@ -192,16 +232,49 @@ export const getters: Getters<
     }
     return accounts;
   },
+  loopringAccounts({
+    loopringBalances,
+    ethAccounts
+  }): BlockchainAccountWithBalance[] {
+    const accounts: BlockchainAccountWithBalance[] = [];
+    for (const address in loopringBalances) {
+      const assets = loopringBalances[address];
 
-  totals(state: BalanceState, _, { session }): AssetBalance[] {
-    const ignoredAssets = session!.ignoredAssets;
+      const tags =
+        ethAccounts.find(account => account.address === address)?.tags || [];
+
+      const balance = {
+        amount: Zero,
+        usdValue: Zero
+      };
+
+      for (const asset in assets) {
+        const assetBalance = assets[asset];
+
+        balance.amount = balance.amount.plus(assetBalance.amount);
+        balance.usdValue = balance.usdValue.plus(assetBalance.usdValue);
+      }
+
+      accounts.push({
+        address,
+        balance,
+        chain: Blockchain.ETH,
+        label: '',
+        tags: [...tags, ReadOnlyTag.LOOPRING].filter(uniqueStrings)
+      });
+    }
+    return accounts;
+  },
+
+  totals(state: BalanceState): AssetBalance[] {
+    const { isAssetIgnored } = useIgnoredAssetsStore();
     return map(state.totals, (value: Balance, asset: string) => {
       const assetBalance: AssetBalance = {
         asset,
         ...value
       };
       return assetBalance;
-    }).filter(balance => !ignoredAssets.includes(balance.asset));
+    }).filter(balance => !get(isAssetIgnored(balance.asset)));
   },
 
   exchangeRate: (state: BalanceState) => (currency: string) => {
@@ -220,14 +293,14 @@ export const getters: Getters<
   },
 
   exchangeBalances:
-    (state: BalanceState, _, { session }) =>
-    (exchange: string): AssetBalance[] => {
-      const ignoredAssets = session!.ignoredAssets;
+    (state: BalanceState) =>
+    (exchange: string): AssetBalanceWithPrice[] => {
+      const { isAssetIgnored } = useIgnoredAssetsStore();
       const exchangeBalances = state.exchangeBalances[exchange];
       const noPrice = new BigNumber(-1);
       return exchangeBalances
         ? Object.keys(exchangeBalances)
-            .filter(asset => !ignoredAssets.includes(asset))
+            .filter(asset => !get(isAssetIgnored(asset)))
             .map(
               asset =>
                 ({
@@ -235,7 +308,7 @@ export const getters: Getters<
                   amount: exchangeBalances[asset].amount,
                   usdValue: exchangeBalances[asset].usdValue,
                   usdPrice: state.prices[asset] ?? noPrice
-                } as AssetBalance)
+                } as AssetBalanceWithPrice)
             )
         : [];
     },
@@ -247,14 +320,13 @@ export const getters: Getters<
       loopringBalances,
       prices
     }: BalanceState,
-    { exchangeBalances, totals },
-    { session }
+    { exchangeBalances, totals }
   ): AssetBalanceWithPrice[] => {
-    const ignoredAssets = session!.ignoredAssets;
+    const { isAssetIgnored } = useIgnoredAssetsStore();
     const ownedAssets: { [asset: string]: AssetBalanceWithPrice } = {};
     const addToOwned = (value: AssetBalance) => {
       const asset = ownedAssets[value.asset];
-      if (ignoredAssets.includes(value.asset)) {
+      if (get(isAssetIgnored(value.asset))) {
         return;
       }
       ownedAssets[value.asset] = !asset
@@ -299,14 +371,17 @@ export const getters: Getters<
   liabilities: ({ liabilities, manualLiabilities, prices }) => {
     const noPrice = new BigNumber(-1);
     const liabilitiesMerged: Record<string, Balance> = { ...liabilities };
-    for (const entry of manualLiabilities) {
-      if (liabilitiesMerged[entry.asset]) {
-        liabilitiesMerged[entry.asset].amount.plus(entry.amount);
-        liabilitiesMerged[entry.asset].usdValue.plus(entry.usdValue);
+    for (const { amount, asset, usdValue } of manualLiabilities) {
+      const liability = liabilitiesMerged[asset];
+      if (liability) {
+        liabilitiesMerged[asset] = {
+          amount: liability.amount.plus(amount),
+          usdValue: liability.usdValue.plus(usdValue)
+        };
       } else {
-        liabilitiesMerged[entry.asset] = {
-          amount: entry.amount,
-          usdValue: entry.usdValue
+        liabilitiesMerged[asset] = {
+          amount: amount,
+          usdValue: usdValue
         };
       }
     }
@@ -324,8 +399,7 @@ export const getters: Getters<
     { exchangeRate },
     { session }
   ): LocationBalance[] => {
-    const mainCurrency =
-      session?.generalSettings.selectedCurrency.ticker_symbol;
+    const mainCurrency = session?.generalSettings.mainCurrency.tickerSymbol;
 
     assert(mainCurrency, 'main currency was not properly set');
 
@@ -381,22 +455,13 @@ export const getters: Getters<
       .sort((a, b) => b.usdValue.minus(a.usdValue).toNumber());
   },
 
-  manualBalanceWithLiabilities: (state): ManualBalanceWithValue[] => {
-    return state.manualLiabilities.concat(state.manualBalances);
-  },
-
   blockchainTotal: (_, getters) => {
     return getters.totals.reduce((sum: BigNumber, asset: AssetBalance) => {
       return sum.plus(asset.usdValue);
     }, Zero);
   },
 
-  blockchainTotals: (
-    state,
-    getters,
-    _rootState,
-    { status }
-  ): BlockchainTotal[] => {
+  blockchainTotals: (state, getters, _rootState): BlockchainTotal[] => {
     const sum = (accounts: HasBalance[]): BigNumber => {
       return accounts.reduce((sum: BigNumber, { balance }: HasBalance) => {
         return sum.plus(balance.usdValue);
@@ -411,11 +476,11 @@ export const getters: Getters<
     const polkadotBalances: BlockchainAccountWithBalance[] =
       getters.polkadotBalances;
     const avaxAccounts: BlockchainAccountWithBalance[] = getters.avaxAccounts;
-
+    const eth2Balances: BlockchainAccountWithBalance[] = getters.eth2Balances;
     const loopring: AccountAssetBalances = state.loopringBalances;
 
     if (ethAccounts.length > 0) {
-      const ethStatus = status(Section.BLOCKCHAIN_ETH);
+      const ethStatus = getStatus(Section.BLOCKCHAIN_ETH);
       const l2Totals: L2Totals[] = [];
       if (Object.keys(loopring).length > 0) {
         const balances: { [asset: string]: HasBalance } = {};
@@ -435,7 +500,7 @@ export const getters: Getters<
             }
           }
         }
-        const loopringStatus = status(Section.L2_LOOPRING_BALANCES);
+        const loopringStatus = getStatus(Section.L2_LOOPRING_BALANCES);
         l2Totals.push({
           protocol: L2_LOOPRING,
           usdValue: sum(Object.values(balances)),
@@ -453,7 +518,7 @@ export const getters: Getters<
     }
 
     if (btcAccounts.length > 0) {
-      const btcStatus = status(Section.BLOCKCHAIN_BTC);
+      const btcStatus = getStatus(Section.BLOCKCHAIN_BTC);
       totals.push({
         chain: Blockchain.BTC,
         l2: [],
@@ -463,7 +528,7 @@ export const getters: Getters<
     }
 
     if (kusamaBalances.length > 0) {
-      const ksmStatus = status(Section.BLOCKCHAIN_KSM);
+      const ksmStatus = getStatus(Section.BLOCKCHAIN_KSM);
       totals.push({
         chain: Blockchain.KSM,
         l2: [],
@@ -473,7 +538,7 @@ export const getters: Getters<
     }
 
     if (avaxAccounts.length > 0) {
-      const avaxStatus = status(Section.BLOCKCHAIN_AVAX);
+      const avaxStatus = getStatus(Section.BLOCKCHAIN_AVAX);
       totals.push({
         chain: Blockchain.AVAX,
         l2: [],
@@ -483,7 +548,7 @@ export const getters: Getters<
     }
 
     if (polkadotBalances.length > 0) {
-      const dotStatus = status(Section.BLOCKCHAIN_DOT);
+      const dotStatus = getStatus(Section.BLOCKCHAIN_DOT);
       totals.push({
         chain: Blockchain.DOT,
         l2: [],
@@ -492,87 +557,75 @@ export const getters: Getters<
       });
     }
 
+    if (eth2Balances.length > 0) {
+      const eth2Status = getStatus(Section.BLOCKCHAIN_ETH2);
+      totals.push({
+        chain: Blockchain.ETH2,
+        l2: [],
+        usdValue: sum(eth2Balances),
+        loading: eth2Status === Status.NONE || eth2Status === Status.LOADING
+      });
+    }
+
     return totals.sort((a, b) => b.usdValue.minus(a.usdValue).toNumber());
   },
 
-  accountAssets:
-    (state: BalanceState, _, { session }) =>
-    (account: string) => {
-      const ignoredAssets = session!.ignoredAssets;
-      const ethAccount = state.eth[account];
-      if (!ethAccount || isEmpty(ethAccount)) {
-        return [];
-      }
+  accountAssets: (state: BalanceState) => (account: string) => {
+    const { isAssetIgnored } = useIgnoredAssetsStore();
+    const ethAccount = state.eth[account];
+    if (!ethAccount || isEmpty(ethAccount)) {
+      return [];
+    }
 
-      return Object.entries(ethAccount.assets)
-        .filter(([asset]) => !ignoredAssets.includes(asset))
-        .map(
-          ([key, asset_data]) =>
-            ({
-              asset: key,
-              amount: asset_data.amount,
-              usdValue: asset_data.usdValue
-            } as AssetBalance)
-        );
-    },
+    return Object.entries(ethAccount.assets)
+      .filter(([asset]) => !get(isAssetIgnored(asset)))
+      .map(
+        ([key, { amount, usdValue }]) =>
+          ({
+            asset: key,
+            amount: amount,
+            usdValue: usdValue
+          } as AssetBalance)
+      );
+  },
 
-  accountLiabilities:
-    (state: BalanceState, _, { session }) =>
-    (account: string) => {
-      const ignoredAssets = session!.ignoredAssets;
-      const ethAccount = state.eth[account];
-      if (!ethAccount || isEmpty(ethAccount)) {
-        return [];
-      }
+  accountLiabilities: (state: BalanceState) => (account: string) => {
+    const { isAssetIgnored } = useIgnoredAssetsStore();
+    const ethAccount = state.eth[account];
+    if (!ethAccount || isEmpty(ethAccount)) {
+      return [];
+    }
 
-      return Object.entries(ethAccount.liabilities)
-        .filter(([asset]) => !ignoredAssets.includes(asset))
-        .map(
-          ([key, asset_data]) =>
-            ({
-              asset: key,
-              amount: asset_data.amount,
-              usdValue: asset_data.usdValue
-            } as AssetBalance)
-        );
-    },
+    return Object.entries(ethAccount.liabilities)
+      .filter(([asset]) => !get(isAssetIgnored(asset)))
+      .map(
+        ([key, { amount, usdValue }]) =>
+          ({
+            asset: key,
+            amount: amount,
+            usdValue: usdValue
+          } as AssetBalance)
+      );
+  },
 
   hasDetails: (state: BalanceState) => (account: string) => {
     const ethAccount = state.eth[account];
+    const loopringBalance = state.loopringBalances[account] || {};
     if (!ethAccount || isEmpty(ethAccount)) {
       return false;
     }
 
-    const assets = Object.entries(ethAccount.assets);
-    const liabilities = Object.entries(ethAccount.liabilities);
-    return assets.length > 1 || liabilities.length > 1;
+    const assetsCount = Object.entries(ethAccount.assets).length;
+    const liabilitiesCount = Object.entries(ethAccount.liabilities).length;
+    const loopringsCount = Object.entries(loopringBalance).length;
+
+    return assetsCount + liabilitiesCount + loopringsCount > 1;
   },
 
   manualLabels: ({ manualBalances, manualLiabilities }: BalanceState) => {
     const balances = manualLiabilities.concat(manualBalances);
     return balances.map(value => value.label);
   },
-
-  assetInfo:
-    ({ supportedAssets, nonFungibleBalances }: BalanceState) =>
-    (identifier: string) => {
-      if (identifier.startsWith('_nft_')) {
-        for (const address in nonFungibleBalances) {
-          const nfb = nonFungibleBalances[address];
-          for (const balance of nfb) {
-            if (balance.id === identifier) {
-              return {
-                identifier: balance.id,
-                symbol: balance.name,
-                name: balance.name,
-                assetType: 'ethereum_token'
-              } as SupportedAsset;
-            }
-          }
-        }
-      }
-      return supportedAssets.find(asset => asset.identifier === identifier);
-    },
 
   accounts: (
     _,
@@ -597,37 +650,29 @@ export const getters: Getters<
     return accounts.find(acc => acc.address === address);
   },
 
-  isEthereumToken:
-    ({ supportedAssets }) =>
-    (asset: string) => {
-      const match = supportedAssets.find(
-        supportedAsset => supportedAsset.identifier === asset
-      );
-      if (match) {
-        return match.assetType === 'ethereum token';
-      }
-      return false;
-    },
+  isEthereumToken: () => (asset: string) => {
+    const { assetInfo } = useAssetInfoRetrieval();
+    const match = get(assetInfo(asset));
+    if (match) {
+      return match.assetType === 'ethereum token';
+    }
+    return false;
+  },
   aggregatedAssets: (_, getters) => {
     const liabilities = getters.liabilities.map(({ asset }) => asset);
     const assets = getters.aggregatedBalances.map(({ asset }) => asset);
     assets.push(...liabilities);
     return assets.filter(uniqueStrings);
   },
-  assetPriceInfo: (state, getters1) => asset => {
-    const assetValue = getters1.aggregatedBalances.find(
-      value => value.asset === asset
-    );
-    return {
-      usdPrice: state.prices[asset] ?? Zero,
-      amount: assetValue?.amount ?? Zero,
-      usdValue: assetValue?.usdValue ?? Zero
-    };
-  },
-  breakdown:
+  assetBreakdown:
     ({
       btc: { standalone, xpubs },
+      btcAccounts,
+      ksmAccounts,
+      dotAccounts,
+      avaxAccounts,
       eth,
+      ethAccounts,
       exchangeBalances,
       ksm,
       dot,
@@ -647,7 +692,8 @@ export const getters: Getters<
         breakdown.push({
           address: '',
           location: exchange,
-          balance: exchangeData[asset]
+          balance: exchangeData[asset],
+          tags: []
         });
       }
 
@@ -656,13 +702,15 @@ export const getters: Getters<
         if (manualBalance.asset !== asset) {
           continue;
         }
+
         breakdown.push({
           address: '',
           location: manualBalance.location,
           balance: {
             amount: manualBalance.amount,
             usdValue: manualBalance.usdValue
-          }
+          },
+          tags: manualBalance.tags
         });
       }
 
@@ -672,10 +720,16 @@ export const getters: Getters<
         if (!assetBalance) {
           continue;
         }
+
+        const tags =
+          ethAccounts.find(ethAccount => ethAccount.address === address)
+            ?.tags || [];
+
         breakdown.push({
           address,
           location: Blockchain.ETH,
-          balance: assetBalance
+          balance: assetBalance,
+          tags
         });
       }
 
@@ -693,7 +747,8 @@ export const getters: Getters<
           breakdown.push({
             address,
             location: Blockchain.ETH,
-            balance: loopringBalances[address][asset]
+            balance: loopringBalances[address][asset],
+            tags: [ReadOnlyTag.LOOPRING]
           });
         }
       }
@@ -702,10 +757,16 @@ export const getters: Getters<
         if (standalone) {
           for (const address in standalone) {
             const btcBalance = standalone[address];
+            const tags =
+              btcAccounts?.standalone.find(
+                btcAccount => btcAccount.address === address
+              )?.tags || [];
+
             breakdown.push({
               address,
               location: Blockchain.BTC,
-              balance: btcBalance
+              balance: btcBalance,
+              tags
             });
           }
         }
@@ -714,12 +775,15 @@ export const getters: Getters<
           for (let i = 0; i < xpubs.length; i++) {
             const xpub = xpubs[i];
             const addresses = xpub.addresses;
+            const tags = btcAccounts?.xpubs[i].tags;
             for (const address in addresses) {
               const btcBalance = addresses[address];
+
               breakdown.push({
                 address,
                 location: Blockchain.BTC,
-                balance: btcBalance
+                balance: btcBalance,
+                tags
               });
             }
           }
@@ -732,10 +796,15 @@ export const getters: Getters<
         if (!assetBalance) {
           continue;
         }
+        const tags =
+          ksmAccounts.find(ksmAccount => ksmAccount.address === address)
+            ?.tags || [];
+
         breakdown.push({
           address,
           location: Blockchain.KSM,
-          balance: assetBalance
+          balance: assetBalance,
+          tags
         });
       }
 
@@ -745,10 +814,16 @@ export const getters: Getters<
         if (!assetBalance) {
           continue;
         }
+
+        const tags =
+          dotAccounts.find(dotAccount => dotAccount.address === address)
+            ?.tags || [];
+
         breakdown.push({
           address,
           location: Blockchain.DOT,
-          balance: assetBalance
+          balance: assetBalance,
+          tags
         });
       }
 
@@ -758,10 +833,16 @@ export const getters: Getters<
         if (!assetBalance) {
           continue;
         }
+
+        const tags =
+          avaxAccounts.find(avaxAccount => avaxAccount.address === address)
+            ?.tags || [];
+
         breakdown.push({
           address,
           location: Blockchain.AVAX,
-          balance: assetBalance
+          balance: assetBalance,
+          tags
         });
       }
 
@@ -780,7 +861,7 @@ export const getters: Getters<
     }
     return balances;
   },
-  blockchainAssets: (state, { totals }, { session }) => {
+  blockchainAssets: (state, { totals }) => {
     const noPrice = new BigNumber(-1);
     const blockchainTotal = [
       ...totals.map(value => ({
@@ -788,12 +869,12 @@ export const getters: Getters<
         usdPrice: state.prices[value.asset] ?? noPrice
       }))
     ];
-    const ignoredAssets = session!.ignoredAssets;
+    const { isAssetIgnored } = useIgnoredAssetsStore();
     const loopringBalances = state.loopringBalances;
     for (const address in loopringBalances) {
       const accountBalances = loopringBalances[address];
       for (const asset in accountBalances) {
-        if (ignoredAssets.includes(asset)) {
+        if (get(isAssetIgnored(asset))) {
           continue;
         }
         const existing: Writeable<AssetBalance> | undefined =
@@ -813,19 +894,79 @@ export const getters: Getters<
     }
     return blockchainTotal;
   },
-  getIdentifierForSymbol: state => symbol => {
-    const asset = state.supportedAssets.find(asset => asset.symbol === symbol);
-    return asset?.identifier;
-  },
-  assetSymbol:
-    (_bs, { assetInfo }) =>
+  locationBreakdown:
+    (
+      {
+        connectedExchanges,
+        manualBalances,
+        loopringBalances,
+        prices
+      }: BalanceState,
+      { exchangeBalances, totals }
+    ) =>
     identifier => {
-      const asset = assetInfo(identifier);
-      return asset?.symbol ?? identifier;
+      const { isAssetIgnored } = useIgnoredAssetsStore();
+      const ownedAssets: { [asset: string]: AssetBalanceWithPrice } = {};
+      const addToOwned = (value: AssetBalance) => {
+        const asset = ownedAssets[value.asset];
+        if (get(isAssetIgnored(value.asset))) {
+          return;
+        }
+        ownedAssets[value.asset] = !asset
+          ? {
+              ...value,
+              usdPrice: prices[value.asset] ?? new BigNumber(-1)
+            }
+          : {
+              asset: asset.asset,
+              amount: asset.amount.plus(value.amount),
+              usdValue: asset.usdValue.plus(value.usdValue),
+              usdPrice: prices[asset.asset] ?? new BigNumber(-1)
+            };
+      };
+
+      const exchange = connectedExchanges.find(
+        ({ location }) => identifier === location
+      );
+
+      if (exchange) {
+        const balances = exchangeBalances(identifier);
+        balances.forEach((value: AssetBalance) => addToOwned(value));
+      }
+
+      if (identifier === TRADE_LOCATION_BLOCKCHAIN) {
+        totals.forEach((value: AssetBalance) => addToOwned(value));
+
+        for (const address in loopringBalances) {
+          const balances = loopringBalances[address];
+          for (const asset in balances) {
+            addToOwned({
+              ...balances[asset],
+              asset
+            });
+          }
+        }
+      }
+
+      manualBalances.forEach(value => {
+        if (value.location === identifier) {
+          addToOwned(value);
+        }
+      });
+
+      return Object.values(ownedAssets).sort((a, b) =>
+        b.usdValue.minus(a.usdValue).toNumber()
+      );
     },
   byLocation: (
     state,
-    { blockchainTotal, exchanges, manualBalanceByLocation: manual }
+    {
+      blockchainTotal,
+      exchangeRate,
+      exchanges,
+      manualBalanceByLocation: manual
+    },
+    { session }
   ) => {
     const byLocation: BalanceByLocation = {};
 
@@ -833,19 +974,32 @@ export const getters: Getters<
       byLocation[location] = usdValue;
     }
 
+    const mainCurrency = session?.generalSettings.mainCurrency.tickerSymbol;
+    assert(mainCurrency, 'main currency was not properly set');
+
+    const currentExchangeRate = exchangeRate(mainCurrency);
+    const blockchainTotalConverted = currentExchangeRate
+      ? blockchainTotal.multipliedBy(currentExchangeRate)
+      : blockchainTotal;
+
     const blockchain = byLocation[TRADE_LOCATION_BLOCKCHAIN];
     if (blockchain) {
-      byLocation[TRADE_LOCATION_BLOCKCHAIN] = blockchain.plus(blockchainTotal);
+      byLocation[TRADE_LOCATION_BLOCKCHAIN] = blockchain.plus(
+        blockchainTotalConverted
+      );
     } else {
-      byLocation[TRADE_LOCATION_BLOCKCHAIN] = blockchainTotal;
+      byLocation[TRADE_LOCATION_BLOCKCHAIN] = blockchainTotalConverted;
     }
 
     for (const { location, total } of exchanges) {
       const locationElement = byLocation[location];
+      const exchangeBalanceConverted = currentExchangeRate
+        ? total.multipliedBy(currentExchangeRate)
+        : total;
       if (locationElement) {
-        byLocation[location] = locationElement.plus(total);
+        byLocation[location] = locationElement.plus(exchangeBalanceConverted);
       } else {
-        byLocation[location] = total;
+        byLocation[location] = exchangeBalanceConverted;
       }
     }
 

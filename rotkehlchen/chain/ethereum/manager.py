@@ -1,8 +1,7 @@
 import json
 import logging
 import random
-from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, overload
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Tuple, Union, overload
 from urllib.parse import urlparse
 
 import requests
@@ -10,32 +9,41 @@ from ens import ENS
 from ens.abis import ENS as ENS_ABI, RESOLVER as ENS_RESOLVER_ABI
 from ens.exceptions import InvalidName
 from ens.main import ENS_MAINNET_ADDR
-from ens.utils import is_none_or_zero_address, normal_name_to_hash, normalize_name
+from ens.utils import (
+    address_to_reverse_domain,
+    is_none_or_zero_address,
+    normal_name_to_hash,
+    normalize_name,
+)
+from eth_abi.exceptions import InsufficientDataBytes
 from eth_typing import BlockNumber, HexStr
-from typing_extensions import Literal
 from web3 import HTTPProvider, Web3
 from web3._utils.abi import get_abi_output_types
 from web3._utils.contracts import find_matching_event_abi
 from web3._utils.filters import construct_event_filter_params
 from web3.datastructures import MutableAttributeDict
-from web3.exceptions import BadFunctionCallOutput, TransactionNotFound
-from web3.middleware.exception_retry_request import http_retry_request_middleware
-from web3.types import FilterParams
+from web3.exceptions import (
+    BadFunctionCallOutput,
+    BadResponseFormat,
+    BlockNotFound,
+    TransactionNotFound,
+)
+from web3.types import BlockIdentifier, FilterParams
 
 from rotkehlchen.chain.constants import DEFAULT_EVM_RPC_TIMEOUT
 from rotkehlchen.chain.ethereum.contracts import EthereumContract
 from rotkehlchen.chain.ethereum.graph import Graph
-from rotkehlchen.chain.ethereum.modules.eth2 import ETH2_DEPOSIT
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
-from rotkehlchen.chain.ethereum.utils import multicall_2
-from rotkehlchen.constants.ethereum import ERC20TOKEN_ABI, ETH_SCAN
-from rotkehlchen.errors import (
+from rotkehlchen.chain.ethereum.modules.eth2.constants import ETH2_DEPOSIT
+from rotkehlchen.chain.ethereum.types import EnsContractParams, string_to_ethereum_address
+from rotkehlchen.chain.ethereum.utils import multicall, multicall_2
+from rotkehlchen.constants.ethereum import ERC20TOKEN_ABI, ETH_SCAN, UNIV1_LP_ABI
+from rotkehlchen.errors.misc import (
     BlockchainQueryError,
-    DeserializationError,
     InputError,
     RemoteError,
     UnableToDecryptRemoteData,
 )
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets import GreenletManager
@@ -46,9 +54,10 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_int_from_hex,
 )
 from rotkehlchen.serialization.serialize import process_result
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ChecksumEthAddress,
     EthereumTransaction,
+    EVMTxHash,
     SupportedBlockchain,
     Timestamp,
 )
@@ -56,7 +65,7 @@ from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import from_wei, hex_or_bytes_to_str
 from rotkehlchen.utils.network import request_get_dict
 
-from .typing import NodeName
+from .types import NodeName
 from .utils import ENS_RESOLVER_ABI_MULTICHAIN_ADDRESS
 
 logger = logging.getLogger(__name__)
@@ -164,6 +173,31 @@ def _query_web3_get_logs(
     return events
 
 
+def _prepare_ens_call_arguments(addr: ChecksumEthAddress) -> List[Any]:
+    try:
+        reversed_domain = address_to_reverse_domain(addr)
+    except (TypeError, ValueError) as e:
+        raise InputError(f'Address {addr} has incorrect format or type. {str(e)}') from e
+    normalized_domain_name = normalize_name(reversed_domain)
+    arguments = [normal_name_to_hash(normalized_domain_name)]
+    return arguments
+
+
+def _encode_ens_contract(params: EnsContractParams) -> str:
+    contract = EthereumContract(address=params.address, abi=params.abi, deployed_block=0)
+    return contract.encode(method_name=params.method_name, arguments=params.arguments)
+
+
+def _decode_ens_contract(params: EnsContractParams, result_encoded: Any) -> ChecksumEthAddress:
+    contract = EthereumContract(address=params.address, abi=params.abi, deployed_block=0)
+    result = contract.decode(  # pylint: disable=E1136
+        result=result_encoded,
+        method_name=params.method_name,
+        arguments=params.arguments,
+    )[0]
+    return string_to_ethereum_address(result)
+
+
 # TODO: Ideally all these should become configurable
 # Taking LINKPOOL out since it's just really too slow and seems to not
 # respond to the batched calls almost at all. Combined with web3.py retries
@@ -233,10 +267,16 @@ class EthereumManager():
         self.blocks_subgraph = Graph(
             'https://api.thegraph.com/subgraphs/name/blocklytics/ethereum-blocks',
         )
-        # Used by the transactions class. Can't be instantiated there since that is
-        # stateless object and thus wouldn't persist.
-        # Not really happy with this approach but well ...
-        self.tx_per_address: Dict[ChecksumEthAddress, int] = defaultdict(int)
+        # A cache for the erc20 contract info to not requery same one
+        self.contract_info_cache: Dict[ChecksumEthAddress, Dict[str, Any]] = {
+            # hard coding contract info we know can't be queried properly
+            # https://github.com/rotki/rotki/issues/4420
+            string_to_ethereum_address('0xECF8F87f810EcF450940c9f60066b4a7a501d6A7'): {
+                'name': 'Old Wrapped Ether',
+                'symbol': 'WETH',
+                'decimals': 18,
+            },
+        }
 
     def connected_to_any_web3(self) -> bool:
         return (
@@ -314,7 +354,6 @@ class EthereumManager():
             )
             ens = ENS(provider)
             web3 = Web3(provider, ens=ens)
-            web3.middleware_onion.inject(http_retry_request_middleware, layer=0)
         except requests.exceptions.RequestException:
             message = f'Failed to connect to ethereum node {name} at endpoint {ethrpc_endpoint}'
             log.warning(message)
@@ -343,11 +382,11 @@ class EthereumManager():
                         log.warning(message)
                         return False, message
 
-                    current_block = web3.eth.block_number  # pylint: disable=no-member
                     try:
+                        current_block = web3.eth.block_number  # pylint: disable=no-member
                         latest_block = self.query_eth_highest_block()
-                    except RemoteError:
-                        msg = 'Could not query latest block'
+                    except (requests.exceptions.RequestException, RemoteError) as e:
+                        msg = f'Could not query latest block due to {str(e)}'
                         log.warning(msg)
                         synchronized = False
                     else:
@@ -412,8 +451,10 @@ class EthereumManager():
                     requests.exceptions.RequestException,
                     BlockchainQueryError,
                     TransactionNotFound,
-                    KeyError,  # saw this happen inside web3.py if resulting json contains unexpected key. Happened with mycrypto's node  # noqa: E501
-            ) as e:  # noqa: E501
+                    BlockNotFound,
+                    BadResponseFormat,
+                    ValueError,  # Yabir saw this happen with mew node for unavailable method at node. Since it's generic we should replace if web3 implements https://github.com/ethereum/web3.py/issues/2448  # noqa: E501
+            ) as e:
                 log.warning(f'Failed to query {node} for {str(method)} due to {str(e)}')
                 # Catch all possible errors here and just try next node call
                 continue
@@ -456,7 +497,6 @@ class EthereumManager():
         except (
                 requests.exceptions.RequestException,
                 BlockchainQueryError,
-                TransactionNotFound,
                 KeyError,  # saw this happen inside web3.py if resulting json contains unexpected key. Happened with mycrypto's node  # noqa: E501
         ):
             return None
@@ -564,6 +604,8 @@ class EthereumManager():
         May raise:
         - RemoteError if an external service such as Etherscan is queried and
         there is a problem with its query.
+        - BlockNotFound if number used to lookup the block can't be found. Raised
+        by web3.eth.get_block().
         """
         if web3 is None:
             return self.etherscan.get_block_by_number(num)
@@ -594,6 +636,57 @@ class EthereumManager():
             return self.etherscan.get_code(account)
 
         return hex_or_bytes_to_str(web3.eth.getCode(account))
+
+    def ens_reverse_lookup(self, reversed_addresses: List[ChecksumEthAddress]) -> Dict[ChecksumEthAddress, Optional[str]]:  # noqa: E501
+        """Performs a reverse ENS lookup on a list of addresses
+
+        Because a multicall is used, no exceptions are raised.
+        If any exceptions occur, they are logged and None is returned for that
+        """
+        human_names: Dict[ChecksumEthAddress, Optional[str]] = {}
+        # Querying resolvers' addresses
+        resolver_params = [
+            EnsContractParams(address=addr, abi=ENS_ABI, method_name='resolver', arguments=_prepare_ens_call_arguments(addr))  # noqa: E501
+            for addr in reversed_addresses
+        ]
+        resolvers_output = multicall(
+            ethereum=self,
+            calls=[(ENS_MAINNET_ADDR, _encode_ens_contract(params=params)) for params in resolver_params],  # noqa: E501
+        )
+        resolvers = []
+        # We need a new list for reversed_addresses because not all addresses have resolver
+        filtered_reversed_addresses = []
+        # Processing resolvers query output
+        for reversed_addr, params, resolver_output in zip(reversed_addresses, resolver_params, resolvers_output):  # noqa: E501
+            decoded_resolver = _decode_ens_contract(params=params, result_encoded=resolver_output)
+            if is_none_or_zero_address(decoded_resolver):
+                human_names[reversed_addr] = None
+                continue
+            try:
+                deserialized_resolver = deserialize_ethereum_address(decoded_resolver)
+            except DeserializationError:
+                log.error(
+                    f'Error deserializing address {decoded_resolver} while doing reverse ens lookup',  # noqa: E501
+                )
+                human_names[reversed_addr] = None
+                continue
+            resolvers.append(deserialized_resolver)
+            filtered_reversed_addresses.append(reversed_addr)
+
+        # Querying human names
+        human_names_params = [
+            EnsContractParams(address=resolver, abi=ENS_RESOLVER_ABI, method_name='name', arguments=_prepare_ens_call_arguments(addr))  # noqa: E501
+            for addr, resolver in zip(filtered_reversed_addresses, resolvers)]
+        human_names_output = multicall(
+            ethereum=self,
+            calls=[(params.address, _encode_ens_contract(params=params)) for params in human_names_params],  # noqa: E501
+        )
+
+        # Processing human names query output
+        for addr, params, human_name_output in zip(filtered_reversed_addresses, human_names_params, human_names_output):  # noqa: E501
+            human_names[addr] = _decode_ens_contract(params=params, result_encoded=human_name_output)  # noqa: E501
+
+        return human_names
 
     @overload
     def ens_lookup(
@@ -763,7 +856,7 @@ class EthereumManager():
     def _get_transaction_receipt(
             self,
             web3: Optional[Web3],
-            tx_hash: str,
+            tx_hash: EVMTxHash,
     ) -> Dict[str, Any]:
         if web3 is None:
             tx_receipt = self.etherscan.get_transaction_receipt(tx_hash)
@@ -773,7 +866,7 @@ class EthereumManager():
                 tx_receipt['blockNumber'] = block_number
                 tx_receipt['cumulativeGasUsed'] = int(tx_receipt['cumulativeGasUsed'], 16)
                 tx_receipt['gasUsed'] = int(tx_receipt['gasUsed'], 16)
-                tx_receipt['status'] = int(tx_receipt['status'], 16)
+                tx_receipt['status'] = int(tx_receipt.get('status', '0x1'), 16)
                 tx_index = int(tx_receipt['transactionIndex'], 16)
                 tx_receipt['transactionIndex'] = tx_index
                 for receipt_log in tx_receipt['logs']:
@@ -783,9 +876,17 @@ class EthereumManager():
                         location='etherscan tx receipt',
                     )
                     receipt_log['transactionIndex'] = tx_index
-            except (DeserializationError, ValueError) as e:
+            except (DeserializationError, ValueError, KeyError) as e:
+                msg = str(e)
+                if isinstance(e, KeyError):
+                    msg = f'missing key {msg}'
+                log.error(
+                    f'Couldnt deserialize transaction receipt {tx_receipt} data from '
+                    f'etherscan due to {msg}',
+                )
                 raise RemoteError(
-                    f'Couldnt deserialize transaction receipt data from etherscan {tx_receipt}',
+                    f'Couldnt deserialize transaction receipt data from etherscan '
+                    f'due to {msg}. Check logs for details',
                 ) from e
             return tx_receipt
 
@@ -795,7 +896,7 @@ class EthereumManager():
 
     def get_transaction_receipt(
             self,
-            tx_hash: str,
+            tx_hash: EVMTxHash,
             call_order: Optional[Sequence[NodeName]] = None,
     ) -> Dict[str, Any]:
         return self.query(
@@ -807,15 +908,15 @@ class EthereumManager():
     def _get_transaction_by_hash(
             self,
             web3: Optional[Web3],
-            tx_hash: str,
-    ) -> Optional[EthereumTransaction]:
+            tx_hash: EVMTxHash,
+    ) -> EthereumTransaction:
         if web3 is None:
             tx_data = self.etherscan.get_transaction_by_hash(tx_hash=tx_hash)
         else:
             tx_data = web3.eth.get_transaction(tx_hash)  # type: ignore
 
         try:
-            transaction = deserialize_ethereum_transaction(data=tx_data, ethereum=self)
+            transaction = deserialize_ethereum_transaction(data=tx_data, internal=False, ethereum=self)  # noqa: E501
         except (DeserializationError, ValueError) as e:
             raise RemoteError(
                 f'Couldnt deserialize ethereum transaction data from {tx_data}. Error: {str(e)}',
@@ -825,9 +926,9 @@ class EthereumManager():
 
     def get_transaction_by_hash(
             self,
-            tx_hash: str,
+            tx_hash: EVMTxHash,
             call_order: Optional[Sequence[NodeName]] = None,
-    ) -> Optional[EthereumTransaction]:
+    ) -> EthereumTransaction:
         return self.query(
             method=self._get_transaction_by_hash,
             call_order=call_order if call_order is not None else self.default_call_order(),
@@ -841,6 +942,7 @@ class EthereumManager():
             method_name: str,
             arguments: Optional[List[Any]] = None,
             call_order: Optional[Sequence[NodeName]] = None,
+            block_identifier: BlockIdentifier = 'latest',
     ) -> Any:
         return self.query(
             method=self._call_contract,
@@ -849,6 +951,7 @@ class EthereumManager():
             abi=abi,
             method_name=method_name,
             arguments=arguments,
+            block_identifier=block_identifier,
         )
 
     def _call_contract(
@@ -858,6 +961,7 @@ class EthereumManager():
             abi: List,
             method_name: str,
             arguments: Optional[List[Any]] = None,
+            block_identifier: BlockIdentifier = 'latest',
     ) -> Any:
         """Performs an eth_call to an ethereum contract
 
@@ -876,7 +980,7 @@ class EthereumManager():
 
         contract = web3.eth.contract(address=contract_address, abi=abi)
         try:
-            method = getattr(contract.caller, method_name)
+            method = getattr(contract.caller(block_identifier=block_identifier), method_name)
             result = method(*arguments if arguments else [])
         except (ValueError, BadFunctionCallOutput) as e:
             raise BlockchainQueryError(
@@ -1105,6 +1209,10 @@ class EthereumManager():
         if it is provided in the contract. This method may raise:
         - BadFunctionCallOutput: If there is an error calling a bad address
         """
+        cache = self.contract_info_cache.get(address)
+        if cache is not None:
+            return cache
+
         properties = ('decimals', 'symbol', 'name')
         info: Dict[str, Any] = {}
 
@@ -1120,14 +1228,33 @@ class EthereumManager():
             # If something happens in the connection the output should have
             # the same length as the tuple of properties
             output = [(False, b'')] * len(properties)
-
-        decoded = [
-            contract.decode(x[1], method_name)[0]  # pylint: disable=E1136
-            if x[0] and len(x[1]) else None
-            for (x, method_name) in zip(output, properties)
-        ]
+        try:
+            decoded = [
+                contract.decode(x[1], method_name)[0]  # pylint: disable=E1136
+                if x[0] and len(x[1]) else None
+                for (x, method_name) in zip(output, properties)
+            ]
+        except (OverflowError, InsufficientDataBytes) as e:
+            # This can happen when contract follows the ERC20 standard methods
+            # but name and symbol return bytes instead of string. UNIV1 LP is such a case
+            # It can also happen if the method is missing and they are all hitting
+            # the fallback function. old WETH contract is such a case
+            log.error(
+                f'{address} failed to decode as ERC20 token. '
+                f'Trying with token ABI using bytes. {str(e)}',
+            )
+            contract = EthereumContract(address=address, abi=UNIV1_LP_ABI, deployed_block=0)
+            decoded = [
+                contract.decode(x[1], method_name)[0]  # pylint: disable=E1136
+                if x[0] and len(x[1]) else None
+                for (x, method_name) in zip(output, properties)
+            ]
+            log.debug(f'{address} was succesfuly decoded as ERC20 token')
 
         for prop, value in zip(properties, decoded):
+            if isinstance(value, bytes):
+                value = value.rstrip(b'\x00').decode()
             info[prop] = value
 
+        self.contract_info_cache[address] = info
         return info

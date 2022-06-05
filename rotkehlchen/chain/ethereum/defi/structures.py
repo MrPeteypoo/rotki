@@ -1,9 +1,7 @@
-from typing import Callable, Dict, List, NamedTuple, Union
+from typing import Callable, Dict, List, Literal, NamedTuple, Union
 
-from typing_extensions import Literal
-
-from rotkehlchen.accounting.structures import Balance, BalanceSheet
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
+from rotkehlchen.types import ChecksumEthAddress
 
 
 class DefiProtocol(NamedTuple):

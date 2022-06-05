@@ -1,20 +1,22 @@
-$PYINSTALLER_VERSION = if ($env:PYINSTALLER_VERSION) { $env:PYINSTALLER_VERSION } else { '3.5' }
-$SQLCIPHER_VERSION = if ($env:SQLCIPHER_VERSION) { $env:SQLCIPHER_VERSION } else { 'v4.4.0' }
-$PYSQLCIPHER3_VERSION = if ($env:PYSQLCIPHER3_VERSION) { $env:PYSQLCIPHER3_VERSION } else { 'c01b3bda144073eb34412ae64702fa2362a778e7' }
+$PYINSTALLER_VERSION = if ($env:PYINSTALLER_VERSION) { $env:PYINSTALLER_VERSION } else { '4.8' }
+$SQLCIPHER_VERSION = if ($env:SQLCIPHER_VERSION) { $env:SQLCIPHER_VERSION } else { 'v4.5.0' }
+$PYSQLCIPHER3_VERSION = if ($env:PYSQLCIPHER3_VERSION) { $env:PYSQLCIPHER3_VERSION } else { '1f1b703b9e35205946c820e735f58799e1b72d2d' }
 $BUILD_DEPENDENCIES = if ($env:BUILD_DEPENDENCIES) { $env:BUILD_DEPENDENCIES } else { 'rotki-build-dependencies' }
 
 # Setup constants
-$MINIMUM_NPM_VERSION = "7.6.2"
+$MINIMUM_NPM_VERSION = "8.0.0"
 $TCLTK='tcltk85-8.5.19-17.tcl85.Win10.x86_64'
 
-echo "Starting rotki build process with SQLCipher $SQLCIPHER_VERSION and pysqlcipher3 $PYSQLCIPHER3_VERSION"
+echo "`nStarting rotki build process with SQLCipher $SQLCIPHER_VERSION and pysqlcipher3 $PYSQLCIPHER3_VERSION`n"
 
 $PROJECT_DIR = $PWD
 
 function ExitOnFailure {
     param([string]$ExitMessage)
     if (-not ($LASTEXITCODE -eq 0)) {
+        echo "`n------------`n"
         echo "$ExitMessage"
+        echo "`n------------`n"
         exit 1;
     }
 }
@@ -88,7 +90,7 @@ if (-not(Test-Path "$OPENSSL_PATH" -PathType Container))
     ExitOnFailure("Installation of OpenSSL Failed")
 }
 
-echo "Setting up Visual Studio Dev Shell"
+echo "`nSetting up Visual Studio Dev Shell`n"
 
 $BACKUP_ENV = @()
 Get-Childitem -Path Env:* | Foreach-Object {
@@ -188,22 +190,50 @@ if ((-not ($env:VIRTUAL_ENV)) -and (-not ($Env:CI))) {
     ExitOnFailure("Failed to activate rotki VirtualEnv")
 }
 
-cd $PROJECT_DIR
-$NPM_VERSION = (npm --version) | Out-String
+if ($Env:CI) {
+    echo "::group::Fetch Miniupnpc"
+}
 
+
+echo "`nFetching miniupnpc for windows`n"
+$PYTHON_LOCATION = ((python -c "import os, sys; print(os.path.dirname(sys.executable))") | Out-String).trim()
+$PYTHON_DIRECTORY = Split-Path -Path $PYTHON_LOCATION -Leaf
+
+if (-not ($PYTHON_DIRECTORY -match 'Scripts')) {
+    $PYTHON_LOCATION = (Join-Path $PYTHON_LOCATION "Scripts")
+}
+
+$DLL_PATH = (Join-Path $PYTHON_LOCATION "miniupnpc.dll")
+$MINIUPNPC_ZIP = "miniupnpc_64bit_py39-2.2.24.zip"
+$ZIP_PATH = (Join-Path $BUILD_DEPS_DIR $MINIUPNPC_ZIP)
+
+if (-not ((Test-Path $ZIP_PATH -PathType Leaf) -and (Test-Path $DLL_PATH -PathType Leaf))) {
+    echo "miniupnpc.dll will be installled in $PYTHON_LOCATION"
+
+    cd $BUILD_DEPS_DIR
+    curl.exe -L -O "https://github.com/mrx23dot/miniupnp/releases/download/miniupnpd_2_2_24/$MINIUPNPC_ZIP"
+    ExitOnFailure("Failed to download miniupnpc")
+
+    echo "Downloaded miniupnpc.zip"
+
+    Expand-Archive -Force -Path ".\$MINIUPNPC_ZIP" -DestinationPath $PYTHON_LOCATION
+
+    ExitOnFailure("Failed to unzip miniupnpc")
+    echo "Unzipped miniupnpc to $PYTHON_LOCATION`nDone with miniupnpc"
+} else {
+    echo "miniupnpc.dll already installled in $PYTHON_LOCATION. skipping"
+}
+
+if ($Env:CI) {
+    echo "::endgroup::"
+}
+
+cd $PROJECT_DIR
+
+$NPM_VERSION = (npm --version) | Out-String
 if ([version]$NPM_VERSION -lt [version]$MINIMUM_NPM_VERSION) {
     echo "Please make sure you have npm version $MINIMUM_NPM_VERSION or newer installed"
     exit 1;
-}
-
-if (-not (Test-Path sqlcipher.dll -PathType Leaf)) {
-    echo "Copying sqlcipher.dll to project directory"
-    Copy-Item "$SQLCIPHER_DIR\sqlcipher.dll" .\
-}
-
-if (-not (Test-Path libcrypto-1_1-x64.dll -PathType Leaf)) {
-    echo "Copying libcrypto-1_1-x64.dll to project directory"
-    Copy-Item "$OPENSSL_PATH\bin\libcrypto-1_1-x64.dll" .\
 }
 
 if ($Env:CI) {
@@ -214,11 +244,26 @@ pip install pyinstaller==$PYINSTALLER_VERSION
 pip install -r requirements.txt
 pip install -e.
 
+echo "`nBuilding pysqlcipher3`n"
+
 cd $PYSQLCIPHER3_DIR
+
+if (-not (Test-Path sqlcipher.dll -PathType Leaf)) {
+    echo "Copying sqlcipher.dll to $PWD"
+    Copy-Item "$SQLCIPHER_DIR\sqlcipher.dll" .\
+}
+
+if (-not (Test-Path libcrypto-1_1-x64.dll -PathType Leaf)) {
+    echo "Copying libcrypto-1_1-x64.dll to $PWD"
+    Copy-Item "$OPENSSL_PATH\bin\libcrypto-1_1-x64.dll" .\
+}
+
 python setup.py build
 python setup.py install
 
 cd $PROJECT_DIR
+
+echo "`nVerifying pysqlcipher3`n"
 
 python -c "import sys;from rotkehlchen.db.dbhandler import detect_sqlcipher_version; version = detect_sqlcipher_version();sys.exit(0) if version == 4 else sys.exit(1)"
 ExitOnFailure("SQLCipher version verification failed")
@@ -254,7 +299,7 @@ if ($Env:CI) {
     echo "::endgroup::"
 }
 
-echo "Packaging the electron application"
+echo "`nPackaging the electron application`n"
 
 if ($Env:CI) {
     echo "::group::npm ci"
@@ -276,22 +321,24 @@ if ($Env:CI) {
     echo "::endgroup::"
 }
 
+$ELECTRON_BUILD_PATH="electron-build"
+
 cd app
-$BINARY_NAME = @(Get-ChildItem -Path $PWD\dist -Filter *.exe -Recurse -File -Name)[0]
+$BINARY_NAME = @(Get-ChildItem -Path "$PWD\$ELECTRON_BUILD_PATH" -Filter *.exe -Recurse -File -Name)[0]
 
 if (-not ($BINARY_NAME)) {
     echo "The app binary was not found"
     exit 1
 }
 
-cd dist
+cd $ELECTRON_BUILD_PATH
 $CHECKSUM_NAME = "$BINARY_NAME.sha512"
 $APP_BINARY = "$PWD\$BINARY_NAME"
 $APP_CHECKSUM = "$PWD\$CHECKSUM_NAME"
 
 Get-FileHash $APP_BINARY -Algorithm SHA512 | Select-Object Hash | foreach {$_.Hash} | Out-File -FilePath $APP_CHECKSUM
 
-echo "Preparing backend binary for publishing"
+echo "`nPreparing backend binary for publishing`n"
 
 $BACKEND_DIST = "$PROJECT_DIR\rotkehlchen_py_dist"
 cd $BACKEND_DIST

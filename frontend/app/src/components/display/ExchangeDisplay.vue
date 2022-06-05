@@ -1,49 +1,52 @@
 <template>
   <div class="d-flex flex-row align-center shrink">
-    <v-img
-      width="24px"
-      height="24px"
-      contain
-      class="exchange-display__icon"
-      :src="icon"
-    />
+    <adaptive-wrapper>
+      <v-img width="24px" height="24px" contain :src="icon" />
+    </adaptive-wrapper>
     <div class="ml-2" v-text="name" />
   </div>
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import { tradeLocations } from '@/components/history/consts';
 import { TradeLocationData } from '@/components/history/type';
-import { capitalize } from '@/filters';
-import { SupportedExchange } from '@/services/balances/types';
+import { SupportedExchange } from '@/types/exchanges';
+import { toSentenceCase } from '@/utils/text';
 
-@Component({})
-export default class ExchangeDisplay extends Vue {
-  @Prop({ required: true })
-  exchange!: SupportedExchange;
-  readonly locations = tradeLocations;
+export default defineComponent({
+  name: 'ExchangeDisplay',
+  components: { AdaptiveWrapper },
+  props: {
+    exchange: { required: true, type: String as PropType<SupportedExchange> }
+  },
+  setup(props) {
+    const { exchange } = toRefs(props);
+    const locations = tradeLocations;
 
-  get location(): TradeLocationData | undefined {
-    return this.locations.find(
-      ({ identifier }) => identifier === this.exchange
-    );
+    const location = computed<TradeLocationData | undefined>(() => {
+      return locations.find(({ identifier }) => identifier === get(exchange));
+    });
+
+    const name = computed<string>(() => {
+      return get(location)?.name ?? toSentenceCase(get(exchange));
+    });
+
+    const icon = computed<string>(() => {
+      return get(location)?.icon ?? '';
+    });
+
+    return {
+      icon,
+      name
+    };
   }
-
-  get name(): string {
-    return this.location?.name ?? capitalize(this.exchange);
-  }
-
-  get icon(): string {
-    return this.location?.icon ?? '';
-  }
-}
+});
 </script>
-
-<style scoped lang="scss">
-.exchange-display {
-  &__icon {
-    filter: grayscale(100%);
-  }
-}
-</style>

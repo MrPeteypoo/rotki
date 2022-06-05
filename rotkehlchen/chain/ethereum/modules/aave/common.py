@@ -1,19 +1,20 @@
 import logging
 from typing import TYPE_CHECKING, Dict, List, NamedTuple, Optional, Tuple, Union
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset, EthereumToken
-from rotkehlchen.chain.ethereum.structures import AaveEvent
 from rotkehlchen.constants.assets import A_AETH_V1, A_AREP_V1, A_ETH, A_REP
-from rotkehlchen.constants.ethereum import AAVE_ETH_RESERVE_ADDRESS
+from rotkehlchen.constants.ethereum import ETH_SPECIAL_ADDRESS
 from rotkehlchen.constants.resolver import ethaddress_to_identifier
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
+
+from .structures import AaveEvent
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager
@@ -64,22 +65,9 @@ class AaveBalances(NamedTuple):
     borrowing: Dict[Asset, AaveBorrowingBalance]
 
 
-def aave_reserve_address_to_reserve_asset(address: ChecksumEthAddress) -> Optional[Asset]:
-    if address == AAVE_ETH_RESERVE_ADDRESS:
-        return A_ETH
-
-    try:
-        asset = EthereumToken(address)
-    except UnknownAsset:
-        log.error(f'Could not find asset for aave reserve address {address}')
-        return None
-
-    return asset
-
-
 def asset_to_aave_reserve_address(asset: Asset) -> Optional[ChecksumEthAddress]:
     if asset == A_ETH:  # for v2 this should be WETH
-        return AAVE_ETH_RESERVE_ADDRESS
+        return ETH_SPECIAL_ADDRESS
 
     token = EthereumToken.from_asset(asset)
     assert token, 'should not be a non token asset at this point'
@@ -93,7 +81,7 @@ def atoken_to_asset(atoken: EthereumToken) -> Optional[Asset]:
         return A_REP
 
     asset_symbol = atoken.symbol[1:]
-    cursor = GlobalDBHandler()._conn.cursor()
+    cursor = GlobalDBHandler().conn.cursor()
     result = cursor.execute(
         'SELECT A.address from ethereum_tokens as A LEFT OUTER JOIN assets as B '
         'WHERE A.address=B.details_reference AND B.symbol=? COLLATE NOCASE',
@@ -111,18 +99,18 @@ def asset_to_atoken(asset: Asset, version: int) -> Optional[EthereumToken]:
         return A_AETH_V1
 
     protocol = 'aave' if version == 1 else 'aave-v2'
-    cursor = GlobalDBHandler()._conn.cursor()
+    cursor = GlobalDBHandler().conn.cursor()
     result = cursor.execute(
         'SELECT A.address from ethereum_tokens as A LEFT OUTER JOIN assets as B '
         'WHERE A.protocol==? AND A.address=B.details_reference AND B.symbol=?',
         (protocol, 'a' + asset.symbol),
-    ).fetchone()
+    ).fetchall()
     if len(result) != 1:
-        log.error(f'Could not derive atoken from {asset}  since multiple or no results were returned')  # noqa: E501
+        log.error(f'Could not derive atoken from {asset} since multiple or no results were returned')  # noqa: E501
         return None
 
     try:
-        return EthereumToken(result[0])
+        return EthereumToken(result[0][0])
     except UnknownAsset:  # should not happen
         log.error(f'Could not derive atoken from {asset}. Couldnt turn {result[0]} to EthereumToken')  # noqa: E501
         return None
@@ -131,7 +119,7 @@ def asset_to_atoken(asset: Asset, version: int) -> Optional[EthereumToken]:
 def _get_reserve_address_decimals(asset: Asset) -> Tuple[ChecksumEthAddress, int]:
     """Get the reserve address and the number of decimals for symbol"""
     if asset == A_ETH:
-        reserve_address = AAVE_ETH_RESERVE_ADDRESS
+        reserve_address = ETH_SPECIAL_ADDRESS
         decimals = 18
     else:
         token = EthereumToken.from_asset(asset)

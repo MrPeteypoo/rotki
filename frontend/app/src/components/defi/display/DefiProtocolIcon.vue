@@ -15,7 +15,7 @@
             'mr-2': mode !== 'icon',
             [$style.icon]: true
           }"
-          :src="require(`@/assets/images/defi/${icon}.svg`)"
+          :src="`/assets/images/defi/${icon}.svg`"
           v-on="on"
         />
         <span
@@ -23,11 +23,11 @@
           class="text--secondary"
           :class="$style.label"
         >
-          {{ capitalize(name) }}
+          {{ toSentenceCase(name) }}
         </span>
       </template>
       <span>
-        {{ capitalize(name) }}
+        {{ toSentenceCase(name) }}
       </span>
     </v-tooltip>
   </div>
@@ -35,7 +35,7 @@
 <script lang="ts">
 import { DefiProtocol } from '@rotki/common/lib/blockchain';
 import { computed, defineComponent, PropType } from '@vue/composition-api';
-import { capitalize } from '@/filters';
+import { toSentenceCase } from '@/utils/text';
 
 export default defineComponent({
   name: 'DefiProtocolIcon',
@@ -73,10 +73,11 @@ export default defineComponent({
       }
       return protocol;
     });
+
     return {
       icon,
       name,
-      capitalize: capitalize
+      toSentenceCase
     };
   }
 });

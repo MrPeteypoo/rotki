@@ -1,14 +1,15 @@
 import json
 import logging
 from http import HTTPStatus
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import werkzeug
-from flask import Flask, Response
+from flask import Blueprint, Flask, Response, abort, jsonify
+from flask.views import MethodView
 from flask_cors import CORS
-from flask_restful import Api, Resource, abort
 from gevent.pywsgi import WSGIServer
-from geventwebsocket import Resource as WebsocketResource, WebSocketServer
+from geventwebsocket import Resource as WebsocketResource
+from geventwebsocket.handler import WebSocketHandler
 from marshmallow import Schema
 from marshmallow.exceptions import ValidationError
 from webargs.flaskparser import parser
@@ -19,6 +20,8 @@ from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
 from rotkehlchen.api.v1.resources import (
     AaveBalancesResource,
     AaveHistoryResource,
+    AccountingReportDataResource,
+    AccountingReportsResource,
     AdexBalancesResource,
     AdexHistoryResource,
     AllAssetsResource,
@@ -28,6 +31,7 @@ from rotkehlchen.api.v1.resources import (
     AssetsReplaceResource,
     AssetsTypesResource,
     AssetUpdatesResource,
+    AssociatedLocations,
     AsyncTasksResource,
     AvalancheTransactionsResource,
     BalancerBalancesResource,
@@ -40,13 +44,22 @@ from rotkehlchen.api.v1.resources import (
     BTCXpubResource,
     CompoundBalancesResource,
     CompoundHistoryResource,
+    CounterpartiesResource,
     CurrentAssetsPriceResource,
+    DatabaseBackupsResource,
+    DatabaseInfoResource,
     DataImportResource,
+    DBSnapshotDeletingResource,
+    DBSnapshotDownloadingResource,
+    DBSnapshotExportingResource,
+    DBSnapshotImportingResource,
     DefiBalancesResource,
     ERC20TokenInfo,
     ERC20TokenInfoAVAX,
+    Eth2DailyStatsResource,
     Eth2StakeDepositsResource,
     Eth2StakeDetailsResource,
+    Eth2ValidatorsResource,
     EthereumAirdropsResource,
     EthereumAssetsResource,
     EthereumModuleDataResource,
@@ -57,9 +70,9 @@ from rotkehlchen.api.v1.resources import (
     ExchangesDataResource,
     ExchangesResource,
     ExternalServicesResource,
-    GitcoinEventsResource,
-    GitcoinReportResource,
     HistoricalAssetsPriceResource,
+    HistoryActionableItemsResource,
+    HistoryBaseEntryResource,
     HistoryDownloadingResource,
     HistoryExportingResource,
     HistoryProcessingResource,
@@ -68,7 +81,6 @@ from rotkehlchen.api.v1.resources import (
     IgnoredAssetsResource,
     InfoResource,
     LedgerActionsResource,
-    LimitsCounterResetResource,
     LiquityStakingHistoryResource,
     LiquityStakingResource,
     LiquityTrovesHistoryResource,
@@ -90,7 +102,9 @@ from rotkehlchen.api.v1.resources import (
     PickleDillResource,
     PingResource,
     QueriedAddressesResource,
+    ReverseEnsResource,
     SettingsResource,
+    StakingResource,
     StatisticsAssetBalanceResource,
     StatisticsNetvalueResource,
     StatisticsRendererResource,
@@ -103,6 +117,7 @@ from rotkehlchen.api.v1.resources import (
     UniswapBalancesResource,
     UniswapEventsHistoryResource,
     UniswapTradesHistoryResource,
+    UserAssetsResource,
     UserPasswordChangeResource,
     UserPremiumKeyResource,
     UserPremiumSyncResource,
@@ -120,8 +135,8 @@ from rotkehlchen.logging import RotkehlchenLogsAdapter
 
 URLS = List[
     Union[
-        Tuple[str, Resource],
-        Tuple[str, Resource, str],
+        Tuple[str, Type[MethodView]],
+        Tuple[str, Type[MethodView], str],
     ]
 ]
 
@@ -174,6 +189,19 @@ URLS_V1: URLS = [
     ('/history/status', HistoryStatusResource),
     ('/history/export/', HistoryExportingResource),
     ('/history/download/', HistoryDownloadingResource),
+    ('/history/events', HistoryBaseEntryResource),
+    ('/history/actionable_items', HistoryActionableItemsResource),
+    ('/reports/', AccountingReportsResource),
+    (
+        '/reports/<int:report_id>',
+        AccountingReportsResource,
+        'per_report_resource',
+    ),
+    (
+        '/reports/<int:report_id>/data',
+        AccountingReportDataResource,
+        'per_report_data_resource',
+    ),
     ('/queried_addresses', QueriedAddressesResource),
     ('/blockchains/ETH/transactions', EthereumTransactionsResource),
     (
@@ -181,13 +209,16 @@ URLS_V1: URLS = [
         EthereumTransactionsResource,
         'per_address_ethereum_transactions_resource',
     ),
+    ('/blockchains/ETH2/validators', Eth2ValidatorsResource),
     ('/blockchains/ETH2/stake/deposits', Eth2StakeDepositsResource),
     ('/blockchains/ETH2/stake/details', Eth2StakeDetailsResource),
+    ('/blockchains/ETH2/stake/dailystats', Eth2DailyStatsResource),
     ('/blockchains/ETH/defi', DefiBalancesResource),
     ('/blockchains/ETH/airdrops', EthereumAirdropsResource),
     ('/blockchains/ETH/erc20details/', ERC20TokenInfo),
     ('/blockchains/ETH/modules/<string:module_name>/data', NamedEthereumModuleDataResource),
     ('/blockchains/ETH/modules/data', EthereumModuleDataResource),
+    ('/blockchains/ETH/modules/data/counterparties', CounterpartiesResource),
     ('/blockchains/ETH/modules/', EthereumModuleResource),
     ('/blockchains/ETH/modules/makerdao/dsrbalance', MakerdaoDSRBalanceResource),
     ('/blockchains/ETH/modules/makerdao/dsrhistory', MakerdaoDSRHistoryResource),
@@ -236,15 +267,22 @@ URLS_V1: URLS = [
     ('/assets/prices/historical', HistoricalAssetsPriceResource),
     ('/assets/ignored', IgnoredAssetsResource),
     ('/assets/updates', AssetUpdatesResource),
+    ('/assets/user', UserAssetsResource),
     ('/actions/ignored', IgnoredActionsResource),
     ('/info', InfoResource),
     ('/ping', PingResource),
     ('/import', DataImportResource),
-    ('/gitcoin/events', GitcoinEventsResource),
-    ('/gitcoin/report', GitcoinReportResource),
     ('/nfts', NFTSResource),
     ('/nfts/balances', NFTSBalanceResource),
-    ('/limits/reset/<string:location>', LimitsCounterResetResource),
+    ('/database/info', DatabaseInfoResource),
+    ('/database/backups', DatabaseBackupsResource),
+    ('/locations/associated', AssociatedLocations),
+    ('/staking/kraken', StakingResource),
+    ('/snapshot/download', DBSnapshotDownloadingResource),
+    ('/snapshot/export', DBSnapshotExportingResource),
+    ('/snapshot/import', DBSnapshotImportingResource),
+    ('/snapshot/delete', DBSnapshotDeletingResource),
+    ('/ens/reverse', ReverseEnsResource),
 ]
 
 logger = logging.getLogger(__name__)
@@ -252,8 +290,8 @@ log = RotkehlchenLogsAdapter(logger)
 
 
 def setup_urls(
-        flask_api_context: Api,
         rest_api: RestAPI,
+        blueprint: Blueprint,
         urls: URLS,
 ) -> None:
     for url_tuple in urls:
@@ -264,11 +302,9 @@ def setup_urls(
             route, resource_cls, endpoint = url_tuple  # type: ignore
         else:
             raise ValueError(f"Invalid URL format: {url_tuple!r}")
-        flask_api_context.add_resource(
-            resource_cls,
+        blueprint.add_url_rule(
             route,
-            resource_class_kwargs={"rest_api_object": rest_api},
-            endpoint=endpoint,
+            view_func=resource_cls.as_view(endpoint, rest_api_object=rest_api),
         )
 
 
@@ -301,7 +337,9 @@ def handle_request_parsing_error(
     elif isinstance(err.messages, list):
         msg = ','.join(err.messages)
 
-    abort(HTTPStatus.BAD_REQUEST, result=None, message=msg)
+    err_response = jsonify(result=None, message=msg)
+    err_response.status_code = HTTPStatus.BAD_REQUEST
+    abort(err_response)
 
 
 class APIServer():
@@ -317,10 +355,9 @@ class APIServer():
         flask_app = Flask(__name__)
         if cors_domain_list:
             CORS(flask_app, origins=cors_domain_list)
-        blueprint = create_blueprint()
-        flask_api_context = Api(blueprint, prefix=self._api_prefix)
+        blueprint = create_blueprint(self._api_prefix)
         setup_urls(
-            flask_api_context=flask_api_context,
+            blueprint=blueprint,
             rest_api=rest_api,
             urls=URLS_V1,
         )
@@ -332,10 +369,9 @@ class APIServer():
 
         self.wsgiserver: Optional[WSGIServer] = None
         self.flask_app.register_blueprint(self.blueprint)
-        self.ws_server: Optional[WebSocketServer] = None
 
-        self.flask_app.errorhandler(HTTPStatus.NOT_FOUND)(endpoint_not_found)  # type: ignore
-        self.flask_app.register_error_handler(Exception, self.unhandled_exception)  # type: ignore
+        self.flask_app.errorhandler(HTTPStatus.NOT_FOUND)(endpoint_not_found)
+        self.flask_app.register_error_handler(Exception, self.unhandled_exception)
 
     @staticmethod
     def unhandled_exception(exception: Exception) -> Response:
@@ -355,40 +391,29 @@ class APIServer():
             self,
             host: str = '127.0.0.1',
             rest_port: int = 5042,
-            websockets_port: int = 5043,
     ) -> None:
         """This is used to start the API server in production"""
         wsgi_logger = logging.getLogger(__name__ + '.pywsgi')
         self.wsgiserver = WSGIServer(
             listener=(host, rest_port),
-            application=self.flask_app,
+            application=WebsocketResource([
+                ('^/ws', RotkiWSApp),
+                ('^/', self.flask_app),
+            ]),
             log=wsgi_logger,
+            handler_class=WebSocketHandler,
+            environ={'rotki_notifier': self.rotki_notifier},
             error_log=wsgi_logger,
         )
         msg = f'rotki REST API server is running at: {host}:{rest_port}'
         print(msg)
         log.info(msg)
         self.wsgiserver.start()
-        self.ws_server = WebSocketServer(
-            listener=(host, websockets_port),
-            application=WebsocketResource([
-                ('^/', RotkiWSApp),
-            ]),
-            debug=False,
-            environ={'rotki_notifier': self.rotki_notifier},
-        )
-        msg = f'rotki Websockets API server is running at: {host}:{websockets_port}'
-        print(msg)
-        log.info(msg)
-        self.ws_server.start()
 
     def stop(self, timeout: int = 5) -> None:
         """Stops the API server. If handlers are running after timeout they are killed"""
         if self.wsgiserver is not None:
             self.wsgiserver.stop(timeout)
-            self.wsgiserver = None
-        if self.ws_server is not None:
-            self.ws_server.stop(timeout)
             self.wsgiserver = None
 
         self.rest_api.stop()

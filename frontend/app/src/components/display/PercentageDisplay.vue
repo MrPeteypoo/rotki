@@ -7,8 +7,12 @@
   >
     <v-col
       :cols="justify === 'end' ? null : 'auto'"
-      :style="privacyStyle"
-      :class="justify === 'end' ? 'text-end' : 'text-start'"
+      class="percentage-display__amount"
+      :class="{
+        'blur-content': !shouldShowPercentage,
+        'text-end': justify === 'end',
+        'text-start': justify !== 'start'
+      }"
     >
       {{ displayValue }}
     </v-col>
@@ -25,65 +29,84 @@
 </template>
 
 <script lang="ts">
-import { Component, Mixins, Prop } from 'vue-property-decorator';
-import PrivacyMixin from '@/mixins/privacy-mixin';
-import ScrambleMixin from '@/mixins/scramble-mixin';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import { setupDisplayData } from '@/composables/session';
 
-@Component({})
-export default class PercentageDisplay extends Mixins(
-  ScrambleMixin,
-  PrivacyMixin
-) {
-  @Prop({
-    required: true,
-    validator: (value: any) => typeof value === 'string' || value === null
-  })
-  value!: string | null;
-  @Prop({
-    required: false,
-    type: String,
-    default: 'end',
-    validator: (value: any) => {
-      return ['end', 'start'].includes(value);
+export default defineComponent({
+  name: 'PercentageDisplay',
+  props: {
+    value: {
+      required: false,
+      type: String,
+      default: null,
+      validator: (value: any) => typeof value === 'string' || value === null
+    },
+    justify: {
+      required: false,
+      type: String as PropType<'end' | 'start'>,
+      default: 'end',
+      validator: (value: any) => {
+        return ['end', 'start'].includes(value);
+      }
+    },
+    assetPadding: {
+      required: false,
+      type: Number,
+      default: 0,
+      validator: (chars: number) => chars >= 0 && chars <= 5
     }
-  })
-  justify!: 'end' | 'start';
-  @Prop({
-    required: false,
-    type: Number,
-    default: 0,
-    validator: chars => chars >= 0 && chars <= 5
-  })
-  assetPadding!: number;
+  },
+  setup(props) {
+    const { assetPadding, value } = toRefs(props);
+    const { shouldShowPercentage, scrambleData } = setupDisplayData();
 
-  get displayValue(): string {
-    if (this.scrambleData) {
-      return (Math.random() * 100 + 1).toFixed(2);
-    }
+    const displayValue = computed<string>(() => {
+      if (get(scrambleData)) {
+        return (Math.random() * 100 + 1).toFixed(2);
+      }
 
-    if (!this.value) {
-      return '-';
-    }
+      if (!get(value)) {
+        return '-';
+      }
 
-    return this.value.replace('%', '');
-  }
+      return get(value).replace('%', '');
+    });
 
-  get assetStyle(): { [key: string]: string } {
-    if (!this.assetPadding) {
+    const assetStyle = computed<{ [key: string]: string | undefined }>(() => {
+      if (!get(assetPadding)) {
+        return {
+          'max-width': '0ch'
+        };
+      }
       return {
-        'max-width': '0ch'
+        width: `${get(assetPadding) + 1}ch`,
+        'text-align': 'start'
       };
-    }
+    });
+
     return {
-      width: `${this.assetPadding + 1}ch`,
-      'text-align': 'start'
+      shouldShowPercentage,
+      displayValue,
+      assetStyle
     };
   }
-}
+});
 </script>
 
 <style scoped lang="scss">
 .percentage-display {
+  &__amount {
+    &.blur-content {
+      filter: blur(0.75em);
+    }
+  }
+
   &__symbol {
     font-size: 0.8em;
   }

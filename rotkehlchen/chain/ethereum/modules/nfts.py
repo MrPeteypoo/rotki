@@ -2,24 +2,25 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, DefaultDict, Dict, List, NamedTuple, Optional, Tuple
 
-from gevent.lock import Semaphore
 from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import InputError, RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import InputError, RemoteError
 from rotkehlchen.externalapis.opensea import NFT, Opensea
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Price
+from rotkehlchen.types import ChecksumEthAddress, Price
 from rotkehlchen.user_messages import MessagesAggregator
+from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.mixins.cacheable import CacheableMixIn, cache_response_timewise
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.premium.premium import Premium
@@ -43,7 +44,7 @@ class NFTResult(NamedTuple):
         }
 
 
-class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init]
+class Nfts(EthereumModule, CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init]
 
     def __init__(
             self,
@@ -58,7 +59,6 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
         self.ethereum = ethereum_manager
         self.premium = premium
         self.opensea = Opensea(database=database, msg_aggregator=msg_aggregator)
-        self._query_lock = Semaphore()
 
     @protect_with_lock()
     @cache_response_timewise()
@@ -68,6 +68,7 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
             # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
             **kwargs: Any,
     ) -> Tuple[Dict[ChecksumEthAddress, List[NFT]], int]:
+        """May raise RemoteError"""
         result = {}
         total_nfts_num = 0
         for address in addresses:
@@ -79,11 +80,13 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
                         remaining_size = FREE_NFT_LIMIT - total_nfts_num
                     else:
                         remaining_size = nfts_num
+
                     if remaining_size != 0:
                         result[address] = nfts[:remaining_size]
                         total_nfts_num += remaining_size
+                        continue
 
-                    break  # we hit the nft limit
+                    break  # else we hit the nft limit so break
 
                 result[address] = nfts
                 total_nfts_num += nfts_num
@@ -118,6 +121,13 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
             return_zero_values: bool,
             ignore_cache: bool,
     ) -> Dict[ChecksumEthAddress, List[Dict[str, Any]]]:
+        """Gets all NFT balances. The actual opensea querying part is protected by a lock.
+
+        If `return_zero_values` is False then zero value NFTs are not returned in the result.
+
+        May raise:
+        - RemoteError
+        """
         result: DefaultDict[ChecksumEthAddress, List[Dict[str, Any]]] = defaultdict(list)
         nft_results, _ = self._get_all_nft_data(addresses, ignore_cache=ignore_cache)
         cached_db_result = self.get_nfts_with_price()
@@ -134,6 +144,7 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
                         'price_asset': cached_price_data['price_asset'],
                         'price_in_asset': FVal(cached_price_data['price_in_asset']),
                         'usd_price': FVal(cached_price_data['usd_price']),
+                        'image_url': nft.image_url,
                     })
                 elif nft.price_usd != ZERO:
                     result[address].append({
@@ -143,6 +154,7 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
                         'price_asset': 'ETH',
                         'price_in_asset': nft.price_eth,
                         'usd_price': nft.price_usd,
+                        'image_url': nft.image_url,
                     })
                     db_data.append((nft.token_identifier, nft.name, str(nft.price_eth), 'ETH', 0, address))  # noqa: E501
                 else:
@@ -154,6 +166,7 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
                             'price_asset': 'USD',
                             'price_in_asset': ZERO,
                             'usd_price': ZERO,
+                            'image_url': nft.image_url,
                         })
                     # Always write detected nfts in the DB to have name and address associated
                     db_data.append((nft.token_identifier, nft.name, None, None, 0, address))  # noqa: E501
@@ -264,9 +277,6 @@ class Nfts(CacheableMixIn, LockableQueryMixIn):  # lgtm [py/missing-call-to-init
         return True
 
     # -- Methods following the EthereumModule interface -- #
-    def on_startup(self) -> None:
-        pass
-
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
         pass
 

@@ -4,18 +4,19 @@ import json
 import logging
 import time
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.utils import symbol_to_asset_or_token
 from rotkehlchen.constants.assets import A_EUR
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
     AssetMovement,
     Location,
@@ -30,9 +31,8 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount,
     deserialize_fee,
     deserialize_timestamp_from_date,
-    deserialize_trade_type,
 )
-from rotkehlchen.typing import ApiKey, ApiSecret, Timestamp
+from rotkehlchen.types import ApiKey, ApiSecret, Timestamp, TradeType
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import iso8601ts_to_timestamp
 
@@ -100,7 +100,7 @@ def trade_from_bitcoinde(raw_trade: Dict) -> Trade:
             'bitcoinde',
         )
 
-    trade_type = deserialize_trade_type(raw_trade['type'])
+    trade_type = TradeType.deserialize(raw_trade['type'])
     tx_amount = deserialize_asset_amount(raw_trade['amount_currency_to_trade'])
     native_amount = deserialize_asset_amount(raw_trade['volume_currency_to_pay'])
     tx_asset, native_asset = bitcoinde_pair_to_world(raw_trade['trading_pair'])
@@ -296,7 +296,7 @@ class Bitcoinde(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
 
         page = 1
         resp_trades = []
@@ -352,7 +352,7 @@ class Bitcoinde(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 )
                 continue
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def query_online_deposits_withdrawals(
             self,  # pylint: disable=no-self-use

@@ -1,17 +1,26 @@
 <template>
   <v-card v-bind="$attrs">
-    <div class="mx-4 pt-2">
+    <div
+      :class="{
+        'mx-4 pt-2': !noPadding
+      }"
+    >
       <v-autocomplete
         :value="value"
+        :label="$t('liquidity_pool_selector.label')"
         :items="pools"
+        :dense="dense"
+        :outlined="outlined"
+        :filter="filter"
+        :menu-props="{ closeOnContentClick: true }"
         multiple
         clearable
         deletable-chips
-        :label="$t('liquidity_pool_selector.label')"
-        :filter="filter"
+        single-line
+        hide-details
+        hide-selected
         item-value="address"
         chips
-        :menu-props="{ closeOnContentClick: true }"
         @input="input"
       >
         <template #selection="data">
@@ -41,42 +50,48 @@
         </template>
       </v-autocomplete>
     </div>
-    <v-card-text>
-      <slot />
-    </v-card-text>
   </v-card>
 </template>
 
 <script lang="ts">
 import { Pool } from '@rotki/common/lib/defi/balancer';
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent, PropType, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 
-@Component({
-  name: 'LiquidityPoolSelector'
-})
-export default class LiquidityPoolSelector extends Vue {
-  @Prop({ required: true })
-  pools!: Pool[];
-  @Prop({ required: true, type: Array })
-  value!: string[];
-  @Emit()
-  input(_value: string[]) {}
+export default defineComponent({
+  name: 'LiquidityPoolSelector',
+  props: {
+    pools: { required: true, type: Array as PropType<Pool[]> },
+    value: { required: true, type: Array as PropType<string[]> },
+    outlined: { required: false, type: Boolean, default: false },
+    dense: { required: false, type: Boolean, default: false },
+    noPadding: { required: false, type: Boolean, default: false }
+  },
+  emits: ['input'],
+  setup(props, { emit }) {
+    const { value } = toRefs(props);
+    const input = (_value: string[]) => emit('input', _value);
 
-  filter(item: Pool, queryText: string) {
-    const searchString = queryText.toLocaleLowerCase();
-    const asset1 = item.name.toLocaleLowerCase();
-    const asset2 = item.name.toLocaleLowerCase();
-    const name = `${asset1}/${asset2}`;
-    return name.indexOf(searchString) > -1;
+    const filter = (item: Pool, queryText: string) => {
+      const searchString = queryText.toLocaleLowerCase();
+      const asset1 = item.name.toLocaleLowerCase();
+      const asset2 = item.name.toLocaleLowerCase();
+      const name = `${asset1}/${asset2}`;
+      return name.indexOf(searchString) > -1;
+    };
+
+    const remove = (asset: Pool) => {
+      const addresses = [...get(value)];
+      const index = addresses.findIndex(address => address === asset.address);
+      addresses.splice(index, 1);
+      input(addresses);
+    };
+
+    return {
+      filter,
+      input,
+      remove
+    };
   }
-
-  remove(asset: Pool) {
-    const addresses = [...this.value];
-    const index = addresses.findIndex(address => address === asset.address);
-    addresses.splice(index, 1);
-    this.input(addresses);
-  }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

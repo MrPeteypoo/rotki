@@ -2,7 +2,7 @@
   <v-autocomplete
     :value="value"
     :disabled="disabled"
-    :items="tags"
+    :items="availableTagsArray"
     class="tag-filter"
     small-chips
     :label="$t('tag_filter.label')"
@@ -10,17 +10,20 @@
     item-text="name"
     :menu-props="{ closeOnContentClick: true }"
     outlined
+    dense
     item-value="name"
     multiple
+    :hide-details="hideDetails"
     @input="input"
   >
     <template #selection="{ item, selected, select }">
       <v-chip
         label
+        small
         class="font-weight-medium"
         :input-value="selected"
-        :color="`#${item.background_color}`"
-        :text-color="`#${item.foreground_color}`"
+        :color="`#${item.backgroundColor}`"
+        :text-color="`#${item.foregroundColor}`"
         close
         @click:close="remove(item.name)"
         @click="select"
@@ -30,7 +33,7 @@
     </template>
     <template #item="{ item }">
       <tag-icon :tag="item" />
-      <span class="tag-input__tag__description">
+      <span class="tag-input__tag__description ml-4">
         {{ item.description }}
       </span>
     </template>
@@ -46,7 +49,7 @@
 import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
 import { createNamespacedHelpers } from 'vuex';
 import TagIcon from '@/components/tags/TagIcon.vue';
-import { Tag } from '@/typing/types';
+import { Tag } from '@/types/user';
 
 const { mapGetters } = createNamespacedHelpers('session');
 
@@ -55,7 +58,7 @@ const { mapGetters } = createNamespacedHelpers('session');
     TagIcon
   },
   computed: {
-    ...mapGetters(['tags'])
+    ...mapGetters(['availableTagsArray'])
   }
 })
 export default class TagFilter extends Vue {
@@ -63,7 +66,9 @@ export default class TagFilter extends Vue {
   value!: string[];
   @Prop({ required: false, default: false, type: Boolean })
   disabled!: boolean;
-  tags!: Tag[];
+  @Prop({ required: false, default: false, type: Boolean })
+  hideDetails!: boolean;
+  availableTagsArray!: Tag[];
 
   filter(tag: Tag, queryText: string): boolean {
     const { name, description } = tag;

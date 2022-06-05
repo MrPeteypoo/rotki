@@ -12,19 +12,15 @@ import gevent
 import requests
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_poloniex
 from rotkehlchen.constants.assets import A_LEND
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE, QUERY_RETRY_TIMES
-from rotkehlchen.errors import (
-    DeserializationError,
-    RemoteError,
-    UnknownAsset,
-    UnprocessableTradePair,
-    UnsupportedAsset,
-)
+from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
     AssetMovement,
     Loan,
@@ -43,10 +39,9 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_fee,
     deserialize_timestamp,
     deserialize_timestamp_from_poloniex_date,
-    deserialize_trade_type,
     get_pair_position_str,
 )
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetMovementCategory,
@@ -79,7 +74,7 @@ def trade_from_poloniex(poloniex_trade: Dict[str, Any], pair: TradePair) -> Trad
     """
 
     try:
-        trade_type = deserialize_trade_type(poloniex_trade['type'])
+        trade_type = TradeType.deserialize(poloniex_trade['type'])
         amount = deserialize_asset_amount(poloniex_trade['amount'])
         rate = deserialize_price(poloniex_trade['rate'])
         perc_fee = deserialize_fee(poloniex_trade['fee'])
@@ -568,7 +563,7 @@ class Poloniex(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         raw_data = self.return_trade_history(
             start=start_ts,
             end=end_ts,
@@ -622,7 +617,7 @@ class Poloniex(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                     )
                     continue
 
-        return our_trades
+        return our_trades, (start_ts, end_ts)
 
     def parse_loan_csv(self) -> List:
         """Parses (if existing) the lendingHistory.csv and returns the history in a list

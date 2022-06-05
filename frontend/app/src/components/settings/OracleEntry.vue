@@ -1,6 +1,6 @@
 <template>
   <v-row align="center">
-    <v-col cols="4">
+    <v-col cols="auto">
       <v-img
         :width="size"
         contain
@@ -9,38 +9,60 @@
         :src="icon"
       />
     </v-col>
-    <v-col>
-      {{ capitalize(identifier) }}
+    <v-col v-if="identifier == 'uniswapv3'" cols="auto">
+      {{ $t('oracles.uniswap_v3') }}
+    </v-col>
+    <v-col v-else-if="identifier == 'uniswapv2'" cols="auto">
+      {{ $t('oracles.uniswap_v2') }}
+    </v-col>
+    <v-col v-else cols="auto">
+      {{ toSentenceCase(identifier) }}
     </v-col>
   </v-row>
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import { computed, defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import { toSentenceCase } from '@/utils/text';
 
-@Component({})
-export default class OracleEntry extends Vue {
-  @Prop({ required: true, type: String })
-  identifier!: string;
+export default defineComponent({
+  name: 'OracleEntry',
+  props: {
+    identifier: { required: true, type: String }
+  },
+  setup(props) {
+    const { identifier } = toRefs(props);
 
-  size = '48px';
+    const size = computed<string>(() => {
+      if (get(identifier) === 'manual') {
+        return '40px';
+      }
+      return '48px';
+    });
 
-  get icon(): string {
-    if (this.identifier === 'cryptocompare') {
-      return require('@/assets/images/oracles/cryptocompare.png');
-    } else if (this.identifier === 'coingecko') {
-      return require('@/assets/images/oracles/coingecko.svg');
-    } else if (this.identifier === 'manual') {
-      this.size = '40px';
-      return require('@/assets/images/oracles/book.svg');
-    }
-    return '';
+    const icon = computed<string>(() => {
+      if (get(identifier) === 'cryptocompare') {
+        return '/assets/images/oracles/cryptocompare.png';
+      } else if (get(identifier) === 'coingecko') {
+        return '/assets/images/oracles/coingecko.svg';
+      } else if (get(identifier) === 'manual') {
+        return '/assets/images/oracles/book.svg';
+      } else if (identifier.value === 'uniswapv2') {
+        return '/assets/images/defi/uniswap.svg';
+      } else if (identifier.value === 'uniswapv3') {
+        return '/assets/images/defi/uniswap.svg';
+      } else if (identifier.value === 'saddle') {
+        return '/assets/images/airdrops/saddle-finance.svg';
+      }
+      return '';
+    });
+
+    return {
+      size,
+      icon,
+      toSentenceCase
+    };
   }
-
-  capitalize(text: string) {
-    return text[0].toUpperCase() + text.slice(1);
-  }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

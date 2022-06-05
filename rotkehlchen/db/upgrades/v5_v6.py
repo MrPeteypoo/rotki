@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rotkehlchen.crypto import sha3
-from rotkehlchen.errors import DBUpgradeError
+from rotkehlchen.errors.misc import DBUpgradeError
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
@@ -198,7 +198,7 @@ def _upgrade_trades_table(db: 'DBHandler') -> None:
         pair = result[2]
         old_trade_type = result[3]
         # hand deserialize trade type from DB enum since this code is going to stay
-        # here even if deserialize_trade_type_from_db() changes
+        # here even if the deserialization function changes
         if old_trade_type == 'buy':
             trade_type = 'A'
         elif old_trade_type == 'sell':

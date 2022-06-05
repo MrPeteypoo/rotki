@@ -5,14 +5,13 @@ import logging  # lgtm [py/import-and-import-from]  # https://github.com/github/
 import time
 from collections import OrderedDict
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import (
     A_AAVE,
@@ -22,8 +21,8 @@ from rotkehlchen.constants.assets import (
     A_BCH,
     A_BTC,
     A_COMP,
-    A_DOGE,
     A_DAI,
+    A_DOGE,
     A_DOT,
     A_EOS,
     A_ETC,
@@ -31,13 +30,16 @@ from rotkehlchen.constants.assets import (
     A_GRT,
     A_LINK,
     A_LTC,
+    A_MANA,
     A_MATIC,
     A_MKR,
     A_NZD,
     A_OMG,
     A_PMGT,
+    A_SAND,
     A_SGD,
     A_SNX,
+    A_SOL,
     A_UNI,
     A_USD,
     A_USDC,
@@ -49,7 +51,9 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE, QUERY_RETRY_TIMES
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import (
     AssetMovement,
     Location,
@@ -66,7 +70,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_movement_category,
     deserialize_timestamp_from_date,
 )
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
@@ -117,6 +121,9 @@ IR_TO_WORLD = {
     'Sgd': A_SGD,
     'Doge': A_DOGE,
     'Matic': A_MATIC,
+    'Mana': A_MANA,
+    'Sand': A_SAND,
+    'Sol': A_SOL,
 }
 
 
@@ -417,7 +424,7 @@ class Independentreserve(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         """May raise RemoteError"""
         try:
             resp_trades = self._gather_paginated_data(path='GetClosedFilledOrders')
@@ -426,7 +433,7 @@ class Independentreserve(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 f'Error processing independentreserve trades response. '
                 f'Missing key: {str(e)}.',
             )
-            return []
+            return [], (start_ts, end_ts)
 
         trades = []
         for raw_trade in resp_trades:
@@ -456,7 +463,7 @@ class Independentreserve(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 )
                 continue
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def query_online_deposits_withdrawals(
             self,  # pylint: disable=no-self-use

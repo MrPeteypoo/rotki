@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 import pytest
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.constants.assets import A_AUD, A_ETC, A_ETH
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.exchanges.data_structures import Location, Trade, TradeType
 from rotkehlchen.exchanges.independentreserve import (
     IR_TO_WORLD,

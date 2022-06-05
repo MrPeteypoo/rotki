@@ -12,8 +12,8 @@
 </template>
 
 <script lang="ts">
-import { BigNumber } from '@rotki/common/';
-import { defineComponent, PropType } from '@vue/composition-api';
+import { BigNumber } from '@rotki/common';
+import { defineComponent } from '@vue/composition-api';
 import LoanRow from '@/components/defi/loan/LoanRow.vue';
 import StatCard from '@/components/display/StatCard.vue';
 
@@ -23,7 +23,7 @@ export default defineComponent({
   props: {
     price: {
       required: true,
-      type: Object as PropType<BigNumber>
+      type: BigNumber
     },
     asset: {
       required: true,

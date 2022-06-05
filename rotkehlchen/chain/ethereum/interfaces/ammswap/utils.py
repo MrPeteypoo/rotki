@@ -1,15 +1,15 @@
 import logging
 from typing import TYPE_CHECKING, NamedTuple, Set, Tuple
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.assets.utils import get_or_create_ethereum_token
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.types import ChecksumEthAddress
 
-from .typing import LiquidityPool, LiquidityPoolAsset
+from .types import LiquidityPool, LiquidityPoolAsset
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler

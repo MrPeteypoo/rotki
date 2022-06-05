@@ -51,7 +51,7 @@
           <tag-icon :tag="item" />
         </template>
         <template #item.action="{ item }">
-          <v-row no-gutters>
+          <v-row v-if="!item.readOnly" no-gutters>
             <v-col>
               <v-icon small class="mr-2" @click="editItem(item)">
                 mdi-pencil
@@ -78,105 +78,107 @@
 </template>
 
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent, ref } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import { DataTableHeader } from 'vuetify';
-import { mapGetters } from 'vuex';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import DataTable from '@/components/helper/DataTable.vue';
 import TagCreator from '@/components/tags/TagCreator.vue';
 import TagIcon from '@/components/tags/TagIcon.vue';
 import { defaultTag } from '@/components/tags/types';
-import { Tag } from '@/typing/types';
+import { setupTags } from '@/composables/session';
+import i18n from '@/i18n';
+import { Tag } from '@/types/user';
 
-@Component({
+const headers: DataTableHeader[] = [
+  {
+    text: i18n.t('tag_manager.headers.name').toString(),
+    value: 'name',
+    width: '200'
+  },
+  {
+    text: i18n.t('tag_manager.headers.description').toString(),
+    value: 'description'
+  },
+  {
+    text: i18n.t('tag_manager.headers.actions').toString(),
+    value: 'action',
+    sortable: false,
+    width: '80'
+  }
+];
+
+export default defineComponent({
+  name: 'TagManager',
   components: { DataTable, TagIcon, ConfirmDialog, TagCreator },
-  computed: {
-    ...mapGetters('session', ['tags'])
+  props: {
+    dialog: { required: false, type: Boolean, default: false }
+  },
+  emits: ['close'],
+  setup(_, { emit }) {
+    const { tags, addTag, editTag, deleteTag } = setupTags();
+
+    const tag = ref<Tag>(defaultTag());
+    const editMode = ref<boolean>(false);
+    const tagToDelete = ref<string>('');
+    const search = ref<string>('');
+
+    const close = () => emit('close');
+
+    const onChange = (newTag: Tag) => {
+      set(tag, newTag);
+    };
+
+    const save = async (newTag: Tag) => {
+      set(tag, defaultTag());
+      if (get(editMode)) {
+        set(editMode, false);
+        await editTag(newTag);
+      } else {
+        await addTag(newTag);
+      }
+    };
+
+    const cancel = () => {
+      set(tag, defaultTag());
+      set(editMode, false);
+    };
+
+    const editItem = (newTag: Tag) => {
+      set(tag, newTag);
+      set(editMode, true);
+    };
+
+    const deleteItem = (selectedTag: Tag) => {
+      set(tagToDelete, selectedTag.name);
+    };
+
+    const confirmDelete = async () => {
+      const tagName = get(tagToDelete);
+      set(tagToDelete, '');
+      await deleteTag(tagName);
+    };
+
+    return {
+      headers,
+      close,
+      tags,
+      tag,
+      editMode,
+      onChange,
+      cancel,
+      save,
+      search,
+      editItem,
+      deleteItem,
+      tagToDelete,
+      confirmDelete
+    };
   }
-})
-export default class TagManager extends Vue {
-  tags!: Tag[];
-  tag: Tag = defaultTag();
-  editMode: boolean = false;
-  tagToDelete: string = '';
-
-  search: string = '';
-
-  @Prop({ required: false, default: false, type: Boolean })
-  dialog!: boolean;
-
-  @Emit()
-  close() {}
-
-  readonly headers: DataTableHeader[] = [
-    {
-      text: this.$t('tag_manager.headers.name').toString(),
-      value: 'name',
-      width: '200'
-    },
-    {
-      text: this.$t('tag_manager.headers.description').toString(),
-      value: 'description'
-    },
-    {
-      text: this.$t('tag_manager.headers.actions').toString(),
-      value: 'action',
-      sortable: false,
-      width: '80'
-    }
-  ];
-
-  onChange(tag: Tag) {
-    this.tag = tag;
-  }
-
-  async save(tag: Tag) {
-    this.tag = defaultTag();
-    if (this.editMode) {
-      this.editMode = false;
-      await this.$store.dispatch('session/editTag', tag);
-    } else {
-      await this.$store.dispatch('session/addTag', tag);
-    }
-  }
-
-  cancel() {
-    this.tag = defaultTag();
-    this.editMode = false;
-  }
-
-  editItem(tag: Tag) {
-    this.tag = tag;
-    this.editMode = true;
-  }
-
-  deleteItem(tag: Tag) {
-    this.tagToDelete = tag.name;
-  }
-
-  async confirmDelete() {
-    const tagName = this.tagToDelete;
-    this.tagToDelete = '';
-    await this.$store.dispatch('session/deleteTag', tagName);
-  }
-}
+});
 </script>
 
 <style scoped lang="scss">
-@import '~@/scss/scroll';
-
-::v-deep {
-  .v-dialog {
-    &__content {
-      .v-dialog {
-        &--active {
-          @extend .themed-scrollbar;
-        }
-      }
-    }
-  }
-}
-
 .tag-manager {
   overflow: auto;
   height: 100%;

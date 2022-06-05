@@ -1,19 +1,19 @@
 from abc import ABCMeta, abstractmethod
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Callable, List, Optional
 
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.types import ChecksumEthAddress
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
 
 
 class EthereumModule(metaclass=ABCMeta):
     """Interface to be followed by all Ethereum modules"""
 
-    @abstractmethod
-    def on_startup(self) -> None:
-        """Actions to run on startup"""
-        ...
+    # Optional callback to run on a module's startup
+    # Is optional as opposed to a no-op  since at initialization we
+    # start a greenlet to run it and there is no reason to bring up no-op greenlets
+    on_startup: Optional[Callable[['EthereumModule'], None]] = None
 
     @abstractmethod
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:

@@ -1,24 +1,27 @@
 import path from 'path';
-import { app, BrowserWindow, Menu, protocol } from 'electron';
+import { app, BrowserWindow, Menu, MenuItem, protocol } from 'electron';
 import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer';
 import windowStateKeeper from 'electron-window-state';
-import { createProtocol } from 'vue-cli-plugin-electron-builder/lib';
 import { ipcSetup } from '@/electron-main/ipc-setup';
 import { getUserMenu } from '@/electron-main/menu';
 import { TrayManager } from '@/electron-main/tray-manager';
 import { Nullable } from '@/types';
+import createProtocol from './create-protocol';
 import PyHandler from './py-handler';
 import { assert } from './utils/assertions';
 
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
 let trayManager: Nullable<TrayManager> = null;
+let forceQuit: boolean = false;
 
 const onActivate = async () => {
   // On macOS it's common to re-create a window in the app when the
   // dock icon is clicked and there are no other windows open.
   if (win === null) {
     await createWindow();
+  } else {
+    win?.show();
   }
 };
 
@@ -45,6 +48,23 @@ const onReady = async () => {
   ipcSetup(pyHandler, getWindow, closeApp, trayManager, menuActions);
   await createWindow();
   trayManager.listen();
+
+  getWindow().webContents.on('context-menu', (event, props) => {
+    const menu = new Menu();
+    if (props.editFlags.canCut) {
+      menu.append(new MenuItem({ label: 'Cut', role: 'cut' }));
+    }
+
+    if (props.editFlags.canCopy) {
+      menu.append(new MenuItem({ label: 'Copy', role: 'copy' }));
+    }
+
+    if (props.editFlags.canPaste) {
+      menu.append(new MenuItem({ label: 'Paste', role: 'paste' }));
+    }
+
+    menu.popup({ window: getWindow() });
+  });
 };
 
 const lock = app.requestSingleInstanceLock();
@@ -64,12 +84,19 @@ if (!lock) {
   });
 
   // Quit when all windows are closed.
-  app.on('window-all-closed', () => app.quit());
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+      app.quit();
+    }
+  });
   app.on('activate', onActivate);
   app.on('ready', onReady);
   app.on('will-quit', async e => {
     e.preventDefault();
     await closeApp();
+  });
+  app.on('before-quit', () => {
+    forceQuit = true;
   });
 }
 
@@ -125,10 +152,10 @@ async function createWindow() {
     }
   });
 
-  if (process.env.WEBPACK_DEV_SERVER_URL) {
-    pyHandler.setCorsURL(process.env.WEBPACK_DEV_SERVER_URL);
+  if (import.meta.env.VITE_DEV_SERVER_URL) {
+    pyHandler.setCorsURL(import.meta.env.VITE_DEV_SERVER_URL as string);
     // Load the url of the dev server if in development mode
-    await win.loadURL(process.env.WEBPACK_DEV_SERVER_URL);
+    await win.loadURL(import.meta.env.VITE_DEV_SERVER_URL as string);
     if (!process.env.IS_TEST) win.webContents.openDevTools();
   } else {
     createProtocol('app');
@@ -143,8 +170,21 @@ async function createWindow() {
   // Register and deregister listeners to window events (resize, move, close) so that window state is saved
   mainWindowState.manage(win);
 
+  win.on('close', e => {
+    if (process.platform === 'darwin' && !forceQuit) {
+      e.preventDefault();
+      win?.hide();
+    } else {
+      closeApp();
+    }
+  });
+
   win.on('closed', async () => {
-    win = null;
+    if (process.platform !== 'darwin') {
+      win = null;
+    } else {
+      win?.hide();
+    }
   });
   return win;
 }

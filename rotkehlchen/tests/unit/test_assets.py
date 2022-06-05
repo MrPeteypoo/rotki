@@ -5,11 +5,13 @@ from eth_utils import is_checksum_address
 
 from rotkehlchen.assets.asset import Asset, EthereumToken
 from rotkehlchen.assets.resolver import AssetResolver
-from rotkehlchen.assets.typing import AssetType
+from rotkehlchen.assets.spam_assets import KNOWN_ETH_SPAM_TOKENS
+from rotkehlchen.assets.types import AssetType
 from rotkehlchen.assets.utils import get_or_create_ethereum_token, symbol_to_ethereum_token
 from rotkehlchen.constants.assets import A_DAI, A_USDT
 from rotkehlchen.constants.resolver import ethaddress_to_identifier
-from rotkehlchen.errors import InputError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.externalapis.coingecko import DELISTED_ASSETS, Coingecko
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 
@@ -152,6 +154,43 @@ def test_cryptocompare_asset_support(cryptocompare):
         ethaddress_to_identifier('0x5dD57Da40e6866C9FcC34F4b6DDC89F1BA740DfE'),  # noqa: E501 # Bright(BRIGHT) but another BRIGHT in CC
         ethaddress_to_identifier('0x40284109c3309A7C3439111bFD93BF5E0fBB706c'),  # noqa: E501 # Motiv protocol but another MOV in CC
         ethaddress_to_identifier('0xba5BDe662c17e2aDFF1075610382B9B691296350'),  # noqa: E501 # Super Rare but another RARE in CC
+        ethaddress_to_identifier('0x9D65fF81a3c488d585bBfb0Bfe3c7707c7917f54'),  # noqa: E501 # SSV token but another SSV in CC
+        ethaddress_to_identifier('0x7b35Ce522CB72e4077BaeB96Cb923A5529764a00'),  # noqa: E501 # Impermax but another IMX in CC
+        ethaddress_to_identifier('0x47481c1b44F2A1c0135c45AA402CE4F4dDE4D30e'),  # noqa: E501 # Meetple but another MPT in CC
+        'CATE',  # catecoin but another CATE in CC
+        'CHESS'  # tranchess but another CHESS in CC
+        'BNC',  # Bifrost but another BNC in CC
+        'BNX',  # BinaryX but anohter BNX in CC
+        'DAR',  # Mines of Dalarnia but a different DAR in CC
+        ethaddress_to_identifier('0xEf51c9377FeB29856E61625cAf9390bD0B67eA18'),  # noqa: E501 # Bionic but another BNC in CC
+        'CHESS',  # tranchess but another chess in CC
+        'BNC',  # bifrost but another BNC in CC
+        ethaddress_to_identifier('0x9e6C59321CEB205d5d3BC6c539c017aF6159B16c'),  # noqa: E501 # Mindcell but another MDC in CC
+        'TIME',  # Wonderland but another TIME in CC
+        'STARS',  # StarLaunch but another STARS in CC
+        ethaddress_to_identifier('0x60EF10EDfF6D600cD91caeCA04caED2a2e605Fe5'),  # noqa: E501 # Mochi inu but MOCHI SWAP in CC
+        ethaddress_to_identifier('0x3496B523e5C00a4b4150D6721320CdDb234c3079'),  # noqa: E501 # numbers protocol but another NUM in CC
+        ethaddress_to_identifier('0x8dB253a1943DdDf1AF9bcF8706ac9A0Ce939d922'),  # noqa: E501 # unbound protocol but another UNB in CC
+        'GODZ',  # gozilla but another GODZ in CC
+        'DFL',  # Defi land but another DFL in CC
+        'CDEX',  # Codex but another CDEX in CC
+        'MIMO',  # mimosa but another MIMO in CC
+        ethaddress_to_identifier('0x73d7c860998CA3c01Ce8c808F5577d94d545d1b4'),  # noqa: E501 # IXS token but IXS swap in CC
+        'TULIP',  # Solfarm but TULIP project in CC
+        'AIR',  # altair but another AIR in CC
+        ethaddress_to_identifier('0xfC1Cb4920dC1110fD61AfaB75Cf085C1f871b8C6'),  # noqa: E501 # edenloop but cc has electron
+        ethaddress_to_identifier('0x3392D8A60B77F8d3eAa4FB58F09d835bD31ADD29'),  # noqa: E501 # indiegg but cc has indicoin
+        'NBT',  # nanobyte but cc has nix bridge
+        'NHCT',  # Hurricane nft but cc has nano healthcare
+        'ZBC',  # zebec but cc has zilbercoin
+        'MINE',  # spacemine but cc has instamine
+        'SIN',  # sincity but cc has sinnoverse
+        'GST-2',  # green satoshi coin but cc has gstcoin
+        ethaddress_to_identifier('0xBa3335588D9403515223F109EdC4eB7269a9Ab5D'),  # noqa: E501 # gearbox but cc has metagear
+        ethaddress_to_identifier('0xA68Dd8cB83097765263AdAD881Af6eeD479c4a33'),  # noqa: E501 # fees.wtf but cc has WTF token
+        'AUSD',  # alpaca usd but cc has appeal dollar
+        'PLY',  # Aurigami but cc has playcoin
+        'MLS',  # Pikaster but cc has crop
     )
     for asset_data in GlobalDBHandler().get_all_asset_data(mapping=False):
         potential_support = (
@@ -346,6 +385,68 @@ def test_coingecko_identifiers_are_reachable():
         ethaddress_to_identifier('0x71D01dB8d6a2fBEa7f8d434599C237980C234e4C'),
         # We have reftoken (REF) and coingecko has Ref Finance
         ethaddress_to_identifier('0x89303500a7Abfb178B274FD89F2469C264951e1f'),
+        # We have Aidus (AID) and coingecko has aidcoin
+        ethaddress_to_identifier('0xD178b20c6007572bD1FD01D205cC20D32B4A6015'),
+        # We have depository network but coingecko has depo
+        ethaddress_to_identifier('0x89cbeAC5E8A13F0Ebb4C74fAdFC69bE81A501106'),
+        # Sinthetic ETH but coingecko has iEthereum
+        ethaddress_to_identifier('0xA9859874e1743A32409f75bB11549892138BBA1E'),
+        # blocklancer but coingecko has Linker
+        ethaddress_to_identifier('0x63e634330A20150DbB61B15648bC73855d6CCF07'),
+        # Kora network but coingecko Knekted
+        ethaddress_to_identifier('0xfF5c25D2F40B47C4a37f989DE933E26562Ef0Ac0'),
+        # gambit but coingecko has another gambit
+        ethaddress_to_identifier('0xF67451Dc8421F0e0afEB52faa8101034ed081Ed9'),
+        # publica but coingecko has another polkalab
+        ethaddress_to_identifier('0x55648De19836338549130B1af587F16beA46F66B'),
+        # Spin protocol but spinada in coingecko
+        ethaddress_to_identifier('0x4F22310C27eF39FEAA4A756027896DC382F0b5E2'),
+        # REBL but another REBL (rebel finance) in coingecko
+        ethaddress_to_identifier('0x5F53f7A8075614b699Baad0bC2c899f4bAd8FBBF'),
+        # Sp8de (SPX) but another SPX in coingecko
+        ethaddress_to_identifier('0x05aAaA829Afa407D83315cDED1d45EB16025910c'),
+        # marginless but another MRS in coingecko
+        ethaddress_to_identifier('0x1254E59712e6e727dC71E0E3121Ae952b2c4c3b6'),
+        # oyster (PRL) but another PRL in coingecko
+        ethaddress_to_identifier('0x1844b21593262668B7248d0f57a220CaaBA46ab9'),
+        # oyster shell but another SHL in coingecko
+        ethaddress_to_identifier('0x8542325B72C6D9fC0aD2Ca965A78435413a915A0'),
+        # dorado but another DOR in coingecko
+        ethaddress_to_identifier('0x906b3f8b7845840188Eab53c3f5AD348A787752f'),
+        # FundYourselfNow but coingecko has affyn
+        ethaddress_to_identifier('0x88FCFBc22C6d3dBaa25aF478C578978339BDe77a'),
+        # hat exchange but coingecko has joe hat token
+        ethaddress_to_identifier('0x9002D4485b7594e3E850F0a206713B305113f69e'),
+        # iconomi but coingecko has icon v2
+        ethaddress_to_identifier('0x888666CA69E0f178DED6D75b5726Cee99A87D698'),
+        # we have mcap and coingecko has meta capital
+        ethaddress_to_identifier('0x93E682107d1E9defB0b5ee701C71707a4B2E46Bc'),
+        # we have primalbase but coingecko has property blockchain
+        ethaddress_to_identifier('0xF4c07b1865bC326A3c01339492Ca7538FD038Cc0'),
+        # Sphere Identity and coingecko has Xid Network
+        ethaddress_to_identifier('0xB110eC7B1dcb8FAB8dEDbf28f53Bc63eA5BEdd84'),
+        # We have ultracoin and coingecko has unitech
+        'UTC',
+        # We have sonic and coingecko has secretworld
+        'SSD',
+        # We have shadowchash and coingecko has skydos
+        'SDC',
+        # We have getgems and coingecko has battlemerchs
+        'GEMZ',
+        # We have breackout and coingecko has blueark
+        'BRK',
+        # We have aerocoin and coingecko has aerochain
+        'AERO',
+        # coingecko has prime dai and we have pickle dai
+        ethaddress_to_identifier('0x6949Bb624E8e8A90F87cD2058139fcd77D2F3F87'),
+        # sinovate but we have sincity
+        'SIN',
+        # Hedge protocol but we have Hede crypto coin (book)
+        ethaddress_to_identifier('0xfFe8196bc259E8dEDc544d935786Aa4709eC3E64'),
+        # realchain but coingecko has reactor
+        ethaddress_to_identifier('0x13f25cd52b21650caa8225C9942337d914C9B030'),
+        # we have plutusdefi (usde) but coingecko has energi dollar
+        'USDE',
     )
     for asset_data in GlobalDBHandler().get_all_asset_data(mapping=False):
         identifier = asset_data.identifier
@@ -408,7 +509,7 @@ def test_asset_with_unknown_type_does_not_crash(asset_resolver):  # pylint: disa
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 @pytest.mark.parametrize('force_reinitialize_asset_resolver', [True])
 def test_get_or_create_ethereum_token(globaldb, database):
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     assets_num = cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0]
     assert A_DAI == get_or_create_ethereum_token(
         userdb=database,
@@ -440,3 +541,12 @@ def test_get_or_create_ethereum_token(globaldb, database):
         ethereum_address='0xdAC17F958D2ee523a2206206994597C13D831ec7',
     )
     assert cursor.execute('SELECT COUNT(*) from assets;').fetchone()[0] == assets_num + 2
+
+
+def test_spam_assets_are_valid():
+    """Test that the information for our own list of spam assets is correct"""
+    for address, info in KNOWN_ETH_SPAM_TOKENS.items():
+        assert is_checksum_address(address)
+        assert 'name' in info
+        assert 'symbol' in info
+        assert 'decimals' in info

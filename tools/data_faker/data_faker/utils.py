@@ -3,9 +3,9 @@ from typing import Callable
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_USD
-from rotkehlchen.errors import NoPriceForGivenTimestamp
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import Timestamp
+from rotkehlchen.types import Timestamp
 
 
 def assets_exist_at_time(

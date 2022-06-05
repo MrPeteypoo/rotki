@@ -18,8 +18,13 @@
             clearable
             @input="onSearchTermChange($event)"
           >
-            <template v-if="!!searchTimeout" #append>
-              <v-icon color="primary"> mdi-spin mdi-loading</v-icon>
+            <template v-if="isTimeoutPending" #append>
+              <v-progress-circular
+                indeterminate
+                color="primary"
+                width="2"
+                size="24"
+              />
             </template>
           </v-text-field>
         </v-col>
@@ -31,7 +36,7 @@
     <data-table
       :items="tokens"
       :loading="loading"
-      :headers="headers"
+      :headers="tableHeaders"
       single-expand
       :expanded="expanded"
       item-key="identifier"
@@ -56,7 +61,7 @@
         <span v-else>-</span>
       </template>
       <template #item.assetType="{ item }">
-        {{ capitalize(item.assetType) }}
+        {{ formatType(item.assetType) }}
       </template>
       <template #item.actions="{ item }">
         <row-actions
@@ -117,7 +122,8 @@
 </template>
 
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent, PropType, ref } from '@vue/composition-api';
+import { get, set, useTimeoutFn } from '@vueuse/core';
 import { DataTableHeader } from 'vuetify';
 import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
 import CopyButton from '@/components/helper/CopyButton.vue';
@@ -125,12 +131,42 @@ import DataTable from '@/components/helper/DataTable.vue';
 import RowActions from '@/components/helper/RowActions.vue';
 import RowExpander from '@/components/helper/RowExpander.vue';
 import TableExpandContainer from '@/components/helper/table/TableExpandContainer.vue';
-import { capitalize } from '@/filters';
+import i18n from '@/i18n';
 import { EthereumToken, ManagedAsset } from '@/services/assets/types';
 import { Nullable } from '@/types';
 import { compareAssets } from '@/utils/assets';
+import { toSentenceCase } from '@/utils/text';
 
-@Component({
+const tableHeaders: DataTableHeader[] = [
+  {
+    text: i18n.t('asset_table.headers.asset').toString(),
+    value: 'symbol'
+  },
+  {
+    text: i18n.t('asset_table.headers.type').toString(),
+    value: 'assetType'
+  },
+  {
+    text: i18n.t('asset_table.headers.address').toString(),
+    value: 'address'
+  },
+  {
+    text: i18n.t('asset_table.headers.started').toString(),
+    value: 'started'
+  },
+  {
+    text: '',
+    value: 'actions'
+  },
+  {
+    text: '',
+    width: '48px',
+    value: 'expand'
+  }
+];
+
+export default defineComponent({
+  name: 'AssetTable',
   components: {
     CopyButton,
     DataTable,
@@ -138,107 +174,104 @@ import { compareAssets } from '@/utils/assets';
     RowActions,
     RowExpander,
     AssetDetailsBase
-  }
-})
-export default class AssetTable extends Vue {
-  @Prop({ required: true, type: Array })
-  tokens!: ManagedAsset[];
-  @Prop({ required: false, type: Boolean, default: false })
-  loading!: string;
-  @Prop({ required: true, type: Boolean })
-  change!: boolean;
+  },
+  props: {
+    tokens: { required: true, type: Array as PropType<ManagedAsset[]> },
+    loading: { required: false, type: Boolean, default: false },
+    change: { required: true, type: Boolean }
+  },
+  emits: ['add', 'edit', 'delete-asset'],
+  setup(_, { emit }) {
+    const expanded = ref<ManagedAsset[]>([]);
+    const search = ref<string>('');
+    const pendingSearch = ref<string>('');
 
-  @Emit()
-  add() {}
-  @Emit()
-  edit(_asset: ManagedAsset) {}
-  @Emit()
-  deleteAsset(_asset: ManagedAsset) {}
+    const add = () => emit('add');
+    const edit = (asset: ManagedAsset) => emit('edit', asset);
+    const deleteAsset = (asset: ManagedAsset) => emit('delete-asset', asset);
 
-  expanded = [];
-  search: string = '';
-  pendingSearch: string = '';
-  searchTimeout: any = null;
-
-  onSearchTermChange(term: string) {
-    this.pendingSearch = term;
-    if (this.searchTimeout) {
-      clearTimeout(this.searchTimeout);
-      this.searchTimeout = null;
-    }
-    this.searchTimeout = setTimeout(() => {
-      this.search = this.pendingSearch;
-      this.searchTimeout = null;
-    }, 600);
-  }
-
-  assetFilter(
-    _value: Nullable<string>,
-    search: Nullable<string>,
-    item: Nullable<ManagedAsset>
-  ) {
-    if (!search || !item) {
-      return true;
-    }
-    const keyword = search?.toLocaleLowerCase()?.trim() ?? '';
-    const name = item.name?.toLocaleLowerCase().trim() ?? '';
-    const symbol = item.symbol.toLocaleLowerCase().trim();
-    return symbol.indexOf(keyword) >= 0 || name.indexOf(keyword) >= 0;
-  }
-
-  sortItems(
-    items: ManagedAsset[],
-    sortBy: (keyof ManagedAsset)[],
-    sortDesc: boolean[]
-  ): ManagedAsset[] {
-    const keyword = this.search?.toLocaleLowerCase()?.trim() ?? '';
-    return items.sort((a, b) =>
-      compareAssets(a, b, sortBy[0], keyword, sortDesc[0])
+    const {
+      isPending: isTimeoutPending,
+      start,
+      stop
+    } = useTimeoutFn(
+      () => {
+        set(search, get(pendingSearch));
+      },
+      600,
+      { immediate: false }
     );
-  }
 
-  readonly headers: DataTableHeader[] = [
-    {
-      text: this.$t('asset_table.headers.asset').toString(),
-      value: 'symbol'
-    },
-    {
-      text: this.$t('asset_table.headers.type').toString(),
-      value: 'assetType'
-    },
-    {
-      text: this.$t('asset_table.headers.address').toString(),
-      value: 'address'
-    },
-    {
-      text: this.$t('asset_table.headers.started').toString(),
-      value: 'started'
-    },
-    {
-      text: '',
-      value: 'actions'
-    },
-    {
-      text: '',
-      width: '48px',
-      value: 'expand'
-    }
-  ];
+    const onSearchTermChange = (term: string) => {
+      set(pendingSearch, term);
+      if (get(isTimeoutPending)) {
+        stop();
+      }
+      start();
+    };
 
-  capitalize(string?: string) {
-    return capitalize(string ?? 'ethereum token');
-  }
+    const assetFilter = (
+      value: Nullable<string>,
+      search: Nullable<string>,
+      item: Nullable<ManagedAsset>
+    ) => {
+      if (!search || !item) {
+        return true;
+      }
 
-  getAsset(item: EthereumToken) {
-    const name =
-      item.name ?? item.symbol ?? item.identifier?.replace('_ceth_', '');
+      const keyword = search?.toLocaleLowerCase()?.trim() ?? '';
+      const name = item.name?.toLocaleLowerCase()?.trim() ?? '';
+      const symbol = item.symbol?.toLocaleLowerCase()?.trim() ?? '';
+      const address =
+        (item as EthereumToken).address?.toLocaleLowerCase()?.trim() ?? '';
+      return (
+        symbol.indexOf(keyword) >= 0 ||
+        name.indexOf(keyword) >= 0 ||
+        address.indexOf(keyword) >= 0 ||
+        item.identifier.indexOf(keyword) >= 0
+      );
+    };
+
+    const sortItems = (
+      items: ManagedAsset[],
+      sortBy: (keyof ManagedAsset)[],
+      sortDesc: boolean[]
+    ): ManagedAsset[] => {
+      const keyword = get(search)?.toLocaleLowerCase()?.trim() ?? '';
+      return items.sort((a, b) =>
+        compareAssets(a, b, sortBy[0], keyword, sortDesc[0])
+      );
+    };
+
+    const formatType = (string?: string) => {
+      return toSentenceCase(string ?? 'ethereum token');
+    };
+
+    const getAsset = (item: EthereumToken) => {
+      const name =
+        item.name ?? item.symbol ?? item.identifier?.replace('_ceth_', '');
+      return {
+        name,
+        symbol: item.symbol ?? '',
+        identifier: item.identifier
+      };
+    };
+
     return {
-      name,
-      symbol: item.symbol ?? '',
-      identifier: item.identifier
+      pendingSearch,
+      onSearchTermChange,
+      isTimeoutPending,
+      add,
+      edit,
+      deleteAsset,
+      tableHeaders,
+      expanded,
+      search,
+      sortItems,
+      assetFilter,
+      getAsset,
+      formatType
     };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

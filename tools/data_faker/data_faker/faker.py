@@ -12,7 +12,7 @@ from data_faker.mock_apis.api import APIServer, RestAPI
 
 from rotkehlchen.rotkehlchen import Rotkehlchen
 from rotkehlchen.tests.utils.factories import make_random_b64bytes
-from rotkehlchen.typing import ApiKey, ApiSecret, Location
+from rotkehlchen.types import ApiKey, ApiSecret, Location
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class DataFaker():
         args.logfile = 'data_faker.log'
         self.rotki = Rotkehlchen(args)
 
-        random_seed = datetime.datetime.now()
+        random_seed = datetime.datetime.now().timestamp()
         logger.info(f'Random seed used: {random_seed}')
         random.seed(random_seed)
 

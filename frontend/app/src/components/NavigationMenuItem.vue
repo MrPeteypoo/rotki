@@ -2,7 +2,7 @@
   <div class="d-flex flex-grow-1">
     <v-tooltip v-if="showTooltips" right>
       <template #activator="{ on }">
-        <v-list-item-icon v-on="on">
+        <v-list-item-icon class="mr-6" v-on="on">
           <asset-icon
             v-if="!!cryptoIcon"
             :identifier="identifier"
@@ -14,7 +14,10 @@
             width="24px"
             :src="image"
             class="nav-icon"
-            :class="$style.icon"
+            :class="{
+              [$style.image]: true,
+              [$style['image--inverted']]: dark
+            }"
           />
           <component
             :is="iconComponent"
@@ -26,7 +29,7 @@
       </template>
       <span>{{ text }}</span>
     </v-tooltip>
-    <v-list-item-icon v-else>
+    <v-list-item-icon v-else class="mr-6">
       <asset-icon v-if="!!cryptoIcon" :identifier="identifier" size="24px" />
       <v-img
         v-else-if="image"
@@ -34,7 +37,10 @@
         width="24px"
         :src="image"
         class="nav-icon"
-        :class="$style.icon"
+        :class="{
+          [$style.image]: true,
+          [$style['image--inverted']]: dark
+        }"
       />
       <component
         :is="iconComponent"
@@ -50,42 +56,58 @@
 </template>
 
 <script lang="ts">
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import { VueConstructor } from 'vue';
-import { Component, Vue, Prop } from 'vue-property-decorator';
-import { mapGetters } from 'vuex';
-import { IdentifierForSymbolGetter } from '@/store/balances/types';
+import { setupThemeCheck } from '@/composables/common';
+import { useAssetInfoRetrieval } from '@/store/assets';
 
-@Component({
-  computed: {
-    ...mapGetters('balances', ['getIdentifierForSymbol'])
+export default defineComponent({
+  name: 'NavigationMenuItem',
+  props: {
+    showTooltips: { required: false, type: Boolean, default: false },
+    icon: { required: false, type: String, default: '' },
+    cryptoIcon: { required: false, type: String, default: '' },
+    text: { required: true, type: String },
+    image: { required: false, type: String, default: '' },
+    iconComponent: {
+      required: false,
+      type: Object as PropType<VueConstructor>,
+      default: null
+    },
+    active: { required: false, type: Boolean, default: false }
+  },
+  setup(props) {
+    const { cryptoIcon } = toRefs(props);
+    const { assetIdentifierForSymbol } = useAssetInfoRetrieval();
+
+    const identifier = computed<string>(() => {
+      return get(assetIdentifierForSymbol(get(cryptoIcon))) ?? get(cryptoIcon);
+    });
+
+    const { dark } = setupThemeCheck();
+
+    return {
+      dark,
+      identifier
+    };
   }
-})
-export default class NavigationMenuItem extends Vue {
-  @Prop({ required: false, type: Boolean, default: false })
-  showTooltips!: boolean;
-  @Prop({ required: false, type: String, default: '' })
-  icon!: string;
-  @Prop({ required: false, type: String, default: '' })
-  cryptoIcon!: string;
-  @Prop({ required: true, type: String })
-  text!: string;
-  @Prop({ required: false })
-  image!: string;
-  @Prop({ required: false })
-  iconComponent!: VueConstructor | undefined;
-  @Prop({ required: false, type: Boolean, default: false })
-  active!: boolean;
-
-  getIdentifierForSymbol!: IdentifierForSymbolGetter;
-
-  get identifier(): string {
-    return this.getIdentifierForSymbol(this.cryptoIcon) ?? this.cryptoIcon;
-  }
-}
+});
 </script>
 
 <style module lang="scss">
-.icon {
-  opacity: 0.66;
+.image {
+  opacity: 0.7;
+  filter: brightness(0);
+
+  &--inverted {
+    opacity: 1;
+    filter: brightness(0) invert(100%);
+  }
 }
 </style>

@@ -1,10 +1,21 @@
 import logging
 from json.decoder import JSONDecodeError
-from typing import Any, Dict, List, Optional, Tuple, Union, overload
+from typing import (
+    Any,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+    overload,
+)
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.constants.timing import (
     DEFAULT_CONNECT_TIMEOUT,
@@ -12,22 +23,40 @@ from rotkehlchen.constants.timing import (
     DEFAULT_TIMEOUT_TUPLE,
 )
 from rotkehlchen.db.dbhandler import DBHandler
-from rotkehlchen.errors import DeserializationError, RemoteError
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
     deserialize_ethereum_transaction,
     deserialize_int_from_str,
+    deserialize_timestamp,
 )
-from rotkehlchen.typing import ChecksumEthAddress, EthereumTransaction, ExternalService, Timestamp
+from rotkehlchen.types import (
+    ChecksumEthAddress,
+    EthereumInternalTransaction,
+    EthereumTransaction,
+    EVMTxHash,
+    ExternalService,
+    Timestamp,
+)
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import hex_or_bytes_to_int
 from rotkehlchen.utils.serialization import jsonloads_dict
 
 ETHERSCAN_TX_QUERY_LIMIT = 10000
+TRANSACTIONS_BATCH_NUM = 10
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+
+def _hashes_tuple_to_list(hashes: Set[Tuple[str, Timestamp]]) -> List[str]:
+    """Turns the set of hashes/timestamp to a timestamp ascending ordered list
+
+    This function needs to exist since Set has no guranteed order of iteration.
+    """
+    return [x[0] for x in sorted(hashes, key=lambda x: x[1])]
 
 
 class Etherscan(ExternalServiceWithApiKey):
@@ -183,7 +212,7 @@ class Etherscan(ExternalServiceWithApiKey):
                     transaction_endpoint_and_none_found = (
                         status == 0 and
                         json_ret['message'] == 'No transactions found' and
-                        'txlist' in action
+                        action in ('txlist', 'txlistinternal', 'tokentx')
                     )
                     logs_endpoint_and_none_found = (
                         status == 0 and
@@ -207,12 +236,33 @@ class Etherscan(ExternalServiceWithApiKey):
 
         return result
 
+    @overload
     def get_transactions(
             self,
             account: ChecksumEthAddress,
+            action: Literal['txlistinternal'],
             from_ts: Optional[Timestamp] = None,
             to_ts: Optional[Timestamp] = None,
-    ) -> List[EthereumTransaction]:
+    ) -> Iterator[List[EthereumInternalTransaction]]:
+        ...
+
+    @overload
+    def get_transactions(
+            self,
+            account: ChecksumEthAddress,
+            action: Literal['txlist'],
+            from_ts: Optional[Timestamp] = None,
+            to_ts: Optional[Timestamp] = None,
+    ) -> Iterator[List[EthereumTransaction]]:
+        ...
+
+    def get_transactions(
+            self,
+            account: ChecksumEthAddress,
+            action: Literal['txlist', 'txlistinternal'],
+            from_ts: Optional[Timestamp] = None,
+            to_ts: Optional[Timestamp] = None,
+    ) -> Union[Iterator[List[EthereumTransaction]], Iterator[List[EthereumInternalTransaction]]]:
         """Gets a list of transactions (either normal or internal) for account.
 
         May raise:
@@ -227,17 +277,28 @@ class Etherscan(ExternalServiceWithApiKey):
             to_block = self.get_blocknumber_by_time(to_ts)
             options['endBlock'] = str(to_block)
 
-        transactions = []
+        transactions: Union[Sequence[EthereumTransaction], Sequence[EthereumInternalTransaction]] = []  # noqa: E501
+        is_internal = action == 'txlistinternal'
         while True:
-            result = self._query(module='account', action='txlist', options=options)
+            result = self._query(module='account', action=action, options=options)
+            last_ts = deserialize_timestamp(result[0]['timeStamp']) if len(result) != 0 else None  # noqa: E501 pylint: disable=unsubscriptable-object
             for entry in result:
+                gevent.sleep(0)
                 try:
-                    tx = deserialize_ethereum_transaction(data=entry, ethereum=None)
+                    tx = deserialize_ethereum_transaction(  # type: ignore
+                        data=entry,
+                        internal=is_internal,
+                        ethereum=None,
+                    )
                 except DeserializationError as e:
                     self.msg_aggregator.add_warning(f'{str(e)}. Skipping transaction')
                     continue
 
-                transactions.append(tx)
+                if tx.timestamp > last_ts and len(transactions) >= TRANSACTIONS_BATCH_NUM:
+                    yield transactions
+                    last_ts = tx.timestamp
+                    transactions = []
+                transactions.append(tx)  # type: ignore
 
             if len(result) != ETHERSCAN_TX_QUERY_LIMIT:
                 break
@@ -248,7 +309,45 @@ class Etherscan(ExternalServiceWithApiKey):
             last_block = result[-1]['blockNumber']  # pylint: disable=unsubscriptable-object
             options['startBlock'] = last_block
 
-        return transactions
+        yield transactions
+
+    def get_token_transaction_hashes(
+            self,
+            account: ChecksumEthAddress,
+            from_ts: Optional[Timestamp] = None,
+            to_ts: Optional[Timestamp] = None,
+    ) -> Iterator[List[str]]:
+        options = {'address': str(account), 'sort': 'asc'}
+        if from_ts is not None:
+            from_block = self.get_blocknumber_by_time(from_ts)
+            options['startBlock'] = str(from_block)
+        if to_ts is not None:
+            to_block = self.get_blocknumber_by_time(to_ts)
+            options['endBlock'] = str(to_block)
+
+        hashes: Set[Tuple[str, Timestamp]] = set()
+        while True:
+            result = self._query(module='account', action='tokentx', options=options)
+            last_ts = deserialize_timestamp(result[0]['timeStamp']) if len(result) != 0 else None  # noqa: E501 pylint: disable=unsubscriptable-object
+            for entry in result:
+                gevent.sleep(0)
+                timestamp = deserialize_timestamp(entry['timeStamp'])
+                if timestamp > last_ts and len(hashes) >= TRANSACTIONS_BATCH_NUM:  # type: ignore
+                    yield _hashes_tuple_to_list(hashes)
+                    hashes = set()
+                    last_ts = timestamp
+                hashes.add((entry['hash'], timestamp))
+
+            if len(result) != ETHERSCAN_TX_QUERY_LIMIT:
+                break
+            # else we hit the limit. Query once more with startBlock being the last
+            # block we got. There may be duplicate entries if there are more than one
+            # transactions for that last block but they should be filtered
+            # out when we input all of these in the DB
+            last_block = result[-1]['blockNumber']  # pylint: disable=unsubscriptable-object
+            options['startBlock'] = last_block
+
+        yield _hashes_tuple_to_list(hashes)
 
     def get_latest_block_number(self) -> int:
         """Gets the latest block number
@@ -278,14 +377,14 @@ class Etherscan(ExternalServiceWithApiKey):
 
         return block_data
 
-    def get_transaction_by_hash(self, tx_hash: str) -> Dict[str, Any]:
+    def get_transaction_by_hash(self, tx_hash: EVMTxHash) -> Dict[str, Any]:
         """
         Gets a transaction object by hash
 
         May raise:
         - RemoteError due to self._query().
         """
-        options = {'txhash': tx_hash}
+        options = {'txhash': tx_hash.hex()}
         transaction_data = self._query(module='proxy', action='eth_getTransactionByHash', options=options)  # noqa: E501
         return transaction_data
 
@@ -299,7 +398,7 @@ class Etherscan(ExternalServiceWithApiKey):
         result = self._query(module='proxy', action='eth_getCode', options={'address': account})
         return result
 
-    def get_transaction_receipt(self, tx_hash: str) -> Dict[str, Any]:
+    def get_transaction_receipt(self, tx_hash: EVMTxHash) -> Dict[str, Any]:
         """Gets the receipt for the given transaction hash
 
         May raise:
@@ -308,7 +407,7 @@ class Etherscan(ExternalServiceWithApiKey):
         result = self._query(
             module='proxy',
             action='eth_getTransactionReceipt',
-            options={'txhash': tx_hash},
+            options={'txhash': tx_hash.hex()},
         )
         return result
 

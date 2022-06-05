@@ -1,25 +1,41 @@
+import copy
 import logging
 import random
 from collections import defaultdict
-from typing import DefaultDict, List, NamedTuple, Set, Tuple
+from typing import TYPE_CHECKING, Callable, DefaultDict, List, NamedTuple, Set, Tuple
 
 import gevent
 
+from rotkehlchen.api.websockets.typedefs import WSMessageType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.bitcoin.xpub import XpubManager
-from rotkehlchen.chain.ethereum.transactions import EthTransactions
 from rotkehlchen.chain.manager import ChainManager
+from rotkehlchen.constants.assets import A_USD
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.ethtx import DBEthTx
+from rotkehlchen.db.filtering import DBIgnoreValuesFilter, DBStringFilter, HistoryEventFilterQuery
+from rotkehlchen.db.history_events import DBHistoryEvents
+from rotkehlchen.errors.api import PremiumAuthenticationError
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.exchanges.manager import ExchangeManager
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
+from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.greenlets import GreenletManager
-from rotkehlchen.history.typing import HistoricalPriceOracle
+from rotkehlchen.history.price import PriceHistorian
+from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.premium.premium import Premium, premium_create_and_verify
 from rotkehlchen.premium.sync import PremiumSyncManager
-from rotkehlchen.typing import ChecksumEthAddress, Location
+from rotkehlchen.types import ChecksumEthAddress, ExchangeLocationID, Location, Optional, Timestamp
+from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now
+
+if TYPE_CHECKING:
+    from rotkehlchen.api.websockets.notifier import RotkiNotifier
+    from rotkehlchen.chain.ethereum.decoding import EVMTransactionDecoder
+    from rotkehlchen.chain.ethereum.transactions import EthTransactions
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -31,9 +47,13 @@ CRYPTOCOMPARE_HISTOHOUR_FREQUENCY = 240  # at least 4 mins apart
 XPUB_DERIVATION_FREQUENCY = 3600  # every hour
 ETH_TX_QUERY_FREQUENCY = 3600  # every hour
 EXCHANGE_QUERY_FREQUENCY = 3600  # every hour
+PREMIUM_STATUS_CHECK = 3600  # every hour
+TX_RECEIPTS_QUERY_LIMIT = 500
+TX_DECODING_LIMIT = 500
+PREMIUM_CHECK_RETRY_LIMIT = 3
 
 
-def noop_exchange_succes_cb(trades, margin, asset_movements, ledger_actions, exchange_specific_data) -> None:  # type: ignore # noqa: E501
+def noop_exchange_success_cb(trades, margin, asset_movements, exchange_specific_data) -> None:  # type: ignore # noqa: E501
     pass
 
 
@@ -55,9 +75,15 @@ class TaskManager():
             api_task_greenlets: List[gevent.Greenlet],
             database: DBHandler,
             cryptocompare: Cryptocompare,
-            premium_sync_manager: PremiumSyncManager,
+            premium_sync_manager: Optional[PremiumSyncManager],
             chain_manager: ChainManager,
             exchange_manager: ExchangeManager,
+            evm_tx_decoder: 'EVMTransactionDecoder',
+            eth_transactions: 'EthTransactions',
+            deactivate_premium: Callable[[], None],
+            activate_premium: Callable[[Premium], None],
+            query_balances: Callable,
+            rotki_notifier: Optional['RotkiNotifier'],
     ) -> None:
         self.max_tasks_num = max_tasks_num
         self.greenlet_manager = greenlet_manager
@@ -65,12 +91,14 @@ class TaskManager():
         self.database = database
         self.cryptocompare = cryptocompare
         self.exchange_manager = exchange_manager
-        self.premium_sync_manager = premium_sync_manager
+        self.evm_tx_decoder = evm_tx_decoder
+        self.eth_transactions = eth_transactions
         self.cryptocompare_queries: Set[CCHistoQuery] = set()
         self.chain_manager = chain_manager
         self.last_xpub_derivation_ts = 0
         self.last_eth_tx_query_ts: DefaultDict[ChecksumEthAddress, int] = defaultdict(int)
-        self.last_exchange_query_ts: DefaultDict[Tuple[str, Location], int] = defaultdict(int)
+        self.last_exchange_query_ts: DefaultDict[ExchangeLocationID, int] = defaultdict(int)
+        self.base_entries_ignore_set: Set[str] = set()
         self.prepared_cryptocompare_query = False
         self.greenlet_manager.spawn_and_track(  # Needs to run in greenlet, is slow
             after_seconds=None,
@@ -78,15 +106,29 @@ class TaskManager():
             exception_is_error=True,
             method=self._prepare_cryptocompare_queries,
         )
+        self.deactivate_premium = deactivate_premium
+        self.activate_premium = activate_premium
+        self.query_balances = query_balances
+        self.last_premium_status_check = ts_now()
+        self.msg_aggregator = MessagesAggregator()
+        self.premium_check_retries = 0
+
+        if rotki_notifier is not None:
+            self.msg_aggregator.rotki_notifier = rotki_notifier
 
         self.potential_tasks = [
             self._maybe_schedule_cryptocompare_query,
-            self.premium_sync_manager.maybe_upload_data_to_server,
             self._maybe_schedule_xpub_derivation,
             self._maybe_query_ethereum_transactions,
             self._maybe_schedule_exchange_history_query,
             self._maybe_schedule_ethereum_txreceipts,
+            self._maybe_query_missing_prices,
+            self._maybe_decode_evm_transactions,
+            self._maybe_check_premium_status,
+            self._maybe_update_snapshot_balances,
         ]
+        if premium_sync_manager is not None:
+            self.potential_tasks.append(premium_sync_manager.maybe_upload_data_to_server)
         self.schedule_lock = gevent.lock.Semaphore()
 
     def _prepare_cryptocompare_queries(self) -> None:
@@ -192,19 +234,16 @@ class TaskManager():
             return
 
         now = ts_now()
+        dbethtx = DBEthTx(self.database)
         queriable_accounts = []
-        for x in accounts:
-            queried_range = self.database.get_used_query_range(f'ethtxs_{x}')
-            end_ts = queried_range[1] if queried_range else 0
-            if now - max(self.last_eth_tx_query_ts[x], end_ts) > ETH_TX_QUERY_FREQUENCY:
-                queriable_accounts.append(x)
+        for account in accounts:
+            _, end_ts = dbethtx.get_queried_range(account)
+            if now - max(self.last_eth_tx_query_ts[account], end_ts) > ETH_TX_QUERY_FREQUENCY:
+                queriable_accounts.append(account)
+
         if len(queriable_accounts) == 0:
             return
 
-        tx_module = EthTransactions(
-            ethereum=self.chain_manager.ethereum,
-            database=self.database,
-        )
         address = random.choice(queriable_accounts)
         task_name = f'Query ethereum transactions for {address}'
         log.debug(f'Scheduling task to {task_name}')
@@ -212,38 +251,33 @@ class TaskManager():
             after_seconds=None,
             task_name=task_name,
             exception_is_error=True,
-            method=tx_module.single_address_query_transactions,
+            method=self.eth_transactions.single_address_query_transactions,
             address=address,
             start_ts=0,
             end_ts=now,
         )
         self.last_eth_tx_query_ts[address] = now
 
-    def _run_ethereum_txreceipts_query(self, hash_results: List[Tuple]) -> None:
-        dbethtx = DBEthTx(self.database)
-        for entry in hash_results:
-            tx_hash = '0x' + entry[0].hex()
-            tx_receipt_data = self.chain_manager.ethereum.get_transaction_receipt(tx_hash=tx_hash)
-            dbethtx.add_receipt_data(tx_receipt_data)
-
     def _maybe_schedule_ethereum_txreceipts(self) -> None:
-        """Schedules the ethereum transaction receipts query task"""
-        cursor = self.database.conn.cursor()
-        result = cursor.execute(
-            'SELECT tx_hash from ethereum_transactions WHERE tx_hash NOT IN '
-            '(SELECT tx_hash from ethtx_receipts) LIMIT 100;',
-        ).fetchall()
-        if len(result) == 0:
+        """Schedules the ethereum transaction receipts query task
+
+        The DB check happens first here to see if scheduling would even be needed.
+        But the DB query will happen again inside the query task while having the
+        lock acquired.
+        """
+        dbethtx = DBEthTx(self.database)
+        hash_results = dbethtx.get_transaction_hashes_no_receipt(tx_filter_query=None, limit=TX_RECEIPTS_QUERY_LIMIT)  # noqa: E501
+        if len(hash_results) == 0:
             return
 
-        task_name = f'Query {len(result)} ethereum transactions receipts'
+        task_name = f'Query {len(hash_results)} ethereum transactions receipts'
         log.debug(f'Scheduling task to {task_name}')
         self.greenlet_manager.spawn_and_track(
             after_seconds=None,
             task_name=task_name,
             exception_is_error=True,
-            method=self._run_ethereum_txreceipts_query,
-            hash_results=result,
+            method=self.eth_transactions.get_receipts_for_transactions_missing_them,
+            limit=TX_RECEIPTS_QUERY_LIMIT,
         )
 
     def _maybe_schedule_exchange_history_query(self) -> None:
@@ -274,10 +308,164 @@ class TaskManager():
             method=exchange.query_history_with_callbacks,
             start_ts=0,
             end_ts=now,
-            success_callback=noop_exchange_succes_cb,
+            success_callback=noop_exchange_success_cb,
             fail_callback=exchange_fail_cb,
         )
         self.last_exchange_query_ts[exchange.location_id()] = now
+
+    def _maybe_query_missing_prices(self) -> None:
+        query_filter = HistoryEventFilterQuery.make(limit=100)
+        entries = self.get_base_entries_missing_prices(query_filter)
+        if len(entries) > 0:
+            task_name = 'Periodically query history events prices'
+            log.debug(f'Scheduling task to {task_name}')
+            self.greenlet_manager.spawn_and_track(
+                after_seconds=None,
+                task_name=task_name,
+                exception_is_error=True,
+                method=self.query_missing_prices_of_base_entries,
+                entries_missing_prices=entries,
+            )
+
+    def get_base_entries_missing_prices(
+        self,
+        query_filter: HistoryEventFilterQuery,
+    ) -> List[Tuple[str, FVal, Asset, Timestamp]]:
+        """
+        Searches base entries missing usd prices that have not previously been checked in
+        this session.
+        """
+        # Use a deepcopy to avoid mutations in the filter query if it is used later
+        db = DBHistoryEvents(self.database)
+        new_query_filter = copy.deepcopy(query_filter)
+        new_query_filter.filters.append(
+            DBStringFilter(and_op=True, column='usd_value', value='0'),
+        )
+        new_query_filter.filters.append(
+            DBIgnoreValuesFilter(
+                and_op=True,
+                column='identifier',
+                values=list(self.base_entries_ignore_set),
+            ),
+        )
+        return db.rows_missing_prices_in_base_entries(filter_query=new_query_filter)
+
+    def query_missing_prices_of_base_entries(
+        self,
+        entries_missing_prices: List[Tuple[str, FVal, Asset, Timestamp]],
+    ) -> None:
+        """Queries missing prices for HistoryBaseEntry in database updating
+        the price if it is found. Otherwise we add the id to the ignore list
+        for this session.
+        """
+        inquirer = PriceHistorian()
+        updates = []
+        for identifier, amount, asset, timestamp in entries_missing_prices:
+            try:
+                price = inquirer.query_historical_price(
+                    from_asset=asset,
+                    to_asset=A_USD,
+                    timestamp=timestamp,
+                )
+            except (NoPriceForGivenTimestamp, RemoteError) as e:
+                log.error(
+                    f'Failed to find price for {asset} at {timestamp} in base '
+                    f'entry {identifier}. {str(e)}.',
+                )
+                self.base_entries_ignore_set.add(identifier)
+                continue
+
+            usd_value = amount * price
+            updates.append((str(usd_value), identifier))
+
+        query = 'UPDATE history_events SET usd_value=? WHERE rowid=?'
+        cursor = self.database.conn.cursor()
+        cursor.executemany(query, updates)
+        self.database.update_last_write()
+
+    def _maybe_decode_evm_transactions(self) -> None:
+        """Schedules the evm transaction decoding task
+
+        The DB check happens first here to see if scheduling would even be needed.
+        But the DB query will happen again inside the query task while having the
+        lock acquired.
+        """
+        dbethtx = DBEthTx(self.database)
+        hashes = dbethtx.get_transaction_hashes_not_decoded(limit=TX_DECODING_LIMIT)
+        hashes_length = len(hashes)
+        if hashes_length > 0:
+            task_name = f'decode {hashes_length} evm trasactions'
+            log.debug(f'Scheduling periodic task to {task_name}')
+            self.greenlet_manager.spawn_and_track(
+                after_seconds=None,
+                task_name=task_name,
+                exception_is_error=True,
+                method=self.evm_tx_decoder.get_and_decode_undecoded_transactions,
+                limit=TX_DECODING_LIMIT,
+            )
+
+    def _maybe_check_premium_status(self) -> None:
+        """
+        Validates the premium status of the account and if the credentials are not valid
+        it retries 3 times before deactivating the user's premium status. If the
+        credentials are valid and the premium status is not correct it will reactivate
+        the user's premium status.
+        """
+        now = ts_now()
+        if now - self.last_premium_status_check < PREMIUM_STATUS_CHECK:
+            return
+
+        db_credentials = self.database.get_rotkehlchen_premium()
+        if db_credentials is None:
+            self.last_premium_status_check = now
+            return
+
+        try:
+            premium = premium_create_and_verify(db_credentials)
+        except RemoteError:
+            if self.premium_check_retries < PREMIUM_CHECK_RETRY_LIMIT:
+                self.premium_check_retries += 1
+                self.last_premium_status_check = now
+                return
+            self.msg_aggregator.add_message(
+                message_type=WSMessageType.PREMIUM_STATUS_UPDATE,
+                data={'is_premium_active': False},
+            )
+            self.deactivate_premium()
+        except PremiumAuthenticationError:
+            self.deactivate_premium()
+            self.msg_aggregator.add_message(
+                message_type=WSMessageType.PREMIUM_STATUS_UPDATE,
+                data={'is_premium_active': False},
+            )
+        else:
+            self.activate_premium(premium)
+            self.msg_aggregator.add_message(
+                message_type=WSMessageType.PREMIUM_STATUS_UPDATE,
+                data={'is_premium_active': True},
+            )
+            self.premium_check_retries = 0
+        finally:
+            self.last_premium_status_check = now
+
+    def _maybe_update_snapshot_balances(self) -> None:
+        """
+        Update the balances of a user if the difference between last time they were updated
+        and the current time exceeds the `balance_save_frequency`.
+        """
+        if self.database.should_save_balances():
+            task_name = 'Periodically update snapshot balances'
+            log.debug(f'Scheduling task to {task_name}')
+            self.greenlet_manager.spawn_and_track(
+                after_seconds=None,
+                task_name=task_name,
+                exception_is_error=True,
+                method=self.query_balances,
+                requested_save_data=True,
+                save_despite_errors=False,
+                timestamp=None,
+                ignore_cache=True,
+            )
 
     def _schedule(self) -> None:
         """Schedules background tasks"""
@@ -298,7 +486,7 @@ class TaskManager():
         )
 
         for callable_fn in callables:
-            callable_fn()  # type: ignore
+            callable_fn()
 
     def schedule(self) -> None:
         """Schedules background task while holding the scheduling lock

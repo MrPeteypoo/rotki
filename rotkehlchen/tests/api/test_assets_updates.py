@@ -9,9 +9,9 @@ import pytest
 import requests
 
 from rotkehlchen.assets.asset import Asset, EthereumToken
-from rotkehlchen.assets.typing import AssetType
+from rotkehlchen.assets.types import AssetType
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.globaldb.handler import GLOBAL_DB_VERSION
 from rotkehlchen.globaldb.updates import ASSETS_VERSION_KEY
 from rotkehlchen.tests.utils.api import (
@@ -23,7 +23,7 @@ from rotkehlchen.tests.utils.api import (
 )
 from rotkehlchen.tests.utils.constants import A_GLM
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.types import ChecksumEthAddress
 
 
 def mock_asset_updates(original_requests_get, latest: int, updates: Dict[str, Any], sql_actions: Dict[str, str]):  # noqa: E501
@@ -394,7 +394,7 @@ INSERT INTO ethereum_tokens(address, decimals, protocol) VALUES("0x1B175474E8909
                 status_code=HTTPStatus.OK,
             )
 
-        cursor = globaldb._conn.cursor()
+        cursor = globaldb.conn.cursor()
         # check conflicts were solved as per the given choices and new asset also added
         assert result is True
         assert globaldb.get_setting_value(ASSETS_VERSION_KEY, None) == 999999991
@@ -654,7 +654,7 @@ INSERT INTO ethereum_tokens(address, decimals, protocol) VALUES("0xa74476443119A
         }},
         sql_actions={"1": update_1},
     )
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     cursor.execute(f'DELETE FROM settings WHERE name="{ASSETS_VERSION_KEY}"')
     start_assets_num = len(globaldb.get_all_asset_data(mapping=False))
     with update_patch:

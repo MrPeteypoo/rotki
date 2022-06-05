@@ -47,7 +47,7 @@ import { Component, Emit, Mixins } from 'vue-property-decorator';
 import { SUPPORTED_MODULES } from '@/components/defi/wizard/consts';
 import { SupportedModule } from '@/components/defi/wizard/types';
 import ModuleMixin from '@/mixins/module-mixin';
-import { Module } from '@/services/session/consts';
+import { Module } from '@/types/modules';
 
 @Component({
   name: 'ModuleActivator'
@@ -81,5 +81,3 @@ export default class ModuleActivator extends Mixins(ModuleMixin) {
   }
 }
 </script>
-
-<style scoped lang="scss"></style>

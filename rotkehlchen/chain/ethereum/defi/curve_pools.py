@@ -1,9 +1,9 @@
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List
 
-from rotkehlchen.typing import ChecksumEthAddress
+from rotkehlchen.types import ChecksumEthAddress
 
 
 @dataclass(init=True, repr=True, eq=False, order=False, unsafe_hash=False, frozen=True)

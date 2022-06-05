@@ -1,5 +1,5 @@
 <template>
-  <span class="d-flex align-center py-4" :class="'flex-column'">
+  <span class="d-flex align-center" :class="'flex-column'">
     <span>
       <v-icon color="accent"> {{ icon }} </v-icon>
     </span>
@@ -10,78 +10,78 @@
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import i18n from '@/i18n';
+import { ProfitLossEventTypeEnum } from '@/types/reports';
+import { toCapitalCase } from '@/utils/text';
 
-const BUY = 'buy';
-const SELL = 'sell';
-const GAS_COST = 'tx_gas_cost';
-const ASSET_MOVEMENT = 'asset_movement';
-const LOAN_SETTLEMENT = 'loan_settlement';
-const INTEREST_RATE_PAYMENT = 'interest_rate_payment';
-const MARGIN_POSITION_CLOSE = 'margin_position_close';
-const DEFI_EVENT = 'defi_event';
-const LEDGER_ACTION = 'ledger_action';
-
-const EVENT_TYPES = [
-  BUY,
-  SELL,
-  GAS_COST,
-  ASSET_MOVEMENT,
-  LOAN_SETTLEMENT,
-  INTEREST_RATE_PAYMENT,
-  MARGIN_POSITION_CLOSE,
-  DEFI_EVENT,
-  LEDGER_ACTION
-] as const;
-
-type EventTypes = typeof EVENT_TYPES[number];
-
-type Resources = { [key in EventTypes]: string };
+type Resources = { [key in ProfitLossEventTypeEnum]: string };
 
 const icons: Resources = {
-  [BUY]: 'mdi-arrow-down',
-  [SELL]: 'mdi-arrow-up',
-  [GAS_COST]: 'mdi-gas-station',
-  [ASSET_MOVEMENT]: 'mdi-swap-horizontal',
-  [LOAN_SETTLEMENT]: 'mdi-handshake',
-  [INTEREST_RATE_PAYMENT]: 'bank-transfer-in',
-  [MARGIN_POSITION_CLOSE]: 'mdi-margin',
-  [DEFI_EVENT]: 'mdi-finance',
-  [LEDGER_ACTION]: 'mdi-book-open-variant'
+  [ProfitLossEventTypeEnum.TRADE]: 'mdi-shuffle-variant',
+  [ProfitLossEventTypeEnum.FEE]: 'mdi-fire',
+  [ProfitLossEventTypeEnum.ASSET_MOVEMENT]: 'mdi-bank-transfer',
+  [ProfitLossEventTypeEnum.MARGIN_POSITION]: 'mdi-margin',
+  [ProfitLossEventTypeEnum.LOAN]: 'mdi-handshake',
+  [ProfitLossEventTypeEnum.PREFORK_ACQUISITION]: 'mdi-source-fork',
+  [ProfitLossEventTypeEnum.LEDGER_ACTION]: 'mdi-book-open-variant',
+  [ProfitLossEventTypeEnum.STAKING]: 'mdi-sprout',
+  [ProfitLossEventTypeEnum.HISTORY_BASE_ENTRY]: 'mdi-history',
+  [ProfitLossEventTypeEnum.TRANSACTION_EVENT]: 'mdi-swap-horizontal'
 };
 
 const names: Resources = {
-  [BUY]: i18n.t('profit_loss_event_type.buy').toString(),
-  [SELL]: i18n.t('profit_loss_event_type.sell').toString(),
-  [GAS_COST]: i18n.t('profit_loss_event_type.gas_cost').toString(),
-  [ASSET_MOVEMENT]: i18n.t('profit_loss_event_type.asset_movement').toString(),
-  [LOAN_SETTLEMENT]: i18n
-    .t('profit_loss_event_type.loan_settlement')
+  [ProfitLossEventTypeEnum.TRADE]: i18n
+    .t('profit_loss_event_type.trade')
     .toString(),
-  [INTEREST_RATE_PAYMENT]: i18n
-    .t('profit_loss_event_type.interest_rate_payment')
+  [ProfitLossEventTypeEnum.FEE]: i18n
+    .t('profit_loss_event_type.fee')
     .toString(),
-  [MARGIN_POSITION_CLOSE]: i18n
-    .t('profit_loss_event_type.margin_position_close')
+  [ProfitLossEventTypeEnum.ASSET_MOVEMENT]: i18n
+    .t('profit_loss_event_type.asset_movement')
     .toString(),
-  [DEFI_EVENT]: i18n.t('profit_loss_event_type.defi_event').toString(),
-  [LEDGER_ACTION]: i18n.t('profit_loss_event_type.ledger_action').toString()
+  [ProfitLossEventTypeEnum.MARGIN_POSITION]: i18n
+    .t('profit_loss_event_type.margin_position')
+    .toString(),
+  [ProfitLossEventTypeEnum.LOAN]: i18n
+    .t('profit_loss_event_type.loan')
+    .toString(),
+  [ProfitLossEventTypeEnum.PREFORK_ACQUISITION]: i18n
+    .t('profit_loss_event_type.prefork_acquisition')
+    .toString(),
+  [ProfitLossEventTypeEnum.LEDGER_ACTION]: i18n
+    .t('profit_loss_event_type.ledger_action')
+    .toString(),
+  [ProfitLossEventTypeEnum.STAKING]: i18n
+    .t('profit_loss_event_type.staking')
+    .toString(),
+  [ProfitLossEventTypeEnum.HISTORY_BASE_ENTRY]: i18n
+    .t('profit_loss_event_type.history_base_entry')
+    .toString(),
+  [ProfitLossEventTypeEnum.TRANSACTION_EVENT]: i18n
+    .t('profit_loss_event_type.transaction_event')
+    .toString()
 };
 
-@Component({})
-export default class ProfitLossEventType extends Vue {
-  @Prop({ required: true, type: String })
-  type!: EventTypes;
-
-  get icon(): string {
-    return icons[this.type] ?? '';
+export default defineComponent({
+  name: 'ProfitLossEventType',
+  props: {
+    type: { required: true, type: String as PropType<ProfitLossEventTypeEnum> }
+  },
+  setup(props) {
+    const { type } = toRefs(props);
+    const icon = computed(() => icons[get(type)] ?? 'mdi-help');
+    const name = computed(() => names[get(type)] ?? toCapitalCase(get(type)));
+    return {
+      icon,
+      name
+    };
   }
-
-  get name(): string {
-    return names[this.type] ?? '';
-  }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

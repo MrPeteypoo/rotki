@@ -2,29 +2,21 @@ import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.graph import Graph
 from rotkehlchen.chain.ethereum.modules.makerdao.constants import RAY
-from rotkehlchen.chain.ethereum.structures import (
-    AaveBorrowEvent,
-    AaveDepositWithdrawalEvent,
-    AaveEvent,
-    AaveInterestEvent,
-    AaveLiquidationEvent,
-    AaveRepayEvent,
-)
-from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
+from rotkehlchen.chain.ethereum.utils import ethaddress_to_asset, token_normalized_value_decimals
 from rotkehlchen.constants.ethereum import ATOKEN_ABI, ATOKEN_V2_ABI
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import DeserializationError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import query_usd_price_zero_if_error
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import ts_now
 
@@ -33,9 +25,16 @@ from .common import (
     AaveHistory,
     AaveInquirer,
     _get_reserve_address_decimals,
-    aave_reserve_address_to_reserve_asset,
     asset_to_aave_reserve_address,
     asset_to_atoken,
+)
+from .structures import (
+    AaveBorrowEvent,
+    AaveDepositWithdrawalEvent,
+    AaveEvent,
+    AaveInterestEvent,
+    AaveLiquidationEvent,
+    AaveRepayEvent,
 )
 
 if TYPE_CHECKING:
@@ -270,16 +269,23 @@ def _parse_common_event_data(
         # Since for the user data we can't query per timestamp, filter timestamps here
         return None
 
-    pair = entry['id'].split(':')
-    if len(pair) != 2:
+    event_id_parts = entry['id'].split(':')
+    if len(event_id_parts) == 5:
+        # aave v2 has 5 elements in the ids as can be checked in their code
+        # https://github.com/aave/protocol-subgraphs/commit/40e09d0e0d3196e5624ca113fc346a1d65c4f4fb#diff-835762719eeb8a927a81e727fcd8ecdb8f5b2ea4d56f39478a17ade85588acf2R4-R14  # noqa: E501
+        tx_hash = event_id_parts[2]
+        index = int(event_id_parts[3])
+    elif len(event_id_parts) == 2:
+        # aave v1 uses only tx_hash and index in their ids
+        tx_hash = event_id_parts[0]
+        index = int(event_id_parts[1])
+    else:
         log.error(
             f'Could not parse the id entry for an aave liquidation as '
             f'returned by graph: {entry["id"]}.  Skipping entry ...',
         )
         return None
 
-    tx_hash = pair[0]
-    index = int(pair[1])  # not really log index
     return timestamp, tx_hash, index
 
 
@@ -314,7 +320,7 @@ def _parse_atoken_balance_history(
 
         version = _get_version_from_reserveid(pairs, 3)
         tx_hash = '0x' + pairs[4]
-        asset = aave_reserve_address_to_reserve_asset(reserve_address)
+        asset = ethaddress_to_asset(reserve_address)
         if asset is None:
             log.error(
                 f'Unknown aave reserve address returned by atoken balance history '
@@ -355,7 +361,7 @@ def _get_reserve_asset_and_decimals(
         log.error(f'Failed to Deserialize reserve address {entry[reserve_key]["id"]}')
         return None
 
-    asset = aave_reserve_address_to_reserve_asset(reserve_address)
+    asset = ethaddress_to_asset(reserve_address)
     if asset is None:
         log.error(
             f'Unknown aave reserve address returned by graph query: '

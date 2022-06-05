@@ -1,18 +1,23 @@
 import { AssetBalance, AssetBalanceWithPrice } from '@rotki/common';
-import { SupportedAsset } from '@rotki/common/lib/data';
 import sortBy from 'lodash/sortBy';
+import { createPinia, setActivePinia } from 'pinia';
 import { TRADE_LOCATION_BANKS } from '@/data/defaults';
 import { BalanceType, BtcBalances } from '@/services/balances/types';
 import { BtcAccountData } from '@/services/types-api';
 import { BalanceGetters, getters } from '@/store/balances/getters';
 import { BalanceState } from '@/store/balances/types';
-import { SessionState } from '@/store/session/types';
 import store from '@/store/store';
 import { RotkehlchenState } from '@/store/types';
+import { SupportedExchange } from '@/types/exchanges';
 import { bigNumberify, Zero } from '@/utils/bignumbers';
 import { stub } from '../../../common/utils';
 
 describe('balances:getters', () => {
+  beforeEach(() => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+  });
+
   test('aggregatedBalances', () => {
     const mockGetters = {
       exchangeBalances: function (): AssetBalance[] {
@@ -66,6 +71,7 @@ describe('balances:getters', () => {
     const state: BalanceState = stub<BalanceState>({
       manualBalances: [
         {
+          id: 1,
           usdValue: bigNumberify(50),
           amount: bigNumberify(50),
           asset: 'DAI',
@@ -85,7 +91,7 @@ describe('balances:getters', () => {
       },
       connectedExchanges: [
         {
-          location: 'bittrex',
+          location: SupportedExchange.BITTREX,
           name: 'Bitrex Acc'
         }
       ]
@@ -95,11 +101,7 @@ describe('balances:getters', () => {
       getters.aggregatedBalances(
         state,
         stub<BalanceGetters>(mockGetters),
-        stub<RotkehlchenState>({
-          session: stub<SessionState>({
-            ignoredAssets: []
-          })
-        }),
+        stub<RotkehlchenState>(),
         stub()
       ),
       'asset'
@@ -169,25 +171,6 @@ describe('balances:getters', () => {
     ).toMatchObject(['My monero wallet', 'My Bank Account']);
   });
 
-  test('assetInfo', () => {
-    const eth: SupportedAsset = {
-      identifier: 'ETH',
-      name: 'Ethereum',
-      started: 1438214400,
-      symbol: 'ETH',
-      coingecko: '',
-      cryptocompare: '',
-      assetType: 'own chain'
-    };
-
-    // @ts-ignore
-    const actual = getters.assetInfo({
-      supportedAssets: [eth]
-    });
-    expect(actual('ETH')).toMatchObject(eth);
-    expect(actual('BTC')).toBeUndefined();
-  });
-
   test('btcAccounts', () => {
     const accounts: BtcAccountData = {
       standalone: [
@@ -237,7 +220,14 @@ describe('balances:getters', () => {
     store.commit('balances/btcAccounts', accounts);
     store.commit('balances/updateBtc', balances);
 
-    expect(store.getters['balances/btcAccounts']).toEqual([
+    const btcAccounts = getters.btcAccounts(
+      store.state.balances!!,
+      getters as any as BalanceGetters,
+      stub<RotkehlchenState>(),
+      null
+    );
+
+    expect(btcAccounts).toEqual([
       {
         address: '123',
         balance: {

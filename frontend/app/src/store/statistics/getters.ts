@@ -1,9 +1,10 @@
 import { AssetBalance, BigNumber } from '@rotki/common';
 import { TimeUnit } from '@rotki/common/lib/settings';
 import { TimeFramePeriod, timeframes } from '@rotki/common/lib/settings/graphs';
+import { NetValue } from '@rotki/common/lib/statistics';
 import dayjs from 'dayjs';
+import { CURRENCY_USD } from '@/data/currencies';
 import { aggregateTotal } from '@/filters';
-import { NetValue } from '@/services/types-api';
 import { NonFungibleBalance } from '@/store/balances/types';
 import { OverallPerformance, StatisticsState } from '@/store/statistics/types';
 import { RotkehlchenState } from '@/store/types';
@@ -40,7 +41,7 @@ export const getters: Getters<
             ? bigNumberify(value)
             : value;
         const convertedValue =
-          currency === 'USD'
+          currency === CURRENCY_USD
             ? bigNumber
             : bigNumber.multipliedBy(exchangeRate(currency));
         return convertedValue.toNumber();
@@ -64,8 +65,8 @@ export const getters: Getters<
       const now = Math.floor(new Date().getTime() / 1000);
       const netWorth = getters.totalNetWorth.toNumber();
       return {
-        times: netWorth > 0 ? [...netValue.times, now] : [...netValue.times],
-        data: netWorth > 0 ? [...netValue.data, netWorth] : [...netValue.data]
+        times: [...netValue.times, now],
+        data: [...netValue.data, netWorth]
       };
     },
 
@@ -78,7 +79,6 @@ export const getters: Getters<
       'balances/liabilities': liabilities,
       'balances/nfBalances': nfBalances,
       'balances/exchangeRate': exchangeRate,
-      'session/floatingPrecision': floatingPrecision,
       'session/currencySymbol': mainCurrency
     }
   ) => {
@@ -86,24 +86,23 @@ export const getters: Getters<
     const totalLiabilities = liabilities as AssetBalance[];
     const nfbs = nfBalances as NonFungibleBalance[];
     const rate = exchangeRate(mainCurrency);
+    let nftTotal = Zero;
 
-    const nfTotal = nfbs.reduce((sum, balance) => {
-      return sum
-        .plus(balance.usdPrice.multipliedBy(rate))
-        .dp(floatingPrecision, BigNumber.ROUND_DOWN);
-    }, Zero);
+    if (_rootState.settings?.nftsInNetValue) {
+      nftTotal = nfbs.reduce((sum, balance) => {
+        return sum.plus(balance.usdPrice.multipliedBy(rate));
+      }, Zero);
+    }
 
     const assetSum = aggregateTotal(
       balances,
       mainCurrency,
-      exchangeRate(mainCurrency),
-      floatingPrecision
-    ).plus(nfTotal);
+      exchangeRate(mainCurrency)
+    ).plus(nftTotal);
     const liabilitySum = aggregateTotal(
       totalLiabilities,
       mainCurrency,
-      exchangeRate(mainCurrency),
-      floatingPrecision
+      exchangeRate(mainCurrency)
     );
     return assetSum.minus(liabilitySum);
   },

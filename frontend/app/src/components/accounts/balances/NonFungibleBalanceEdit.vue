@@ -9,9 +9,8 @@
       <template #title>{{ $t('non_fungible_balance_edit.title') }}</template>
       <template #subtitle> {{ value.name }}</template>
       <asset-select v-model="asset" outlined />
-      <v-text-field
+      <amount-input
         v-model="price"
-        type="number"
         :label="$t('non_fungible_balance_edit.price')"
         outlined
         single-line
@@ -39,6 +38,7 @@ import {
   ref,
   toRefs
 } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import { NonFungibleBalance } from '@/store/balances/types';
 import { assert } from '@/utils/assertions';
 
@@ -56,17 +56,17 @@ export default defineComponent({
     const asset = ref<string | null>(null);
     const price = ref<string | null>(null);
     const valid = computed(() => {
-      return asset.value && price.value && !isNaN(parseInt(price.value));
+      return get(asset) && get(price) && !isNaN(parseInt(get(price)!));
     });
     const close = () => emit('close');
     const save = () => {
-      assert(asset.value);
-      assert(price.value);
-      emit('save', { asset: asset.value, price: price.value });
+      assert(get(asset));
+      assert(get(price));
+      emit('save', { asset: get(asset), price: get(price) });
     };
     onMounted(() => {
-      asset.value = value.value.priceAsset;
-      price.value = value.value.priceInAsset.toString();
+      set(asset, get(value).priceAsset);
+      set(price, get(value).priceInAsset.toFixed());
     });
     return {
       valid,

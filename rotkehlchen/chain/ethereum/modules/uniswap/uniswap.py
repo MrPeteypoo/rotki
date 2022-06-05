@@ -7,7 +7,7 @@ from rotkehlchen.assets.utils import get_or_create_ethereum_token
 from rotkehlchen.chain.ethereum.graph import GRAPH_QUERY_LIMIT, Graph, format_query_indentation
 from rotkehlchen.chain.ethereum.interfaces.ammswap import UNISWAP_TRADES_PREFIX
 from rotkehlchen.chain.ethereum.interfaces.ammswap.ammswap import AMMSwapPlatform
-from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
+from rotkehlchen.chain.ethereum.interfaces.ammswap.types import (
     AddressEvents,
     AddressEventsBalances,
     AddressToLPBalances,
@@ -20,7 +20,8 @@ from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
 from rotkehlchen.chain.ethereum.interfaces.ammswap.utils import SUBGRAPH_REMOTE_ERROR_MSG
 from rotkehlchen.chain.ethereum.trades import AMMSwap, AMMTrade
 from rotkehlchen.constants import ZERO
-from rotkehlchen.errors import DeserializationError, ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.misc import ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
@@ -28,7 +29,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount_force_positive,
     deserialize_ethereum_address,
 )
-from rotkehlchen.typing import AssetAmount, ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.types import AssetAmount, ChecksumEthAddress, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 
@@ -36,7 +37,7 @@ from .graph import V3_SWAPS_QUERY
 from .utils import get_latest_lp_addresses, uniswap_lp_token_balances
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.db.dbhandler import DBHandler
 
@@ -51,7 +52,7 @@ class Uniswap(AMMSwapPlatform, EthereumModule):
 
     * Uniswap subgraph:
     https://github.com/Uniswap/uniswap-v2-subgraph
-    https://github.com/Uniswap/uniswap-v3-subgraph
+    https://github.com/croco-finance/uniswap-v3-subgraph
     """
     def __init__(
             self,
@@ -183,7 +184,7 @@ class Uniswap(AMMSwapPlatform, EthereumModule):
 
         # Insert requested events in DB
         all_events = []
-        for address in filter(lambda address: address in address_events, addresses):
+        for address in filter(lambda x: x in address_events, addresses):
             all_events.extend(address_events[address])
 
         self.database.add_amm_events(all_events)
@@ -293,7 +294,7 @@ class Uniswap(AMMSwapPlatform, EthereumModule):
 
         # Insert all unique swaps to the DB
         all_swaps = set()
-        for address in filter(lambda address: address in address_amm_trades, addresses):
+        for address in filter(lambda x: x in address_amm_trades, addresses):
             for trade in address_amm_trades[address]:
                 for swap in trade.swaps:
                     all_swaps.add(swap)
@@ -531,9 +532,6 @@ class Uniswap(AMMSwapPlatform, EthereumModule):
     def deactivate(self) -> None:
         self.database.delete_uniswap_trades_data()
         self.database.delete_uniswap_events_data()
-
-    def on_startup(self) -> None:
-        pass
 
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
         pass

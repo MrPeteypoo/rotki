@@ -1,4 +1,4 @@
-import { NumericString, BigNumber } from '@rotki/common';
+import { BigNumber, NumericString } from '@rotki/common';
 import { TimeFramePeriod } from '@rotki/common/lib/settings/graphs';
 import { z } from 'zod';
 import {
@@ -6,7 +6,13 @@ import {
   Watcher,
   WatcherTypes
 } from '@/services/session/types';
-import { AccountingSettings, GeneralSettings, Tags } from '@/typing/types';
+import { AccountingSettings, GeneralSettings, Tags } from '@/types/user';
+
+export enum PrivacyMode {
+  NORMAL = 0,
+  SEMI_PRIVATE = 1,
+  PRIVATE = 2
+}
 
 export interface SessionState {
   newAccount: boolean;
@@ -17,25 +23,26 @@ export interface SessionState {
   accountingSettings: AccountingSettings;
   premium: boolean;
   premiumSync: boolean;
-  privacyMode: boolean;
+  privacyMode: PrivacyMode;
   scrambleData: boolean;
   nodeConnection: boolean;
   syncConflict: SyncConflict;
   tags: Tags;
   watchers: Watcher<WatcherTypes>[];
   queriedAddresses: QueriedAddresses;
-  ignoredAssets: string[];
   lastBalanceSave: number;
   lastDataUpload: number;
   timeframe: TimeFramePeriod;
+  showUpdatePopup: boolean;
+  animationsEnabled: boolean;
 }
 
-export interface SyncConflictPayload {
-  readonly localSize: string;
-  readonly remoteSize: string;
-  readonly localLastModified: number;
-  readonly remoteLastModified: number;
-}
+export const SyncConflictPayload = z.object({
+  localLastModified: z.number(),
+  remoteLastModified: z.number()
+});
+
+export type SyncConflictPayload = z.infer<typeof SyncConflictPayload>;
 
 export interface SyncConflict {
   readonly message: string;

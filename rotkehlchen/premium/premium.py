@@ -7,21 +7,21 @@ from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from enum import Enum
 from http import HTTPStatus
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Literal, NamedTuple, Optional, Tuple
 from urllib.parse import urlencode
 
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.constants import ROTKEHLCHEN_SERVER_TIMEOUT
-from rotkehlchen.errors import (
+from rotkehlchen.errors.api import (
     IncorrectApiKeyFormat,
     PremiumApiError,
     PremiumAuthenticationError,
-    RemoteError,
 )
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import B64EncodedBytes, Timestamp
+from rotkehlchen.types import B64EncodedBytes, Timestamp
+from rotkehlchen.utils.misc import get_system_spec
 from rotkehlchen.utils.serialization import jsonloads_dict
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,10 @@ def _process_dict_response(response: requests.Response) -> Dict:
         )
 
     result_dict = jsonloads_dict(response.text)
+
+    if response.status_code == HTTPStatus.UNAUTHORIZED:
+        raise PremiumAuthenticationError(result_dict.get('message', 'no message given'))
+
     if 'error' in result_dict:
         raise RemoteError(result_dict['error'])
 
@@ -140,6 +144,7 @@ class Premium():
         self.credentials = credentials
         self.session.headers.update({
             'API-KEY': self.credentials.serialize_key(),
+            'User-Agent': f'rotki/{get_system_spec()["rotkehlchen"]}',
         })
 
     def set_credentials(self, credentials: PremiumCredentials) -> None:
@@ -163,7 +168,7 @@ class Premium():
             self.reset_credentials(old_credentials)
             raise PremiumAuthenticationError('Rotkehlchen API key was rejected by server')
 
-    def is_active(self) -> bool:
+    def is_active(self, catch_connection_errors: bool = True) -> bool:
         if self.status == SubscriptionStatus.ACTIVE:
             return True
 
@@ -172,6 +177,11 @@ class Premium():
             self.status = SubscriptionStatus.ACTIVE
             return True
         except RemoteError:
+            self.status = SubscriptionStatus.INACTIVE
+            if catch_connection_errors is False:
+                raise
+            return False
+        except PremiumAuthenticationError:
             self.status = SubscriptionStatus.INACTIVE
             return False
 
@@ -202,8 +212,10 @@ class Premium():
     ) -> Dict:
         """Uploads data to the server and returns the response dict
 
-        Raises RemoteError if there are problems reaching the server or if
+        May raise:
+        - RemoteError if there are problems reaching the server or if
         there is an error returned by the server
+        - PremiumAuthenticationError if the given key is rejected by the Rotkehlchen server
         """
         signature, data = self.sign(
             'save_data',
@@ -215,7 +227,7 @@ class Premium():
             compression=compression_type,
         )
         self.session.headers.update({
-            'API-SIGN': base64.b64encode(signature.digest()),  # type: ignore
+            'API-SIGN': base64.b64encode(signature.digest()),
         })
 
         try:
@@ -236,12 +248,14 @@ class Premium():
 
         Returns None if there is no DB saved in the server.
 
-        Raises RemoteError if there are problems reaching the server or if
+        May raise:
+        - RemoteError if there are problems reaching the server or if
         there is an error returned by the server
+        - PremiumAuthenticationError if the given key is rejected by the Rotkehlchen server
         """
         signature, data = self.sign('get_saved_data')
         self.session.headers.update({
-            'API-SIGN': base64.b64encode(signature.digest()),  # type: ignore
+            'API-SIGN': base64.b64encode(signature.digest()),
         })
 
         try:
@@ -261,12 +275,14 @@ class Premium():
         """Queries last metadata from the server and returns the response
         as a RemoteMetadata object.
 
-        Raises RemoteError if there are problems reaching the server or if
+        May raise:
+        - RemoteError if there are problems reaching the server or if
         there is an error returned by the server
+        - PremiumAuthenticationError if the given key is rejected by the Rotkehlchen server
         """
         signature, data = self.sign('last_data_metadata')
         self.session.headers.update({
-            'API-SIGN': base64.b64encode(signature.digest()),  # type: ignore
+            'API-SIGN': base64.b64encode(signature.digest()),
         })
 
         try:
@@ -292,12 +308,14 @@ class Premium():
     def query_premium_components(self) -> str:
         """Queries for the source code of the premium components from the server
 
-        Raises RemoteError if there are problems reaching the server or if
+        May raise:
+        - RemoteError if there are problems reaching the server or if
         there is an error returned by the server
+        - Raises PremiumAuthenticationError if the given key is rejected by the Rotkehlchen server
         """
-        signature, data = self.sign('statistics_rendererv2', version=1)
+        signature, data = self.sign('statistics_rendererv2', version=2)
         self.session.headers.update({
-            'API-SIGN': base64.b64encode(signature.digest()),  # type: ignore
+            'API-SIGN': base64.b64encode(signature.digest()),
         })
 
         try:
@@ -324,7 +342,7 @@ class Premium():
 
         signature, _ = self.sign('watchers', **data)
         self.session.headers.update({
-            'API-SIGN': base64.b64encode(signature.digest()),  # type: ignore
+            'API-SIGN': base64.b64encode(signature.digest()),
         })
 
         try:
@@ -347,11 +365,13 @@ def premium_create_and_verify(credentials: PremiumCredentials) -> Premium:
 
     Returns the created premium object
 
-    raises PremiumAuthenticationError if the given key is rejected by the server
+    May Raise:
+    - PremiumAuthenticationError if the given key is rejected by the server
+    - RemoteError if there are problems reaching the server
     """
     premium = Premium(credentials)
 
-    if premium.is_active():
+    if premium.is_active(catch_connection_errors=True):
         return premium
 
     raise PremiumAuthenticationError('Rotkehlchen API key was rejected by server')

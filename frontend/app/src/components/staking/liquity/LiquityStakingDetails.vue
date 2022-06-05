@@ -1,7 +1,7 @@
 <template>
-  <fragment>
-    <v-row>
-      <v-col>
+  <div>
+    <v-row align="center" no-gutters class="pt-2">
+      <v-col cols="6">
         <blockchain-account-selector
           v-model="selectedAccount"
           :label="$t('liquity_staking_details.select_account')"
@@ -11,13 +11,13 @@
           no-padding
           flat
           :usable-addresses="availableAddresses"
-          :max-width="isMobile ? '100%' : '250px'"
         />
       </v-col>
+      <v-col />
       <v-col v-if="$slots.modules" cols="auto">
         <slot name="modules" />
       </v-col>
-      <v-col cols="auto">
+      <v-col cols="auto" class="pl-2">
         <refresh-button
           :tooltip="$t('liquity_staking_details.refresh_tooltip')"
           :loading="eventsLoading || loading"
@@ -37,45 +37,49 @@
       :loading="eventsLoading"
       class="mt-8"
     />
-  </fragment>
+  </div>
 </template>
 
 <script lang="ts">
 import { AssetBalance } from '@rotki/common';
 import { GeneralAccount } from '@rotki/common/lib/account';
-import { LiquityStakingEvent } from '@rotki/common/lib/liquity';
+import {
+  LiquityStaking,
+  LiquityStakingEvent,
+  LiquityStakingEvents
+} from '@rotki/common/lib/liquity';
 import { computed, defineComponent, ref } from '@vue/composition-api';
-import Fragment from '@/components/helper/Fragment';
+import { get, toRefs } from '@vueuse/core';
 import RefreshButton from '@/components/helper/RefreshButton.vue';
 import LiquityStake from '@/components/staking/liquity/LiquityStake.vue';
 import { isSectionLoading, setupThemeCheck } from '@/composables/common';
 import { LiquityStakeEvents } from '@/premium/premium';
 import { Section } from '@/store/const';
-import { RotkehlchenState } from '@/store/types';
-import { useStore } from '@/store/utils';
+import { useLiquityStore } from '@/store/defi/liquity';
 
 export default defineComponent({
   name: 'LiquityStakingDetails',
   components: {
     LiquityStake,
     RefreshButton,
-    Fragment,
     LiquityStakeEvents
   },
   setup() {
     const selectedAccount = ref<GeneralAccount | null>(null);
-    const store = useStore();
-    const state: RotkehlchenState = store.state;
+
+    const liquityStore = useLiquityStore();
+    const { staking, stakingEvents } = toRefs(liquityStore);
+    const { fetchStaking, fetchStakingEvents } = liquityStore;
 
     const stakingList = computed(() => {
-      const { staking } = state.defi!!.liquity!!;
       const staked: Record<string, AssetBalance> = {};
-      for (const address in staking) {
-        const account = selectedAccount.value;
+      const stake = get(staking) as LiquityStaking;
+      for (const address in stake) {
+        const account = get(selectedAccount);
         if (account && account.address !== address) {
           continue;
         }
-        const addressStake = staking[address];
+        const addressStake = stake[address];
         const asset = addressStake.asset;
         const assetStake = staked[asset];
 
@@ -93,28 +97,27 @@ export default defineComponent({
     });
 
     const stakingEventsList = computed(() => {
-      const { stakingEvents } = state.defi!!.liquity!!;
+      const allEvents = get(stakingEvents) as LiquityStakingEvents;
       const events: LiquityStakingEvent[] = [];
-      for (const address in stakingEvents) {
-        const account = selectedAccount.value;
+      for (const address in allEvents) {
+        const account = get(selectedAccount);
         if (account && account.address !== address) {
           continue;
         }
-        events.push(...stakingEvents[address]);
+        events.push(...allEvents[address]);
       }
       return events;
     });
 
     const availableAddresses = computed(() => {
-      const { staking, stakingEvents } = state.defi!!.liquity!!;
-      return [...Object.keys(staking), ...Object.keys(stakingEvents)];
+      return [...Object.keys(get(staking)), ...Object.keys(get(stakingEvents))];
     });
 
     const { isMobile } = setupThemeCheck();
 
     const refresh = async () => {
-      await store.dispatch('defi/liquity/fetchStaking', true);
-      await store.dispatch('defi/liquity/fetchStakingEvents', true);
+      await fetchStaking(true);
+      await fetchStakingEvents(true);
     };
 
     return {

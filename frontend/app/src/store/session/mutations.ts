@@ -12,7 +12,7 @@ import {
   AccountingSettingsUpdate,
   GeneralSettings,
   Tags
-} from '@/typing/types';
+} from '@/types/user';
 
 export const mutations: MutationTree<SessionState> = {
   login(
@@ -30,7 +30,7 @@ export const mutations: MutationTree<SessionState> = {
   generalSettings(state: SessionState, settings: GeneralSettings) {
     state.generalSettings = Object.assign(state.generalSettings, settings);
   },
-  privacyMode(state: SessionState, privacyMode: boolean) {
+  privacyMode(state: SessionState, privacyMode: number) {
     state.privacyMode = privacyMode;
   },
   scrambleData(state: SessionState, scrambleData: boolean) {
@@ -72,9 +72,6 @@ export const mutations: MutationTree<SessionState> = {
   queriedAddresses(state: SessionState, queriedAddresses: QueriedAddresses) {
     state.queriedAddresses = queriedAddresses;
   },
-  ignoreAssets(state: SessionState, ignoredAssets: string[]) {
-    state.ignoredAssets = ignoredAssets;
-  },
   updateLastBalanceSave(state: SessionState, lastBalanceSave: number) {
     state.lastBalanceSave = lastBalanceSave;
   },
@@ -83,5 +80,11 @@ export const mutations: MutationTree<SessionState> = {
   },
   setTimeframe(state: SessionState, timeframe: TimeFramePeriod) {
     state.timeframe = timeframe;
+  },
+  setShowUpdatePopup(state: SessionState, showUpdatePopup: boolean) {
+    state.showUpdatePopup = showUpdatePopup;
+  },
+  setAnimationsEnabled(state: SessionState, animationsEnabled: boolean) {
+    state.animationsEnabled = animationsEnabled;
   }
 };

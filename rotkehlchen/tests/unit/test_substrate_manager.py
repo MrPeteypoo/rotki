@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from rotkehlchen.chain.substrate.manager import SubstrateManager
-from rotkehlchen.chain.substrate.typing import (
+from rotkehlchen.chain.substrate.types import (
     BlockNumber,
     KusamaNodeName,
     NodeNameAttributes,
@@ -12,7 +12,7 @@ from rotkehlchen.chain.substrate.typing import (
 )
 from rotkehlchen.constants.assets import A_KSM
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import RemoteError
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.substrate import (
     SUBSTRATE_ACC1_KSM_ADDR,

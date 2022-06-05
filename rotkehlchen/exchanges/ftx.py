@@ -4,20 +4,32 @@ import time
 from collections import defaultdict
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, DefaultDict, Dict, List, Optional, Tuple, Union, overload
-from urllib.parse import urlencode, quote
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    DefaultDict,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Union,
+    overload,
+)
+from urllib.parse import quote, urlencode
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_ftx
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.history.deserialization import deserialize_price
@@ -28,9 +40,16 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount_force_positive,
     deserialize_fee,
     deserialize_timestamp_from_date,
-    deserialize_trade_type,
 )
-from rotkehlchen.typing import ApiKey, ApiSecret, AssetMovementCategory, Fee, Location, Timestamp
+from rotkehlchen.types import (
+    ApiKey,
+    ApiSecret,
+    AssetMovementCategory,
+    Fee,
+    Location,
+    Timestamp,
+    TradeType,
+)
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
 from rotkehlchen.utils.mixins.lockable import protect_with_lock
@@ -46,6 +65,8 @@ BACKOFF_LIMIT = 60
 PAGINATION_LIMIT = 100
 
 FTX_SUBACCOUNT_DB_SETTING = 'ftx_subaccount'
+FTX_BASE_URL = 'https://ftx.com'
+FTXUS_BASE_URL = 'https://ftx.us'
 
 
 def trade_from_ftx(raw_trade: Dict[str, Any]) -> Optional[Trade]:
@@ -63,7 +84,7 @@ def trade_from_ftx(raw_trade: Dict[str, Any]) -> Optional[Trade]:
         return None
 
     timestamp = deserialize_timestamp_from_date(raw_trade['time'], 'iso8601', 'FTX')
-    trade_type = deserialize_trade_type(raw_trade['side'])
+    trade_type = TradeType.deserialize(raw_trade['side'])
     base_asset = asset_from_ftx(raw_trade['baseCurrency'])
     quote_asset = asset_from_ftx(raw_trade['quoteCurrency'])
     amount = deserialize_asset_amount(raw_trade['size'])
@@ -94,7 +115,8 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             secret: ApiSecret,
             database: 'DBHandler',
             msg_aggregator: MessagesAggregator,
-            ftx_subaccount_name: Optional[str] = None,
+            ftx_subaccount: Optional[str] = None,
+            uri: str = FTX_BASE_URL,
     ):
         super().__init__(
             name=name,
@@ -104,15 +126,17 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             database=database,
         )
         self.apiversion = 'v2'
-        self.base_uri = 'https://ftx.com'
+        self.base_uri = uri
         self.msg_aggregator = msg_aggregator
-        self.session.headers.update({'FTX-KEY': self.api_key})
-        self.subaccount = ftx_subaccount_name
-        if self.subaccount is None:
-            self.subaccount = self.db.get_ftx_subaccount(self.name)
-
+        self.subaccount = ftx_subaccount
+        self.base_header_string = 'FTX'
+        if self.base_uri == FTXUS_BASE_URL:
+            self.base_header_string = 'FTXUS'
+        self.session.headers.update({f'{self.base_header_string}-KEY': self.api_key})
         if self.subaccount is not None:
-            self.session.headers.update({'FTX-SUBACCOUNT': quote(self.subaccount)})
+            self.session.headers.update(
+                {f'{self.base_header_string}-SUBACCOUNT': quote(self.subaccount)},
+            )
 
     def first_connection(self) -> None:
         self.first_connection_made = True
@@ -125,13 +149,15 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
     ) -> bool:
         changed = super().edit_exchange_credentials(api_key, api_secret, passphrase)
         if api_key is not None:
-            self.session.headers.update({'FTX-KEY': self.api_key})
+            self.session.headers.update({f'{self.base_header_string}-KEY': self.api_key})
             subaccount = self.db.get_ftx_subaccount(self.name)
             if subaccount is not None:
-                self.session.headers.update({'FTX-SUBACCOUNT': quote(subaccount)})
+                self.session.headers.update(
+                    {f'{self.base_header_string}-SUBACCOUNT': quote(subaccount)},
+                )
                 self.subaccount = subaccount
             else:
-                self.session.headers.pop('FTX-SUBACCOUNT', None)
+                self.session.headers.pop(f'{self.base_header_string}-SUBACCOUNT', None)
 
         return changed
 
@@ -185,8 +211,8 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             signature = hmac.new(self.secret, signature_payload, 'sha256').hexdigest()
             log.debug('FTX API query', request_url=request_url)
             self.session.headers.update({
-                'FTX-SIGN': signature,
-                'FTX-TS': str(timestamp),
+                f'{self.base_header_string}-SIGN': signature,
+                f'{self.base_header_string}-TS': str(timestamp),
             })
 
             full_url = self.base_uri + request_url
@@ -426,7 +452,7 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
 
         raw_data = self._api_query('fills', start_time=start_ts, end_time=end_ts)
         log.debug('FTX trades history result', results_num=len(raw_data))
@@ -463,7 +489,7 @@ class Ftx(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 continue
             if trade:
                 trades.append(trade)
-        return trades
+        return trades, (start_ts, end_ts)
 
     def _deserialize_asset_movement(
         self,

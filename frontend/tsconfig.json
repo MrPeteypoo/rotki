@@ -1,0 +1,54 @@
+{
+  "compilerOptions": {
+    "target": "es2018",
+    "module": "esnext",
+    "strict": true,
+    "jsx": "preserve",
+    "importHelpers": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "experimentalDecorators": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "allowJs": false,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "types": [
+      "vuetify",
+      "vite/client",
+      "unplugin-vue2-script-setup/types"
+    ],
+    "paths": {
+      "@/*": [
+        "app/src/*"
+      ],
+      "@rotki/common/*": [
+        "common/src/*"
+      ]
+    },
+    "lib": [
+      "esnext",
+      "dom",
+      "dom.iterable",
+      "scripthost"
+    ],
+    "typeRoots": [
+      "node_modules/@types"
+    ]
+  },
+  "references": [
+    {
+      "path": "app"
+    },
+    {
+      "path": "common"
+    }
+  ],
+  "include": [
+    ".eslintrc.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "common/lib"
+  ]
+}

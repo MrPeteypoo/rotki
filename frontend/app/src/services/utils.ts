@@ -2,6 +2,7 @@ import { ActionResult } from '@rotki/common/lib/data';
 import { AxiosResponse } from 'axios';
 import { axiosSnakeCaseTransformer } from '@/services/axios-tranformers';
 import { ApiImplementation, PendingTask } from '@/services/types-api';
+import { Collection, CollectionResponse } from '@/types/collection';
 
 export function fetchExternalAsync(
   api: ApiImplementation,
@@ -20,12 +21,42 @@ export function fetchExternalAsync(
     .then(handleResponse);
 }
 
-export function handleResponse<T>(response: AxiosResponse<ActionResult<T>>): T {
-  const { result, message } = response.data;
+type Parser<T> = (response: AxiosResponse<ActionResult<T>>) => ActionResult<T>;
+
+export function handleResponse<T>(
+  response: AxiosResponse<ActionResult<T>>,
+  parse: Parser<T> = response => response.data
+): T {
+  const { result, message } = parse(response);
   if (result) {
     return result;
   }
   throw new Error(message);
+}
+
+export function mapCollectionResponse<T>(
+  response: CollectionResponse<T>
+): Collection<T> {
+  return {
+    data: response.entries,
+    found: response.entriesFound,
+    limit: response.entriesLimit,
+    total: response.entriesTotal
+  };
+}
+
+export function paramsSerializer(params: { [key: string]: any }): string {
+  const list = [];
+  for (const [key, value] of Object.entries(params)) {
+    if (value === null || value === undefined) continue;
+
+    if (Array.isArray(value)) {
+      list.push(`${key}=${value.join(',')}`);
+    } else {
+      list.push(`${key}=${value}`);
+    }
+  }
+  return list.join('&');
 }
 
 /**
@@ -82,6 +113,18 @@ export function validWithSessionAndExternalService(status: number): boolean {
  */
 export function validStatus(status: number): boolean {
   return isValid([200, 400, 409], status);
+}
+
+/**
+ * Used to validate a status. This validation considers valid responses the following
+ * codes 200, 400, 409, or 507. This validation method should be used with requests that take
+ * perform a file operation, take parameters, and that require a logged in user (code 409).
+ *
+ * @param status The status code received in the backend's response
+ * @return The validity of the status code
+ */
+export function validFileOperationStatus(status: number): boolean {
+  return isValid([200, 400, 409, 507], status);
 }
 
 /**

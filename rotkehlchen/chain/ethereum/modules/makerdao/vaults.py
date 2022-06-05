@@ -5,14 +5,10 @@ from typing import TYPE_CHECKING, Any, DefaultDict, Dict, List, NamedTuple, Opti
 
 from gevent.lock import Semaphore
 
-from rotkehlchen.accounting.structures import (
-    AssetBalance,
-    Balance,
-    BalanceSheet,
-    DefiEvent,
-    DefiEventType,
-)
+from rotkehlchen.accounting.structures.balance import AssetBalance, Balance, BalanceSheet
+from rotkehlchen.accounting.structures.defi import DefiEvent, DefiEventType
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.chain.ethereum.defi.defisaver_proxy import HasDSProxy
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value, token_normalized_value
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import (
@@ -27,6 +23,7 @@ from rotkehlchen.constants.assets import (
     A_LINK,
     A_LRC,
     A_MANA,
+    A_MATIC,
     A_PAX,
     A_RENBTC,
     A_TUSD,
@@ -55,6 +52,7 @@ from rotkehlchen.constants.ethereum import (
     MAKERDAO_LINK_A_JOIN,
     MAKERDAO_LRC_A_JOIN,
     MAKERDAO_MANA_A_JOIN,
+    MAKERDAO_MATIC_A_JOIN,
     MAKERDAO_PAXUSD_A_JOIN,
     MAKERDAO_RENBTC_A_JOIN,
     MAKERDAO_SPOT,
@@ -65,23 +63,26 @@ from rotkehlchen.constants.ethereum import (
     MAKERDAO_USDT_A_JOIN,
     MAKERDAO_VAT,
     MAKERDAO_WBTC_A_JOIN,
+    MAKERDAO_WBTC_B_JOIN,
+    MAKERDAO_WBTC_C_JOIN,
     MAKERDAO_YFI_A_JOIN,
     MAKERDAO_ZRX_A_JOIN,
+    RAY_DIGITS,
 )
 from rotkehlchen.constants.timing import YEAR_IN_SECONDS
-from rotkehlchen.errors import DeserializationError, RemoteError
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import query_usd_price_or_use_default
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
-from rotkehlchen.utils.misc import address_to_bytes32, hexstr_to_int, ts_now
+from rotkehlchen.utils.misc import address_to_bytes32, hexstr_to_int, shift_num_right_by, ts_now
 
-from .common import MakerdaoCommon
-from .constants import MAKERDAO_REQUERY_PERIOD, RAY, RAY_DIGITS, WAD
+from .constants import MAKERDAO_REQUERY_PERIOD, RAY, WAD
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager
@@ -102,6 +103,8 @@ GEMJOIN_MAPPING = {
     'USDC-B': MAKERDAO_USDC_B_JOIN,
     'USDT-A': MAKERDAO_USDT_A_JOIN,
     'WBTC-A': MAKERDAO_WBTC_A_JOIN,
+    'WBTC-B': MAKERDAO_WBTC_B_JOIN,
+    'WBTC-C': MAKERDAO_WBTC_C_JOIN,
     'ZRX-A': MAKERDAO_ZRX_A_JOIN,
     'MANA-A': MAKERDAO_MANA_A_JOIN,
     'PAXUSD-A': MAKERDAO_PAXUSD_A_JOIN,
@@ -114,6 +117,7 @@ GEMJOIN_MAPPING = {
     'UNI-A': MAKERDAO_UNI_A_JOIN,
     'RENBTC-A': MAKERDAO_RENBTC_A_JOIN,
     'AAVE-A': MAKERDAO_AAVE_A_JOIN,
+    'MATIC-A': MAKERDAO_MATIC_A_JOIN,
 }
 COLLATERAL_TYPE_MAPPING = {
     'BAT-A': A_BAT,
@@ -126,6 +130,8 @@ COLLATERAL_TYPE_MAPPING = {
     'USDC-B': A_USDC,
     'USDT-A': A_USDT,
     'WBTC-A': A_WBTC,
+    'WBTC-B': A_WBTC,
+    'WBTC-C': A_WBTC,
     'ZRX-A': A_ZRX,
     'MANA-A': A_MANA,
     'PAXUSD-A': A_PAX,
@@ -138,26 +144,8 @@ COLLATERAL_TYPE_MAPPING = {
     'UNI-A': A_UNI,
     'RENBTC-A': A_RENBTC,
     'AAVE-A': A_AAVE,
+    'MATIC-A': A_MATIC,
 }
-
-
-def _shift_num_right_by(num: int, digits: int) -> int:
-    """Shift a number to the right by discarding some digits
-
-    We actually use string conversion here since division can provide
-    wrong results due to precision errors for very big numbers. e.g.:
-    6150000000000000000000000000000000000000000000000 // 1e27
-    6.149999999999999e+21   <--- wrong
-    """
-    try:
-        return int(str(num)[:-digits])
-    except ValueError:
-        # this can happen if num is 0, in which case the shifting code above will raise
-        # https://github.com/rotki/rotki/issues/3310
-        # Also log if it happens for any other reason
-        if num != 0:
-            log.error(f'At makerdao _shift_num_right_by() got unecpected value {num} for num')
-        return 0
 
 
 class VaultEventType(Enum):
@@ -258,7 +246,7 @@ class MakerdaoVaultDetails(NamedTuple):
     events: List[VaultEvent]
 
 
-class MakerdaoVaults(MakerdaoCommon):
+class MakerdaoVaults(HasDSProxy):
 
     def __init__(
             self,
@@ -528,7 +516,7 @@ class MakerdaoVaults(MakerdaoCommon):
             from_block=MAKERDAO_VAT.deployed_block,
         )
         for event in events:
-            given_amount = _shift_num_right_by(hexstr_to_int(event['topics'][3]), RAY_DIGITS)
+            given_amount = shift_num_right_by(hexstr_to_int(event['topics'][3]), RAY_DIGITS)
             total_dai_wei += given_amount
             amount = token_normalized_value(
                 token_amount=given_amount,
@@ -704,7 +692,7 @@ class MakerdaoVaults(MakerdaoCommon):
 
         with self.lock:
             self.vault_mappings = defaultdict(list)
-            proxy_mappings = self._get_accounts_having_maker_proxy()
+            proxy_mappings = self._get_accounts_having_proxy()
             vaults = []
             for user_address, proxy in proxy_mappings.items():
                 vaults.extend(
@@ -735,7 +723,7 @@ class MakerdaoVaults(MakerdaoCommon):
             return self.vault_details
 
         self.vault_details = []
-        proxy_mappings = self._get_accounts_having_maker_proxy()
+        proxy_mappings = self._get_accounts_having_proxy()
         # Make sure that before querying vault details there has been a recent vaults call
         vaults = self.get_vaults()
         for vault in vaults:
@@ -835,7 +823,7 @@ class MakerdaoVaults(MakerdaoCommon):
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List[AssetBalance]]:  # pylint: disable=useless-return  # noqa: E501
         super().on_account_addition(address)
         # Check if it has been added to the mapping
-        proxy_address = self.proxy_mappings.get(address)
+        proxy_address = self.address_to_proxy.get(address)
         if proxy_address:
             # get any vaults the proxy owns
             self._get_vaults_of_address(user_address=address, proxy_address=proxy_address)

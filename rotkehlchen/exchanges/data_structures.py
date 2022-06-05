@@ -1,20 +1,25 @@
+import logging
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, NamedTuple, Optional, Tuple
 
+from rotkehlchen.accounting.mixins.event import AccountingEventMixin, AccountingEventType
+from rotkehlchen.accounting.structures.base import ActionType
 from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.converters import asset_from_binance
+from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.crypto import sha3
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.deserialization import deserialize_price
+from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount,
     deserialize_fee,
     deserialize_optional,
     deserialize_timestamp,
-    deserialize_trade_type,
-    deserialize_trade_type_from_db,
 )
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     AssetAmount,
     AssetMovementCategory,
     Fee,
@@ -26,6 +31,13 @@ from rotkehlchen.typing import (
     TradeType,
 )
 from rotkehlchen.user_messages import MessagesAggregator
+
+if TYPE_CHECKING:
+    from rotkehlchen.accounting.pot import AccountingPot
+
+
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 
 def hash_id(hashable: str) -> TradeID:
@@ -48,7 +60,8 @@ AssetMovementDBTuple = Tuple[
 ]
 
 
-class AssetMovement(NamedTuple):
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=True)
+class AssetMovement(AccountingEventMixin):
     location: Location
     category: AssetMovementCategory
     timestamp: Timestamp
@@ -89,7 +102,7 @@ class AssetMovement(NamedTuple):
         return hash_id(string)
 
     def serialize(self) -> Dict[str, Any]:
-        result = self._asdict()  # pylint: disable=no-member
+        result = self.__dict__
         result['identifier'] = self.identifier
         return result
 
@@ -106,13 +119,55 @@ class AssetMovement(NamedTuple):
             transaction_id=entry[4],
             timestamp=Timestamp(entry[5]),
             asset=Asset(entry[6]),
-            # TODO: should we also _force_positive here? I guess not since
-            # we always make sure to save it as positive
             amount=deserialize_asset_amount(entry[7]),
             fee_asset=Asset(entry[8]),
             fee=deserialize_fee(entry[9]),
             link=entry[10],
         )
+
+    # -- Methods of AccountingEventMixin
+
+    def get_timestamp(self) -> Timestamp:
+        return self.timestamp
+
+    @staticmethod
+    def get_accounting_event_type() -> AccountingEventType:
+        return AccountingEventType.ASSET_MOVEMENT
+
+    def get_identifier(self) -> str:
+        return self.identifier
+
+    def get_assets(self) -> List[Asset]:
+        return [self.asset, self.fee_asset]
+
+    def should_ignore(self, ignored_ids_mapping: Dict[ActionType, List[str]]) -> bool:
+        return self.identifier in ignored_ids_mapping.get(ActionType.ASSET_MOVEMENT, [])
+
+    def process(
+            self,
+            accounting: 'AccountingPot',
+            events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
+    ) -> int:
+        if self.asset.identifier == 'KFEE' or not accounting.settings.account_for_assets_movements:
+            # There is no reason to process deposits of KFEE for kraken as it has only value
+            # internal to kraken and KFEE has no value and will error at cryptocompare price query
+            return 1
+
+        if self.fee == ZERO:
+            return 1
+
+        accounting.add_spend(
+            event_type=AccountingEventType.ASSET_MOVEMENT,
+            notes=f'{self.location} {str(self.category)}',
+            location=self.location,
+            timestamp=self.timestamp,
+            asset=self.fee_asset,
+            amount=self.fee,
+            taxable=True,
+            count_entire_amount_spend=True,
+            count_cost_basis_pnl=True,
+        )
+        return 1
 
 
 TradeDBTuple = Tuple[
@@ -131,7 +186,8 @@ TradeDBTuple = Tuple[
 ]
 
 
-class Trade(NamedTuple):
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=False)
+class Trade(AccountingEventMixin):
     """Represents a Trade
 
     Pairs are represented as BASE_QUOTE. When a buy is made, then the BASE
@@ -146,7 +202,7 @@ class Trade(NamedTuple):
 
     All trades have a unique ID which is generated from some of the attributes.
     For details check identifier() function
-    This unique ID is not stored in the NamedTuple since it depends on some of
+    This unique ID is not stored in the structure since it depends on some of
     its attributes.
     """
     timestamp: Timestamp
@@ -158,14 +214,14 @@ class Trade(NamedTuple):
     # sold if it's a sell. Should NOT include fees
     amount: AssetAmount
     rate: Price
-    fee: Optional[Fee]
-    fee_currency: Optional[Asset]
+    fee: Optional[Fee] = None
+    fee_currency: Optional[Asset] = None
     # For external trades this is optional and is a link to the trade in an explorer
     # For exchange trades this should be the exchange unique trade identifer
     # For trades imported from third parties we should generate a unique id for this.
     # If trades are both imported from third parties like cointracking.info and from
     # the exchanges themselves then there is no way to avoid duplicates.
-    link: Optional[str]
+    link: Optional[str] = None
     notes: Optional[str] = None
 
     @property
@@ -219,7 +275,7 @@ class Trade(NamedTuple):
             location=Location.deserialize_from_db(entry[2]),
             base_asset=Asset(entry[3]),
             quote_asset=Asset(entry[4]),
-            trade_type=deserialize_trade_type_from_db(entry[5]),
+            trade_type=TradeType.deserialize_from_db(entry[5]),
             amount=deserialize_asset_amount(entry[6]),
             rate=deserialize_price(entry[7]),
             fee=deserialize_optional(entry[8], deserialize_fee),
@@ -227,6 +283,106 @@ class Trade(NamedTuple):
             link=entry[10],
             notes=entry[11],
         )
+
+    # -- Methods of AccountingEventMixin
+
+    def get_timestamp(self) -> Timestamp:
+        return self.timestamp
+
+    @staticmethod
+    def get_accounting_event_type() -> AccountingEventType:
+        return AccountingEventType.TRADE
+
+    def get_identifier(self) -> str:
+        return self.identifier
+
+    def get_assets(self) -> List[Asset]:
+        return [self.base_asset, self.quote_asset]
+
+    def should_ignore(self, ignored_ids_mapping: Dict[ActionType, List[str]]) -> bool:
+        return self.identifier in ignored_ids_mapping.get(ActionType.TRADE, [])
+
+    def process(
+            self,
+            accounting: 'AccountingPot',
+            events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
+    ) -> int:
+        if self.rate == ZERO:
+            return 1  # nothing to do for a trade with zero rate
+
+        if self.trade_type == TradeType.BUY:
+            asset_in = self.base_asset
+            amount_in = self.amount
+            asset_out = self.quote_asset
+            amount_out = self.rate * self.amount
+            notes = f'Buy {asset_in} with {asset_out}.'
+        elif self.trade_type == TradeType.SELL:
+            asset_out = self.base_asset
+            amount_out = self.amount
+            asset_in = self.quote_asset
+            amount_in = self.rate * self.amount  # type: ignore
+            notes = f'Sell {asset_out} for {asset_in}.'
+        else:  # settlement buy/sell only in poloniex. Should properly process when margin
+            return 1  # trades are implemented
+
+        prices = accounting.get_prices_for_swap(
+            timestamp=self.timestamp,
+            amount_in=amount_in,
+            asset_in=asset_in,
+            amount_out=amount_out,
+            asset_out=asset_out,
+            fee=self.fee,
+            fee_asset=self.fee_currency,
+        )
+        if prices is None:
+            log.debug(f'Skipping {self} at accounting due to inability to find a price')
+            return 1
+
+        group_id = self.identifier
+        taxable = accounting.settings.include_crypto2crypto or asset_in.is_fiat()
+        _, trade_taxable_amount = accounting.add_spend(
+            event_type=AccountingEventType.TRADE,
+            notes=notes + ' Amount out',
+            location=self.location,
+            timestamp=self.timestamp,
+            asset=asset_out,
+            amount=amount_out,
+            taxable=taxable,
+            given_price=prices[0],
+            count_entire_amount_spend=False,
+            extra_data={'group_id': group_id},
+        )
+        accounting.add_acquisition(
+            event_type=AccountingEventType.TRADE,
+            notes=notes + ' Amount in',
+            location=self.location,
+            timestamp=self.timestamp,
+            asset=asset_in,
+            amount=amount_in,
+            taxable=False,  # For a trade the outgoing part (sell) determined profit
+            given_price=prices[1],
+            extra_data={'group_id': group_id},
+        )
+
+        if self.fee is not None and self.fee_currency is not None and self.fee != ZERO:
+            # also checking fee_asset != None due to https://github.com/rotki/rotki/issues/4172
+            accounting.add_spend(
+                event_type=AccountingEventType.FEE,
+                notes=notes + 'Fee',
+                location=self.location,
+                timestamp=self.timestamp,
+                asset=self.fee_currency,
+                amount=self.fee,
+                taxable=True,
+                # By setting the taxable amount ratio we determine how much of the fee
+                # spending should be a taxable spend and how much free.
+                taxable_amount_ratio=trade_taxable_amount / amount_out,
+                count_cost_basis_pnl=accounting.settings.include_crypto2crypto,
+                count_entire_amount_spend=True,
+                extra_data={'group_id': group_id},
+            )
+
+        return 1
 
 
 MarginPositionDBTuple = Tuple[
@@ -243,7 +399,8 @@ MarginPositionDBTuple = Tuple[
 ]
 
 
-class MarginPosition(NamedTuple):
+@dataclass(init=True, repr=True, eq=True, order=False, unsafe_hash=False, frozen=True)
+class MarginPosition(AccountingEventMixin):
     """We only support margin positions on poloniex and bitmex at the moment"""
     location: Location
     open_time: Optional[Timestamp]
@@ -307,8 +464,62 @@ class MarginPosition(NamedTuple):
             notes=entry[9],
         )
 
+    # -- Methods of AccountingEventMixin
 
-class Loan(NamedTuple):
+    def get_timestamp(self) -> Timestamp:
+        return self.close_time
+
+    @staticmethod
+    def get_accounting_event_type() -> AccountingEventType:
+        return AccountingEventType.MARGIN_POSITION
+
+    def get_identifier(self) -> str:
+        return self.identifier
+
+    def get_assets(self) -> List[Asset]:
+        return [self.pl_currency]
+
+    def should_ignore(self, ignored_ids_mapping: Dict[ActionType, List[str]]) -> bool:
+        return False
+
+    def process(
+            self,
+            accounting: 'AccountingPot',
+            events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
+    ) -> int:
+        if self.profit_loss >= ZERO:
+            amount = self.profit_loss
+            method = 'acquisition'
+        else:
+            method = 'spend'
+            amount = -self.profit_loss  # type: ignore
+
+        accounting.add_asset_change_event(
+            method=method,  # type: ignore
+            event_type=AccountingEventType.MARGIN_POSITION,
+            notes='Margin position. PnL',
+            location=self.location,
+            timestamp=self.close_time,
+            asset=self.pl_currency,
+            amount=amount,
+            taxable=True,
+        )
+        if self.fee != ZERO:
+            accounting.add_spend(
+                event_type=AccountingEventType.FEE,
+                notes='Margin position. Fee',
+                location=self.location,
+                timestamp=self.close_time,
+                asset=self.fee_currency,
+                amount=self.fee,
+                taxable=True,
+            )
+
+        return 1
+
+
+@dataclass(init=True, repr=True, eq=False, order=False, unsafe_hash=False, frozen=True)
+class Loan(AccountingEventMixin):
     """We only support loans in poloniex at the moment"""
     location: Location
     open_time: Timestamp
@@ -317,6 +528,40 @@ class Loan(NamedTuple):
     fee: Fee
     earned: AssetAmount
     amount_lent: AssetAmount
+
+    # -- Methods of AccountingEventMixin
+
+    def get_timestamp(self) -> Timestamp:
+        return self.close_time
+
+    @staticmethod
+    def get_accounting_event_type() -> AccountingEventType:
+        return AccountingEventType.LOAN
+
+    def get_identifier(self) -> str:
+        return 'loan_' + str(self.close_time)
+
+    def should_ignore(self, ignored_ids_mapping: Dict[ActionType, List[str]]) -> bool:
+        return False
+
+    def get_assets(self) -> List[Asset]:
+        return [self.currency]
+
+    def process(
+            self,
+            accounting: 'AccountingPot',
+            events_iterator: Iterator['AccountingEventMixin'],  # pylint: disable=unused-argument
+    ) -> int:
+        accounting.add_acquisition(
+            event_type=AccountingEventType.LOAN,
+            notes='Loan',
+            location=self.location,
+            timestamp=self.close_time,
+            asset=self.currency,
+            amount=self.earned - self.fee,
+            taxable=True,
+        )
+        return 1
 
 
 def trade_pair_from_assets(base: Asset, quote: Asset) -> TradePair:
@@ -334,7 +579,7 @@ def deserialize_trade(data: Dict[str, Any]) -> Trade:
     """
     rate = deserialize_price(data['rate'])
     amount = deserialize_asset_amount(data['amount'])
-    trade_type = deserialize_trade_type(data['trade_type'])
+    trade_type = TradeType.deserialize(data['trade_type'])
     location = Location.deserialize(data['location'])
 
     trade_link = ''
@@ -390,3 +635,44 @@ def trades_from_dictlist(
             continue
 
     return returned_trades
+
+
+BINANCE_PAIR_DB_TUPLE = Tuple[str, str, str, str]
+
+
+class BinancePair(NamedTuple):
+    """A binance pair. Contains the symbol in the Binance mode e.g. "ETHBTC" and
+    the base and quote assets of that symbol as parsed from exchangeinfo endpoint
+    result"""
+    symbol: str
+    base_asset: Asset
+    quote_asset: Asset
+    location: Location  # Should only be binance or binanceus
+
+    def serialize_for_db(self) -> BINANCE_PAIR_DB_TUPLE:
+        """Create tuple to be inserted in the database containing:
+        - symbol for the pair. Example: ETHBTC
+        - identifier of the base asset
+        - identifier of the quote asset
+        - the location, this is to differentiate binance from binanceus
+        """
+        return (
+            self.symbol,
+            self.base_asset.identifier,
+            self.quote_asset.identifier,
+            self.location.serialize_for_db(),
+        )
+
+    @classmethod
+    def deserialize_from_db(cls, entry: BINANCE_PAIR_DB_TUPLE) -> 'BinancePair':
+        """Create a BinancePair from data in the database. May raise:
+        - DeserializationError
+        - UnsupportedAsset
+        - UnknownAsset
+        """
+        return BinancePair(
+            symbol=entry[0],
+            base_asset=asset_from_binance(entry[1]),
+            quote_asset=asset_from_binance(entry[2]),
+            location=Location.deserialize_from_db(entry[3]),
+        )

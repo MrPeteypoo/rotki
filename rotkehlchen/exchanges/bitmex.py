@@ -10,10 +10,12 @@ from urllib.parse import urlencode
 import requests
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_BTC
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import AssetMovement, Location, MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
@@ -24,14 +26,7 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_amount_force_positive,
     deserialize_fee,
 )
-from rotkehlchen.typing import (
-    ApiKey,
-    ApiSecret,
-    AssetAmount,
-    AssetMovementCategory,
-    Fee,
-    Timestamp,
-)
+from rotkehlchen.types import ApiKey, ApiSecret, AssetAmount, AssetMovementCategory, Fee, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import iso8601ts_to_timestamp, satoshis_to_btc
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
@@ -368,8 +363,12 @@ class Bitmex(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 continue
         return movements
 
-    def query_online_trade_history(self, start_ts: Timestamp, end_ts: Timestamp) -> List[Trade]:
-        return []  # noop for bitmex
+    def query_online_trade_history(
+            self,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
+        return [], (start_ts, end_ts)  # noop for bitmex
 
     def query_online_income_loss_expense(
             self,  # pylint: disable=no-self-use

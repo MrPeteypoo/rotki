@@ -2,6 +2,7 @@
   <v-list-item
     :id="`${name}_box`"
     :ripple="false"
+    :data-cy="`manual-balance-box__item__${name}`"
     class="manual-balance-box__item"
     to="/accounts-balances/manual-balances"
   >
@@ -11,12 +12,12 @@
     <v-list-item-content>
       <v-list-item-title class="d-flex justify-space-between">
         <span>
-          {{ capitalize(name) }}
+          {{ toSentenceCase(name) }}
         </span>
         <span class="text-end">
           <amount-display
             show-currency="symbol"
-            :fiat-currency="currency.ticker_symbol"
+            :fiat-currency="currencySymbol"
             :value="amount"
           />
         </span>
@@ -26,30 +27,34 @@
 </template>
 
 <script lang="ts">
-import { BigNumber } from '@rotki/common/';
-import { Component, Prop, Vue } from 'vue-property-decorator';
-import { createNamespacedHelpers } from 'vuex';
+import { BigNumber } from '@rotki/common';
+import { defineComponent } from '@vue/composition-api';
 import AmountDisplay from '@/components/display/AmountDisplay.vue';
-import { capitalize } from '@/filters';
-import { Currency } from '@/model/currency';
+import { setupGeneralSettings } from '@/composables/session';
+import { toSentenceCase } from '@/utils/text';
 
-const { mapGetters } = createNamespacedHelpers('session');
-
-@Component({
+export default defineComponent({
+  name: 'ManualBalanceCardList',
   components: { AmountDisplay },
-  computed: {
-    ...mapGetters(['currency'])
-  }
-})
-export default class ManualBalanceCardList extends Vue {
-  @Prop({ required: true })
-  name!: string;
-  @Prop({ required: true })
-  amount!: BigNumber;
-  readonly capitalize = capitalize;
+  props: {
+    name: {
+      required: true,
+      type: String
+    },
+    amount: {
+      required: true,
+      type: BigNumber
+    }
+  },
+  setup() {
+    const { currencySymbol } = setupGeneralSettings();
 
-  currency!: Currency;
-}
+    return {
+      currencySymbol,
+      toSentenceCase
+    };
+  }
+});
 </script>
 <style scoped lang="scss">
 .manual-balance-box {

@@ -5,15 +5,26 @@ from typing import Any, Dict, List, Tuple
 
 import gevent
 
-from rotkehlchen.chain.ethereum.manager import NodeName
+from rotkehlchen.accounting.structures.base import HistoryBaseEntry
+from rotkehlchen.chain.ethereum.decoding.decoder import EVMTransactionDecoder
+from rotkehlchen.chain.ethereum.manager import EthereumManager, NodeName
 from rotkehlchen.chain.ethereum.structures import EthereumTxReceipt, EthereumTxReceiptLog
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.transactions import EthTransactions
+from rotkehlchen.chain.ethereum.types import string_to_ethereum_address
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.ethtx import DBEthTx
 from rotkehlchen.db.filtering import ETHTransactionsFilterQuery
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import EthereumTransaction, Timestamp
-from rotkehlchen.utils.misc import hexstring_to_bytes
+from rotkehlchen.types import (
+    BlockchainAccountData,
+    EthereumTransaction,
+    EVMTxHash,
+    SupportedBlockchain,
+    Timestamp,
+    deserialize_evm_tx_hash,
+)
+from rotkehlchen.user_messages import MessagesAggregator
+from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 NODE_CONNECTION_TIMEOUT = 10
 
@@ -23,12 +34,24 @@ log = RotkehlchenLogsAdapter(logger)
 # TODO: improve this. Switch between them and find one that has requests.
 # Also use Alchemy too
 INFURA_TEST = random.choice([
+    'https://mainnet.infura.io/v3/a6b269b6e5ad44ed943e9fff244dfe25',
     'https://mainnet.infura.io/v3/b921613a39d14c2386aca87c6c5054a6',
     'https://mainnet.infura.io/v3/edeb337c7f41425e933ec619f3c5b940',
     'https://mainnet.infura.io/v3/66302b8fb9874614905a3cbe903a0dbb',
 ])
+ALCHEMY_TEST = 'https://eth-mainnet.alchemyapi.io/v2/ga1GtB7R26UgzjextaVpbaWZ49nSi2zt'
 
 ETHERSCAN_AND_INFURA_PARAMS: Tuple[str, List[Tuple]] = ('ethrpc_endpoint,ethereum_manager_connect_at_start, call_order', [  # noqa: E501
+    ('', (), (NodeName.ETHERSCAN,)),
+    (
+        INFURA_TEST,
+        (NodeName.OWN,),
+        (NodeName.OWN,),
+    ),
+])
+
+
+ETHERSCAN_AND_INFURA_AND_ALCHEMY: Tuple[str, List[Tuple]] = ('ethrpc_endpoint,ethereum_manager_connect_at_start, call_order', [  # noqa: E501
     # Query etherscan only
     ('', (), (NodeName.ETHERSCAN,)),
     # For "our own" node querying use infura
@@ -37,8 +60,15 @@ ETHERSCAN_AND_INFURA_PARAMS: Tuple[str, List[Tuple]] = ('ethrpc_endpoint,ethereu
         (NodeName.OWN,),
         (NodeName.OWN,),
     ),
+    (
+        ALCHEMY_TEST,
+        (NodeName.OWN,),
+        (NodeName.OWN,),
+    ),
 ])
 
+
+# Test with etherscan and infura
 ETHEREUM_TEST_PARAMETERS: Tuple[str, List[Tuple]]
 if 'GITHUB_WORKFLOW' in os.environ:
     # For Github actions don't use infura. It seems that connecting to it
@@ -50,6 +80,20 @@ if 'GITHUB_WORKFLOW' in os.environ:
 else:
     # For Travis and local tests also use Infura, works fine
     ETHEREUM_TEST_PARAMETERS = ETHERSCAN_AND_INFURA_PARAMS
+
+
+# Test with multipe node types and etherscan
+ETHEREUM_FULL_TEST_PARAMETERS: Tuple[str, List[Tuple]]
+if 'GITHUB_WORKFLOW' in os.environ:
+    # For Github actions don't use infura. It seems that connecting to it
+    # from Github actions hangs and times out
+    ETHEREUM_FULL_TEST_PARAMETERS = ('ethrpc_endpoint,ethereum_manager_connect_at_start, call_order', [  # noqa: E501
+        # Query etherscan only
+        ('', (), (NodeName.ETHERSCAN,)),
+    ])
+else:
+    # For Travis and local tests also use Infura, works fine
+    ETHEREUM_FULL_TEST_PARAMETERS = ETHERSCAN_AND_INFURA_AND_ALCHEMY
 
 
 def wait_until_all_nodes_connected(
@@ -84,7 +128,7 @@ def txreceipt_to_data(receipt: EthereumTxReceipt) -> Dict[str, Any]:
     serialization snake case would be used.
     """
     data: Dict[str, Any] = {
-        'transactionHash': '0x' + receipt.tx_hash.hex(),
+        'transactionHash': receipt.tx_hash.hex(),
         'type': hex(receipt.type),
         'contractAddress': receipt.contract_address,
         'status': int(receipt.status),
@@ -112,13 +156,21 @@ def setup_ethereum_transactions_test(
         one_receipt_in_db: bool = False,
 ) -> Tuple[List[EthereumTransaction], List[EthereumTxReceipt]]:
     dbethtx = DBEthTx(database)
-    tx_hash1 = '0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda'
-    tx_hash1_b = hexstring_to_bytes(tx_hash1)
+    tx_hash1 = deserialize_evm_tx_hash('0x692f9a6083e905bdeca4f0293f3473d7a287260547f8cbccc38c5cb01591fcda')  # noqa: E501
+    addr1 = string_to_ethereum_address('0x443E1f9b1c866E54e914822B7d3d7165EdB6e9Ea')
+    addr2 = string_to_ethereum_address('0x442068F934BE670aDAb81242C87144a851d56d16')
+    database.add_blockchain_accounts(
+        blockchain=SupportedBlockchain.ETHEREUM,
+        account_data=[
+            BlockchainAccountData(address=addr1),
+            BlockchainAccountData(address=addr2),
+        ],
+    )
     transaction1 = EthereumTransaction(
-        tx_hash=tx_hash1_b,
+        tx_hash=tx_hash1,
         timestamp=Timestamp(1630532276),
         block_number=13142218,
-        from_address=string_to_ethereum_address('0x443E1f9b1c866E54e914822B7d3d7165EdB6e9Ea'),
+        from_address=addr1,
         to_address=string_to_ethereum_address('0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'),
         value=int(10 * 10**18),
         gas=194928,
@@ -127,13 +179,12 @@ def setup_ethereum_transactions_test(
         input_data=hexstring_to_bytes('0x7ff36ab5000000000000000000000000000000000000000000000367469995d0723279510000000000000000000000000000000000000000000000000000000000000080000000000000000000000000443e1f9b1c866e54e914822b7d3d7165edb6e9ea00000000000000000000000000000000000000000000000000000000612ff9b50000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000002a3bff78b79a009976eea096a51a948a3dc00e34'),  # noqa: E501
         nonce=13,
     )
-    tx_hash2 = '0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77'
-    tx_hash2_b = hexstring_to_bytes(tx_hash2)
+    tx_hash2 = deserialize_evm_tx_hash('0x6beab9409a8f3bd11f82081e99e856466a7daf5f04cca173192f79e78ed53a77')  # noqa: E501
     transaction2 = EthereumTransaction(
-        tx_hash=tx_hash2_b,
+        tx_hash=tx_hash2,
         timestamp=Timestamp(1631013757),
         block_number=13178342,
-        from_address=string_to_ethereum_address('0x442068F934BE670aDAb81242C87144a851d56d16'),
+        from_address=addr2,
         to_address=string_to_ethereum_address('0xEaDD9B69F96140283F9fF75DA5FD33bcF54E6296'),
         value=0,
         gas=77373,
@@ -144,12 +195,13 @@ def setup_ethereum_transactions_test(
     )
     transactions = [transaction1, transaction2]
     if transaction_already_queried is True:
-        dbethtx.add_ethereum_transactions(ethereum_transactions=transactions)
-        result, _ = dbethtx.get_ethereum_transactions(ETHTransactionsFilterQuery.make())
+        dbethtx.add_ethereum_transactions(ethereum_transactions=[transaction1], relevant_address=addr1)  # noqa: E501
+        dbethtx.add_ethereum_transactions(ethereum_transactions=[transaction2], relevant_address=addr2)  # noqa: E501
+        result = dbethtx.get_ethereum_transactions(ETHTransactionsFilterQuery.make(), True)
         assert result == transactions
 
     expected_receipt1 = EthereumTxReceipt(
-        tx_hash=tx_hash1_b,
+        tx_hash=tx_hash1,
         contract_address=None,
         status=True,
         type=0,
@@ -203,7 +255,7 @@ def setup_ethereum_transactions_test(
         ],
     )
     expected_receipt2 = EthereumTxReceipt(
-        tx_hash=tx_hash2_b,
+        tx_hash=tx_hash2,
         contract_address=None,
         status=True,
         type=2,
@@ -226,3 +278,21 @@ def setup_ethereum_transactions_test(
         dbethtx.add_receipt_data(txreceipt_to_data(expected_receipt1))
 
     return transactions, [expected_receipt1, expected_receipt2]
+
+
+def get_decoded_events_of_transaction(
+        ethereum_manager: EthereumManager,
+        database: DBHandler,
+        msg_aggregator: MessagesAggregator,
+        tx_hash: EVMTxHash,
+) -> List[HistoryBaseEntry]:
+    """A convenience function to ask get transaction, receipt and decoded event for a tx_hash"""
+    transactions = EthTransactions(ethereum=ethereum_manager, database=database)
+    transactions.get_or_query_transaction_receipt(tx_hash=tx_hash)
+    decoder = EVMTransactionDecoder(
+        database=database,
+        ethereum_manager=ethereum_manager,
+        eth_transactions=transactions,
+        msg_aggregator=msg_aggregator,
+    )
+    return decoder.decode_transaction_hashes(ignore_cache=True, tx_hashes=[tx_hash])

@@ -4,8 +4,8 @@ from typing import Any, List, Tuple
 import base58check
 import bech32
 
-from rotkehlchen.errors import EncodingError
-from rotkehlchen.typing import BTCAddress
+from rotkehlchen.errors.serialization import EncodingError
+from rotkehlchen.types import BTCAddress
 
 BIP32_HARDEN: int = 0x80000000
 

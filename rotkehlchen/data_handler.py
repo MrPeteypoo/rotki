@@ -3,7 +3,6 @@ import hashlib
 import logging
 import shutil
 import tempfile
-import time
 import zlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -12,14 +11,17 @@ from rotkehlchen.assets.asset import Asset
 from rotkehlchen.crypto import decrypt, encrypt
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.settings import ModifiableDBSettings
-from rotkehlchen.errors import AuthenticationError, SystemPermissionError
+from rotkehlchen.errors.api import AuthenticationError
+from rotkehlchen.errors.misc import SystemPermissionError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import B64EncodedBytes, B64EncodedString, Timestamp
+from rotkehlchen.types import B64EncodedBytes, B64EncodedString
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import timestamp_to_date, ts_now
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
+
+BUFFERSIZE = 64 * 1024
 
 
 class DataHandler():
@@ -38,7 +40,7 @@ class DataHandler():
             self.password = ''
             self.user_data_dir: Optional[Path] = None
             self.db.update_owned_assets_in_globaldb()
-            del self.db
+            self.db.logout()
             self.logged_in = False
 
     def change_password(self, new_password: str) -> bool:
@@ -96,7 +98,7 @@ class DataHandler():
                 # on their own. At the same time delete the directory so that a new
                 # user account can be created
                 shutil.move(
-                    user_data_dir,  # type: ignore
+                    user_data_dir,
                     self.data_directory / f'auto_backup_{username}_{ts_now()}',
                 )
 
@@ -156,16 +158,6 @@ class DataHandler():
 
         return self.db.get_ignored_assets(), ''
 
-    def should_save_balances(self) -> bool:
-        """ Returns whether or not we can save data to the database depending on
-        the balance data saving frequency setting"""
-        last_save = self.db.get_last_balance_save_time()
-        settings = self.db.get_settings()
-        # Setting is saved in hours, convert to seconds here
-        period = settings.balance_save_frequency * 60 * 60
-        now = Timestamp(int(time.time()))
-        return now - last_save > period
-
     def get_users(self) -> Dict[str, str]:
         """Returns a dict with all users in the system.
 
@@ -189,18 +181,25 @@ class DataHandler():
 
         Returns a b64 encoded binary blob"""
         log.info('Compress and encrypt DB')
+        compressor = zlib.compressobj(level=9)
         with tempfile.TemporaryDirectory() as tmpdirname:
             tempdb = Path(tmpdirname) / 'temp.db'
             self.db.export_unencrypted(tempdb)
-            with open(tempdb, 'rb') as f:
-                data_blob = f.read()
+            source_data = bytearray()
+            compressed_data = bytearray()
+            with open(tempdb, 'rb') as src_f:
+                block = src_f.read(BUFFERSIZE)
+                while block:
+                    source_data += block
+                    compressed_data += compressor.compress(block)
+                    block = src_f.read(BUFFERSIZE)
+
+                compressed_data += compressor.flush()
 
         original_data_hash = base64.b64encode(
-            hashlib.sha256(data_blob).digest(),
+            hashlib.sha256(source_data).digest(),
         ).decode()
-        compressed_data = zlib.compress(data_blob, level=9)
-        encrypted_data = encrypt(password.encode(), compressed_data)
-
+        encrypted_data = encrypt(password.encode(), bytes(compressed_data))
         return B64EncodedBytes(encrypted_data.encode()), original_data_hash
 
     def decompress_and_decrypt_db(self, password: str, encrypted_data: B64EncodedString) -> None:

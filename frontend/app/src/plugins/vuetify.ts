@@ -2,7 +2,8 @@
 
 import '@mdi/font/css/materialdesignicons.css';
 import Vue from 'vue';
-import Vuetify from 'vuetify/lib';
+import Vuetify from 'vuetify';
+import { VSwitch } from 'vuetify/lib/components';
 import {
   DARK_ACCENT,
   DARK_GRAPH,
@@ -13,6 +14,8 @@ import {
 } from '@/plugins/theme';
 
 Vue.use(Vuetify);
+// @ts-ignore
+VSwitch.options.props.inset.default = true;
 
 const DARK_GREY = '#1e1e1e';
 
@@ -38,7 +41,8 @@ export default new Vuetify({
         'rotki-green': '#06D6A0',
         'rotki-red': '#F03A47',
         'rotki-gain': '#4caf50',
-        'rotki-loss': '#d32f2f'
+        'rotki-loss': '#d32f2f',
+        'rotki-scrollbar': '#eeeeee'
       },
       dark: {
         primary: DARK_PRIMARY,
@@ -46,8 +50,10 @@ export default new Vuetify({
         graph: DARK_GRAPH,
         graphFade: DARK_GREY,
         dark: DARK_GREY,
+        'rotki-light-grey': '#121212',
         'rotki-green': '#4caf50',
-        'rotki-red': '#d32f2f'
+        'rotki-red': '#d32f2f',
+        'rotki-scrollbar': '#999999'
       }
     }
   }

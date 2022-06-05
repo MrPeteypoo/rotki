@@ -13,7 +13,6 @@ import {
   BalancerEvents
 } from '@rotki/common/lib/defi/balancer';
 import { DexTrade } from '@rotki/common/lib/defi/dex';
-import { XswapBalances, XswapEvents } from '@rotki/common/lib/defi/xswap';
 import {
   CollateralAssetType,
   DefiBalanceType,
@@ -32,8 +31,6 @@ import {
   YearnVaultsHistory
 } from '@/services/defi/types/yearn';
 import { AIRDROP_POAP, AIRDROPS, OVERVIEW_PROTOCOLS } from '@/store/defi/const';
-import { LiquityState } from '@/store/defi/liquity/types';
-import { SushiswapState } from '@/store/defi/sushiswap/types';
 
 export type OverviewDefiProtocol = typeof OVERVIEW_PROTOCOLS[number];
 
@@ -54,12 +51,7 @@ export interface DefiState {
   yearnVaultsHistory: YearnVaultsHistory;
   yearnVaultsV2Balances: YearnVaultsBalances;
   yearnVaultsV2History: YearnVaultsHistory;
-  uniswapBalances: XswapBalances;
-  uniswapTrades: DexTrades;
-  uniswapEvents: XswapEvents;
   airdrops: Airdrops;
-  sushiswap?: SushiswapState;
-  liquity?: LiquityState;
 }
 
 export interface PoapDeliveryDetails {
@@ -287,12 +279,6 @@ interface DefiProtocolData {
 
 export interface AllDefiProtocols {
   readonly [asset: string]: DefiProtocolData[];
-}
-
-export interface ProfitLossModel {
-  readonly address: string;
-  readonly asset: string;
-  readonly value: Balance;
 }
 
 export interface DexTrades {

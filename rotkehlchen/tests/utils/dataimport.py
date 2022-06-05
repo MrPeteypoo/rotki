@@ -1,26 +1,37 @@
 from rotkehlchen.accounting.ledger_actions import LedgerAction, LedgerActionType
+from rotkehlchen.assets.asset import Asset
+from rotkehlchen.assets.converters import asset_from_binance, asset_from_cryptocom
 from rotkehlchen.assets.utils import symbol_to_asset_or_token
 from rotkehlchen.constants.assets import (
+    A_BAT,
     A_BTC,
     A_DAI,
-    A_SAI,
-    A_USDC,
+    A_DOGE,
     A_DOT,
     A_ETH,
-    A_LTC,
+    A_ETH2,
     A_EUR,
+    A_KNC,
+    A_LTC,
+    A_SAI,
     A_UNI,
     A_USD,
+    A_USDC,
+    A_USDT,
     A_XRP,
-    A_BAT,
 )
-from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.misc import ONE, ZERO
+from rotkehlchen.db.filtering import (
+    AssetMovementsFilterQuery,
+    LedgerActionsFilterQuery,
+    TradesFilterQuery,
+)
 from rotkehlchen.db.ledger_actions import DBLedgerActions
 from rotkehlchen.exchanges.data_structures import AssetMovement, Trade
 from rotkehlchen.fval import FVal
 from rotkehlchen.rotkehlchen import Rotkehlchen
-from rotkehlchen.tests.utils.constants import A_CRO, A_MCO, A_XMR
-from rotkehlchen.typing import (
+from rotkehlchen.tests.utils.constants import A_AXS, A_CRO, A_MCO, A_XMR
+from rotkehlchen.types import (
     AssetAmount,
     AssetMovementCategory,
     Fee,
@@ -31,14 +42,21 @@ from rotkehlchen.typing import (
 )
 
 
+def get_cryptocom_note(desc: str):
+    return f'{desc}\nSource: crypto.com (CSV import)'
+
+
 def assert_cointracking_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from cointracking.info"""
-    trades = rotki.data.db.get_trades()
-    asset_movements = rotki.data.db.get_asset_movements()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
-    assert len(warnings) == 3
+    assert len(warnings) == 4
 
     expected_trades = [Trade(
         timestamp=Timestamp(1566687719),
@@ -63,7 +81,7 @@ def assert_cointracking_import_results(rotki: Rotkehlchen):
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes='Just a small gift from someone',
+        notes='Just a small gift from someone. Data from -no exchange- not known by rotki.',
     ), Trade(
         timestamp=Timestamp(1567504805),
         location=Location.EXTERNAL,
@@ -75,7 +93,7 @@ def assert_cointracking_import_results(rotki: Rotkehlchen):
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes='Sign up bonus',
+        notes='Sign up bonus. Data from -no exchange- not known by rotki.',
     )]
     assert expected_trades == trades
 
@@ -107,15 +125,20 @@ def assert_cointracking_import_results(rotki: Rotkehlchen):
 
 def assert_cryptocom_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from crypto.com"""
-    trades = rotki.data.db.get_trades()
-    asset_movements = rotki.data.db.get_asset_movements()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
+    ledger_db = DBLedgerActions(rotki.data.db, rotki.msg_aggregator)
+    ledger_actions = ledger_db.get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
     assert len(warnings) == 0
-
-    def get_trade_note(desc: str):
-        return f'{desc}\nSource: crypto.com (CSV import)'
 
     expected_trades = [Trade(
         timestamp=Timestamp(1595833195),
@@ -128,7 +151,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('Buy ETH'),
+        notes=get_cryptocom_note('Buy ETH'),
     ), Trade(
         timestamp=Timestamp(1596014214),
         location=Location.CRYPTOCOM,
@@ -140,19 +163,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('Buy MCO'),
-    ), Trade(
-        timestamp=Timestamp(1596014223),
-        location=Location.CRYPTOCOM,
-        base_asset=A_MCO,
-        quote_asset=A_USD,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('12.32402069')),
-        rate=Price(FVal('4.057117499045678736198226879')),
-        fee=Fee(ZERO),
-        fee_currency=A_USD,
-        link='',
-        notes=get_trade_note('Sign-up Bonus Unlocked'),
+        notes=get_cryptocom_note('Buy MCO'),
     ), Trade(
         timestamp=Timestamp(1596209827),
         location=Location.CRYPTOCOM,
@@ -164,19 +175,7 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('MCO -> ETH'),
-    ), Trade(
-        timestamp=Timestamp(1596429934),
-        location=Location.CRYPTOCOM,
-        base_asset=A_ETH,
-        quote_asset=A_EUR,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('0.00061475')),
-        rate=Price(FVal('309.0687271248474989833265555')),
-        fee=Fee(ZERO),
-        fee_currency=A_USD,
-        link='',
-        notes=get_trade_note('Crypto Earn'),
+        notes=get_cryptocom_note('MCO -> ETH'),
     ), Trade(
         timestamp=Timestamp(1596465565),
         location=Location.CRYPTOCOM,
@@ -184,11 +183,11 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         quote_asset=A_MCO,
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('1382.306147552291')),
-        rate=Price(FVal('27.6439')),
+        rate=Price(FVal('0.03617434587739067208317205604')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('MCO/CRO Overall Swap'),
+        notes=get_cryptocom_note('MCO/CRO Overall Swap'),
     ), Trade(
         timestamp=Timestamp(1596730165),
         location=Location.CRYPTOCOM,
@@ -196,47 +195,11 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         quote_asset=A_MCO,
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('1301.64')),
-        rate=Price(FVal('26.0328')),
+        rate=Price(FVal('0.03841307888509879843889247411')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('MCO/CRO Overall Swap'),
-    ), Trade(
-        timestamp=Timestamp(1599934176),
-        location=Location.CRYPTOCOM,
-        base_asset=A_CRO,
-        quote_asset=A_EUR,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('138.256')),
-        rate=Price(FVal('0.1429232727693553986807082514')),
-        fee=Fee(ZERO),
-        fee_currency=A_USD,
-        link='',
-        notes=get_trade_note('Card Rebate: Deliveries'),
-    ), Trade(
-        timestamp=Timestamp(1602515376),
-        location=Location.CRYPTOCOM,
-        base_asset=A_CRO,
-        quote_asset=A_EUR,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('52.151')),
-        rate=Price(FVal('0.06692105616383194953116910510')),
-        fee=Fee(ZERO),
-        fee_currency=A_USD,
-        link='',
-        notes=get_trade_note('Card Cashback'),
-    ), Trade(
-        timestamp=Timestamp(1602526176),
-        location=Location.CRYPTOCOM,
-        base_asset=A_CRO,
-        quote_asset=A_EUR,
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('482.2566417')),
-        rate=Price(FVal('0.08756748243245604635910191136')),
-        fee=Fee(ZERO),
-        fee_currency=A_USD,
-        link='',
-        notes=get_trade_note('Referral Bonus Reward'),
+        notes=get_cryptocom_note('MCO/CRO Overall Swap'),
     ), Trade(
         timestamp=Timestamp(1606833565),
         location=Location.CRYPTOCOM,
@@ -244,11 +207,11 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         quote_asset=A_DAI,
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('0.007231228760408149')),
-        rate=Price(FVal('14.26830000900286970270179629')),
+        rate=Price(FVal('0.07008543409999999780915783127')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('Convert Dust'),
+        notes=get_cryptocom_note('Convert Dust'),
     ), Trade(
         timestamp=Timestamp(1608024314),
         location=Location.CRYPTOCOM,
@@ -256,11 +219,11 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         quote_asset=A_UNI,
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('105.9475889306405164438345865')),
-        rate=Price(FVal('144.1809293808791657040427665')),
+        rate=Price(FVal('0.006935730018484795149371149556')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('Convert Dust'),
+        notes=get_cryptocom_note('Convert Dust'),
     ), Trade(
         timestamp=Timestamp(1608024314),
         location=Location.CRYPTOCOM,
@@ -268,11 +231,35 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
         quote_asset=A_DOT,
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('87.08021007997850666616541352')),
-        rate=Price(FVal('306.6322128582378511862892551')),
+        rate=Price(FVal('0.003261235963040581838377118706')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
-        notes=get_trade_note('Convert Dust'),
+        notes=get_cryptocom_note('Convert Dust'),
+    ), Trade(
+        timestamp=Timestamp(1620192867),
+        location=Location.CRYPTOCOM,
+        base_asset=A_EUR,
+        quote_asset=A_DOGE,
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal('406.22')),
+        rate=Price(FVal('1.846290187583083058441238738')),
+        fee=Fee(ZERO),
+        fee_currency=A_USD,
+        link='',
+        notes=get_cryptocom_note('DOGE -> EUR'),
+    ), Trade(
+        timestamp=Timestamp(1626720960),
+        location=Location.CRYPTOCOM,
+        base_asset=A_BTC,
+        quote_asset=A_EUR,
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal('0.003')),
+        rate=Price(FVal('26003.33333333333333333333333')),
+        fee=Fee(ZERO),
+        fee_currency=A_USD,
+        link='',
+        notes=get_cryptocom_note('EUR -> BTC'),
     )]
     assert expected_trades == trades
 
@@ -301,18 +288,178 @@ def assert_cryptocom_import_results(rotki: Rotkehlchen):
     )]
     assert expected_movements == asset_movements
 
+    expected_ledger_actions = [LedgerAction(
+        identifier=5,
+        timestamp=Timestamp(1596014223),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('12.32402069')),
+        asset=A_MCO,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Sign-up Bonus Unlocked'),
+    ), LedgerAction(
+        identifier=4,
+        timestamp=Timestamp(1596429934),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('0.00061475')),
+        asset=A_ETH,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Crypto Earn'),
+    ), LedgerAction(
+        identifier=3,
+        timestamp=Timestamp(1599934176),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('138.256')),
+        asset=A_CRO,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Card Rebate: Deliveries'),
+    ), LedgerAction(
+        identifier=2,
+        timestamp=Timestamp(1602515376),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('52.151')),
+        asset=A_CRO,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Card Cashback'),
+    ), LedgerAction(
+        identifier=1,
+        timestamp=Timestamp(1602526176),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('482.2566417')),
+        asset=A_CRO,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Referral Bonus Reward'),
+    ), LedgerAction(
+        identifier=13,
+        timestamp=Timestamp(1614989135),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('7.76792828')),
+        asset=A_CRO,
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Card Rebate: Netflix'),
+    ), LedgerAction(
+        identifier=12,
+        timestamp=Timestamp(1615097829),
+        action_type=LedgerActionType.EXPENSE,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('7.76792828')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Card Rebate Reversal: Netflix'),
+    ), LedgerAction(
+        identifier=10,
+        timestamp=Timestamp(1616237351),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('10')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Pay Rewards'),
+    ), LedgerAction(
+        identifier=11,
+        timestamp=Timestamp(1616237351),
+        action_type=LedgerActionType.EXPENSE,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('100')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('To +49XXXXXXXXXX'),
+    ), LedgerAction(
+        identifier=9,
+        timestamp=Timestamp(1616266740),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('100')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('From +49XXXXXXXXXX'),
+    ), LedgerAction(
+        identifier=8,
+        timestamp=Timestamp(1616669547),
+        action_type=LedgerActionType.EXPENSE,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('15.38')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Merchant XXX'),
+    ), LedgerAction(
+        identifier=7,
+        timestamp=Timestamp(1616669548),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('0.3076')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Pay Rewards'),
+    ), LedgerAction(
+        identifier=6,
+        timestamp=Timestamp(1616670041),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('15.31')),
+        asset=symbol_to_asset_or_token('CRO'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Refund from Merchant XXX'),
+    )]
+    assert list(expected_ledger_actions) == ledger_actions
+
 
 def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from crypto.com"""
-    trades = rotki.data.db.get_trades()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
     ledger_db = DBLedgerActions(rotki.data.db, rotki.msg_aggregator)
-    ledger_actions = ledger_db.get_ledger_actions(None, None, None)
+    ledger_actions = ledger_db.get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
     assert len(warnings) == 0
 
     expected_actions = [LedgerAction(
+        identifier=6,
+        timestamp=Timestamp(1635390997),
+        action_type=LedgerActionType.INCOME,
+        location=Location.CRYPTOCOM,
+        amount=AssetAmount(FVal('0.00356292')),
+        asset=asset_from_cryptocom('AXS'),
+        rate=None,
+        rate_asset=None,
+        link=None,
+        notes=get_cryptocom_note('Supercharger Reward'),
+    ), LedgerAction(
         identifier=5,
         timestamp=Timestamp(1609884000),
         action_type=LedgerActionType.INCOME,
@@ -322,7 +469,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         rate=None,
         rate_asset=None,
         link=None,
-        notes=None,
+        notes=get_cryptocom_note('CRO Airdrop to Exchange'),
     ), LedgerAction(
         identifier=4,
         timestamp=Timestamp(1609884000),
@@ -333,7 +480,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         rate=None,
         rate_asset=None,
         link=None,
-        notes=None,
+        notes=get_cryptocom_note('MCO Stake Rewards'),
     ), LedgerAction(
         identifier=3,
         timestamp=Timestamp(1609884000),
@@ -344,7 +491,7 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         rate=None,
         rate_asset=None,
         link=None,
-        notes=None,
+        notes=get_cryptocom_note('CRO Stake Rewards'),
     ), LedgerAction(
         identifier=2,
         timestamp=Timestamp(1609797600),
@@ -377,11 +524,23 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
         quote_asset=symbol_to_asset_or_token('MCO'),
         trade_type=TradeType.BUY,
         amount=AssetAmount(FVal('1')),
-        rate=Price(FVal('10')),
+        rate=Price(FVal('0.1')),
         fee=Fee(ZERO),
         fee_currency=A_USD,
         link='',
         notes='MCO Earnings/Rewards Swap\nSource: crypto.com (CSV import)',
+    ), Trade(
+        timestamp=Timestamp(1635390998),
+        location=Location.CRYPTOCOM,
+        base_asset=symbol_to_asset_or_token('EUR'),
+        quote_asset=symbol_to_asset_or_token('USDC'),
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal('11.3')),
+        rate=Price(FVal('1.145132743362831858407079646')),
+        fee=Fee(ZERO),
+        fee_currency=A_USD,
+        link='',
+        notes='USDC -> EUR\nSource: crypto.com (CSV import)',
     )]
     assert trades == expected_trades
 
@@ -389,8 +548,14 @@ def assert_cryptocom_special_events_import_results(rotki: Rotkehlchen):
 def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from blockfi"""
     ledger_db = DBLedgerActions(rotki.data.db, rotki.msg_aggregator)
-    ledger_actions = ledger_db.get_ledger_actions(None, None, None)
-    asset_movements = rotki.data.db.get_asset_movements()
+    ledger_actions = ledger_db.get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
@@ -454,13 +619,35 @@ def assert_blockfi_transactions_import_results(rotki: Rotkehlchen):
         fee_asset=A_USD,
         fee=Fee(ZERO),
         link='',
+    ), AssetMovement(
+        location=Location.BLOCKFI,
+        category=AssetMovementCategory.DEPOSIT,
+        address=None,
+        transaction_id=None,
+        timestamp=Timestamp(1611734258),
+        asset=A_USDC,
+        amount=AssetAmount(FVal('3597.48627700')),
+        fee_asset=A_USD,
+        fee=Fee(ZERO),
+        link='',
+    ), AssetMovement(
+        location=Location.BLOCKFI,
+        category=AssetMovementCategory.WITHDRAWAL,
+        address=None,
+        transaction_id=None,
+        timestamp=Timestamp(1611820658),
+        asset=A_BTC,
+        amount=AssetAmount(FVal('2.11415058')),
+        fee_asset=A_USD,
+        fee=Fee(ZERO),
+        link='',
     )]
     assert expected_movements == asset_movements
 
 
 def assert_blockfi_trades_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing trades data from blockfi"""
-    trades = rotki.data.db.get_trades()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
@@ -469,10 +656,10 @@ def assert_blockfi_trades_import_results(rotki: Rotkehlchen):
     expected_trades = [Trade(
         timestamp=Timestamp(1612051199),
         location=Location.BLOCKFI,
-        base_asset=symbol_to_asset_or_token('USDC'),
-        quote_asset=symbol_to_asset_or_token('LTC'),
-        trade_type=TradeType.BUY,
-        amount=AssetAmount(FVal('6404.6')),
+        base_asset=symbol_to_asset_or_token('LTC'),
+        quote_asset=symbol_to_asset_or_token('USDC'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal('42.23878904')),
         rate=Price(FVal('151.6283999982779809352223797')),
         fee=None,
         fee_currency=None,
@@ -485,8 +672,14 @@ def assert_blockfi_trades_import_results(rotki: Rotkehlchen):
 def assert_nexo_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing data from nexo"""
     ledger_db = DBLedgerActions(rotki.data.db, rotki.msg_aggregator)
-    ledger_actions = ledger_db.get_ledger_actions(None, None, None)
-    asset_movements = rotki.data.db.get_asset_movements()
+    ledger_actions = ledger_db.get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     assert len(errors) == 0
@@ -615,17 +808,6 @@ def assert_nexo_results(rotki: Rotkehlchen):
         fee_asset=A_USD,
         fee=Fee(ZERO),
         link='NXT0000000003',
-    ), AssetMovement(
-        location=Location.NEXO,
-        category=AssetMovementCategory.DEPOSIT,
-        timestamp=Timestamp(1615024314),
-        address=None,
-        transaction_id=None,
-        asset=symbol_to_asset_or_token('USDC'),
-        amount=AssetAmount(FVal('1')),
-        fee_asset=A_USD,
-        fee=Fee(ZERO),
-        link='NXT0000000001',
     )]
 
     assert ledger_actions == expected_actions
@@ -634,7 +816,7 @@ def assert_nexo_results(rotki: Rotkehlchen):
 
 def assert_shapeshift_trades_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing trades data from shapeshift"""
-    trades = rotki.data.db.get_trades()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     notes1 = """
@@ -664,7 +846,7 @@ Trade from ShapeShift with ShapeShift Deposit Address:
             base_asset=symbol_to_asset_or_token('DASH'),
             quote_asset=A_SAI,
             trade_type=TradeType.BUY,
-            amount=AssetAmount(FVal('0.59420343')),
+            amount=AssetAmount(FVal('0.59420343') + FVal('0.002')),
             rate=Price(1 / FVal('0.00578758')),
             fee=Fee(FVal('0.002')),
             fee_currency=symbol_to_asset_or_token('DASH'),
@@ -677,7 +859,7 @@ Trade from ShapeShift with ShapeShift Deposit Address:
             base_asset=A_ETH,
             quote_asset=A_USDC,
             trade_type=TradeType.BUY,
-            amount=AssetAmount(FVal('0.06198721')),
+            amount=AssetAmount(FVal('0.06198721') + FVal('0.0042')),
             rate=Price(1 / FVal('0.00065004')),
             fee=Fee(FVal('0.0042')),
             fee_currency=A_ETH,
@@ -691,10 +873,16 @@ Trade from ShapeShift with ShapeShift Deposit Address:
 
 def assert_uphold_transactions_import_results(rotki: Rotkehlchen):
     """A utility function to help assert on correctness of importing trades data from uphold"""
-    trades = rotki.data.db.get_trades()
-    asset_movements = rotki.data.db.get_asset_movements()
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
     ledger_db = DBLedgerActions(rotki.data.db, rotki.msg_aggregator)
-    ledger_actions = ledger_db.get_ledger_actions(None, None, None)
+    ledger_actions = ledger_db.get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
     warnings = rotki.msg_aggregator.consume_warnings()
     errors = rotki.msg_aggregator.consume_errors()
     notes1 = """
@@ -813,3 +1001,416 @@ Activity from uphold with uphold transaction id:
     assert asset_movements == expected_movements
     assert len(ledger_actions) == 1
     assert ledger_actions == expected_ledger_actions
+
+
+def assert_custom_cointracking(rotki: Rotkehlchen):
+    """
+    A utility function to help assert on correctness of importing data from cointracking.info
+    when using custom formats for dates
+    """
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
+    expected_movements = [AssetMovement(
+        location=Location.POLONIEX,
+        category=AssetMovementCategory.DEPOSIT,
+        timestamp=Timestamp(1504646040),
+        address=None,
+        transaction_id=None,
+        asset=A_XMR,
+        amount=AssetAmount(FVal('5')),
+        fee_asset=A_USD,
+        fee=Fee(ZERO),
+        link='',
+    ), AssetMovement(
+        location=Location.COINBASE,
+        category=AssetMovementCategory.WITHDRAWAL,
+        address=None,
+        transaction_id=None,
+        timestamp=Timestamp(1504646040),
+        asset=A_ETH,
+        amount=AssetAmount(FVal('0.05770427')),
+        fee_asset=A_ETH,
+        fee=Fee(FVal("0.0001")),
+        link='',
+    )]
+    assert expected_movements == asset_movements
+
+
+def assert_bisq_trades_import_results(rotki: Rotkehlchen):
+    """A utility function to help assert on correctness of importing trades data from bisq"""
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
+    warnings = rotki.msg_aggregator.consume_warnings()
+    errors = rotki.msg_aggregator.consume_errors()
+    assert len(errors) == 0
+    assert len(warnings) == 0
+
+    expected_trades = [Trade(
+        timestamp=Timestamp(1517195493),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('SC'),
+        quote_asset=symbol_to_asset_or_token('BTC'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal(0.0364)),
+        rate=Price(FVal(0.00000371)),
+        fee=Fee(FVal(0.0002)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: exxXE',
+    ), Trade(
+        timestamp=Timestamp(1545136553),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal(0.25)),
+        rate=Price(FVal(3394.8800)),
+        fee=Fee(FVal(0.0005)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: IxxWl',
+    ), Trade(
+        timestamp=Timestamp(1545416958),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal(0.1850)),
+        rate=Price(FVal(3376.9400)),
+        fee=Fee(FVal(0.000370)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: VxxABMN',
+    ), Trade(
+        timestamp=Timestamp(1560284504),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('DASH'),
+        quote_asset=symbol_to_asset_or_token('BTC'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal(0.30)),
+        rate=Price(FVal(0.01541873)),
+        fee=Fee(FVal(0.0009)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: LxxAob',
+    ), Trade(
+        timestamp=Timestamp(1577082782),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal(0.01)),
+        rate=Price(FVal(6785.6724)),
+        fee=Fee(FVal(0.00109140)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: GxxL',
+    ), Trade(
+        timestamp=Timestamp(1577898084),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BSQ'),
+        quote_asset=symbol_to_asset_or_token('BTC'),
+        trade_type=TradeType.BUY,
+        amount=AssetAmount(FVal(116.65)),
+        rate=Price(FVal(0.00008487)),
+        fee=Fee(FVal(0.00005940)),
+        fee_currency=symbol_to_asset_or_token('BTC'),
+        link='',
+        notes='ID: 552',
+    ), Trade(
+        timestamp=Timestamp(1607706820),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal(794)),
+        rate=Price(FVal(15883.3283)),
+        fee=Fee(FVal(2.01)),
+        fee_currency=symbol_to_asset_or_token('BSQ'),
+        link='',
+        notes='ID: xxYARFU',
+    ), Trade(
+        timestamp=Timestamp(1615371360),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal(505)),
+        rate=Price(FVal(50500.0000)),
+        fee=Fee(FVal(0.40)),
+        fee_currency=symbol_to_asset_or_token('BSQ'),
+        link='',
+        notes='ID: xxcz',
+    ), Trade(
+        timestamp=Timestamp(1615372820),
+        location=Location.BISQ,
+        base_asset=symbol_to_asset_or_token('BTC'),
+        quote_asset=symbol_to_asset_or_token('EUR'),
+        trade_type=TradeType.SELL,
+        amount=AssetAmount(FVal(2450)),
+        rate=Price(FVal(49000.0000)),
+        fee=Fee(FVal(0.29)),
+        fee_currency=symbol_to_asset_or_token('BSQ'),
+        link='',
+        notes='ID: xxhee',
+    )]
+    assert trades == expected_trades
+
+
+def assert_binance_import_results(rotki: Rotkehlchen):
+    expected_trades = [
+        Trade(
+            timestamp=Timestamp(1603922583),
+            location=Location.BINANCE,
+            base_asset=asset_from_binance('BNB'),
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.576474665')),
+            rate=Price(FVal('0.002350559286442405708460754332')),
+            fee=None,
+            fee_currency=None,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1604042198),
+            location=Location.BINANCE,
+            base_asset=A_AXS,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('1.19592356')),
+            rate=Price(FVal('0.007972823733333333333333333333')),
+            fee=None,
+            fee_currency=None,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1604067680),
+            location=Location.BINANCE,
+            base_asset=A_ETH,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.03605')),
+            rate=Price(FVal('0.0002680857338176748924305993057')),
+            fee=Fee(FVal('-0.00003605')),
+            fee_currency=A_ETH,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1604070545),
+            location=Location.BINANCE,
+            base_asset=A_ETH2,
+            quote_asset=A_ETH,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal(0.036)),
+            rate=Price(ONE),
+            fee=None,
+            fee_currency=None,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1604437979),
+            location=Location.BINANCE,
+            base_asset=A_ETH,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.08345')),
+            rate=Price(FVal('0.0002504432846137663664686495096')),
+            fee=Fee(FVal('-0.00008345')),
+            fee_currency=A_ETH,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1604437979),
+            location=Location.BINANCE,
+            base_asset=A_ETH,
+            quote_asset=A_EUR,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.0148')),
+            rate=Price(FVal('0.0002504658665117117839180876430')),
+            fee=Fee(FVal('-0.00009009')),
+            fee_currency=asset_from_binance('BNB'),
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1605169314),
+            location=Location.BINANCE,
+            base_asset=A_BTC,
+            quote_asset=Asset('IOTA'),
+            trade_type=TradeType.SELL,
+            amount=AssetAmount(FVal('0.001366875')),
+            rate=Price(FVal('0.00002025')),
+            fee=Fee(FVal('-0.0001057')),
+            fee_currency=asset_from_binance('BNB'),
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1605903740),
+            location=Location.BINANCE,
+            base_asset=asset_from_binance('BNB'),
+            quote_asset=Asset('SOL-2'),
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.00072724')),
+            rate=Price(FVal('0.3537908069071033997951901302')),
+            fee=None,
+            fee_currency=None,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1605903740),
+            location=Location.BINANCE,
+            base_asset=asset_from_binance('BNB'),
+            quote_asset=Asset('SOL-2'),
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('0.000237955')),
+            rate=Price(FVal('1.643676176003315604061614975')),
+            fee=None,
+            fee_currency=None,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1605910681),
+            location=Location.BINANCE,
+            base_asset=A_USDT,
+            quote_asset=Asset('DAR'),
+            trade_type=TradeType.SELL,
+            amount=AssetAmount(FVal('1157.56')),
+            rate=Price(FVal('3.44')),
+            fee=Fee(FVal('-1.15756')),
+            fee_currency=A_USDT,
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+        Trade(
+            timestamp=Timestamp(1605911401),
+            location=Location.BINANCE,
+            base_asset=Asset('IOTA'),
+            quote_asset=A_USDT,
+            trade_type=TradeType.BUY,
+            amount=AssetAmount(FVal('882')),
+            rate=Price(FVal('0.7694083249980764791875048088')),
+            fee=Fee(FVal('-0.882')),
+            fee_currency=Asset('IOTA'),
+            link='',
+            notes='Imported from binance CSV file. Binance operation: Buy / Sell',
+        ),
+    ]
+    expected_asset_movements = [
+        AssetMovement(
+            location=Location.BINANCE,
+            category=AssetMovementCategory.DEPOSIT,
+            timestamp=Timestamp(1603922583),
+            address=None,
+            transaction_id=None,
+            asset=A_EUR,
+            amount=FVal(245.25),
+            fee_asset=A_USD,
+            fee=Fee(ZERO),
+            link='Imported from binance CSV file. Binance operation: Deposit',
+        ),
+        AssetMovement(
+            location=Location.BINANCE,
+            category=AssetMovementCategory.WITHDRAWAL,
+            timestamp=Timestamp(1606853204),
+            address=None,
+            transaction_id=None,
+            asset=A_KNC,
+            amount=FVal(0.16),
+            fee_asset=A_USD,
+            fee=Fee(ZERO),
+            link='Imported from binance CSV file. Binance operation: Withdraw',
+        ),
+    ]
+    expected_ledger_actions = [
+        LedgerAction(
+            identifier=1,
+            timestamp=Timestamp(1603926662),
+            action_type=LedgerActionType.EXPENSE,
+            location=Location.BINANCE,
+            amount=AssetAmount(FVal(0.577257355)),
+            asset=asset_from_binance('BNB'),
+            rate=None,
+            rate_asset=None,
+            link=None,
+            notes='Imported from binance CSV file. Binance operation: POS savings purchase',
+        ),
+        LedgerAction(
+            identifier=2,
+            timestamp=Timestamp(1604223373),
+            action_type=LedgerActionType.INCOME,
+            location=Location.BINANCE,
+            amount=AssetAmount(FVal(0.000004615)),
+            asset=A_ETH2,
+            rate=None,
+            rate_asset=None,
+            link=None,
+            notes='Imported from binance CSV file. Binance operation: ETH 2.0 Staking Rewards',
+        ),
+        LedgerAction(
+            identifier=3,
+            timestamp=Timestamp(1604274610),
+            action_type=LedgerActionType.INCOME,
+            location=Location.BINANCE,
+            amount=AssetAmount(FVal(0.115147055)),
+            asset=Asset('DAR'),
+            rate=None,
+            rate_asset=None,
+            link=None,
+            notes='Imported from binance CSV file. Binance operation: Launchpool Interest',
+        ),
+        LedgerAction(
+            identifier=4,
+            timestamp=Timestamp(1604450188),
+            action_type=LedgerActionType.INCOME,
+            location=Location.BINANCE,
+            amount=AssetAmount(FVal(1.18837124)),
+            asset=A_AXS,
+            rate=None,
+            rate_asset=None,
+            link=None,
+            notes='Imported from binance CSV file. Binance operation: POS savings redemption',
+        ),
+        LedgerAction(
+            identifier=5,
+            timestamp=Timestamp(1604456888),
+            action_type=LedgerActionType.INCOME,
+            location=Location.BINANCE,
+            amount=AssetAmount(FVal(0.000092675)),
+            asset=asset_from_binance('BNB'),
+            rate=None,
+            rate_asset=None,
+            link=None,
+            notes='Imported from binance CSV file. Binance operation: POS savings interest',
+        ),
+    ]
+
+    trades = rotki.data.db.get_trades(filter_query=TradesFilterQuery.make(), has_premium=True)
+    warnings = rotki.msg_aggregator.consume_warnings()
+    asset_movements = rotki.data.db.get_asset_movements(
+        filter_query=AssetMovementsFilterQuery.make(),
+        has_premium=True,
+    )
+    ledger_actions = DBLedgerActions(
+        database=rotki.data.db,
+        msg_aggregator=rotki.data.msg_aggregator,
+    ).get_ledger_actions(
+        filter_query=LedgerActionsFilterQuery.make(),
+        has_premium=True,
+    )
+    assert trades == expected_trades
+    assert asset_movements == expected_asset_movements
+    assert ledger_actions == expected_ledger_actions
+    expected_warnings = [
+        '2 Binance rows have bad format. Check logs for details.',
+        'Skipped 4 rows during processing binance csv file. Check logs for details',
+    ]
+    assert warnings == expected_warnings

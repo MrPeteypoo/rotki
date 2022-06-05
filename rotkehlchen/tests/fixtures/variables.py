@@ -3,7 +3,7 @@ from typing import Sequence
 import pytest
 
 from rotkehlchen.tests.utils.ports import get_free_port
-from rotkehlchen.typing import Location
+from rotkehlchen.types import Location
 
 
 @pytest.fixture(scope='session', name='port_generator')
@@ -24,12 +24,6 @@ def session_db_password():
 
 @pytest.fixture
 def rest_api_port(port_generator):
-    port = next(port_generator)
-    return port
-
-
-@pytest.fixture
-def websockets_api_port(port_generator):
     port = next(port_generator)
     return port
 

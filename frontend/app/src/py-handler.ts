@@ -4,13 +4,12 @@ import * as os from 'os';
 import * as path from 'path';
 import stream from 'stream';
 import { app, App, BrowserWindow, ipcMain } from 'electron';
-import tasklist from 'tasklist';
+import { Task, tasklist } from 'tasklist';
 import { BackendCode } from '@/electron-main/backend-code';
 import { BackendOptions } from '@/electron-main/ipc';
 import { DEFAULT_PORT, selectPort } from '@/electron-main/port-utils';
 import { assert } from '@/utils/assertions';
 import { wait } from '@/utils/backoff';
-import Task = tasklist.Task;
 
 async function streamToString(givenStream: stream.Readable): Promise<string> {
   const bufferChunks: Buffer[] = [];
@@ -64,23 +63,44 @@ function getBackendArguments(options: Partial<BackendOptions>): string[] {
   return args;
 }
 
+const PY_DIST_FOLDER = 'rotkehlchen_py_dist';
+
 export default class PyHandler {
-  private static PY_DIST_FOLDER = 'rotkehlchen_py_dist';
+  readonly defaultLogDirectory: string;
   private rpcFailureNotifier?: any;
   private childProcess?: ChildProcess;
-  private _port?: number;
   private _websocketPort?: number;
-  private _serverUrl: string;
-  private _websocketUrl: string;
   private executable?: string;
   private _corsURL?: string;
   private backendOutput: string = '';
   private onChildError?: (err: Error) => void;
   private onChildExit?: (code: number, signal: any) => void;
   private logDirectory?: string;
-  readonly defaultLogDirectory: string;
+
+  constructor(private app: App) {
+    app.setAppLogsPath(path.join(app.getPath('appData'), 'rotki', 'logs'));
+    this.defaultLogDirectory = app.getPath('logs');
+    this._serverUrl = '';
+    this.logToFile('\nStarting rotki\n');
+  }
+
+  private _port?: number;
+
+  get port(): number {
+    assert(this._port);
+    return this._port;
+  }
+
+  private _serverUrl: string;
+
+  get serverUrl(): string {
+    return this._serverUrl;
+  }
 
   get logDir(): string {
+    if (import.meta.env.VITE_DEV_LOGS) {
+      return path.join('..', 'logs');
+    }
     return this.logDirectory ?? this.defaultLogDirectory;
   }
 
@@ -92,24 +112,12 @@ export default class PyHandler {
     return path.join(this.logDir, 'rotkehlchen.log');
   }
 
-  get port(): number {
-    assert(this._port);
-    return this._port;
-  }
-
-  get serverUrl(): string {
-    return this._serverUrl;
-  }
-
-  get websocketUrl(): string {
-    return this._websocketUrl;
-  }
-
-  constructor(private app: App) {
-    app.setAppLogsPath(path.join(app.getPath('appData'), 'rotki', 'logs'));
-    this.defaultLogDirectory = app.getPath('logs');
-    this._serverUrl = '';
-    this._websocketUrl = '';
+  private static packagedBackendPath() {
+    const resources = process.resourcesPath ? process.resourcesPath : __dirname;
+    if (os.platform() === 'darwin') {
+      return path.join(resources, PY_DIST_FOLDER, 'rotkehlchen');
+    }
+    return path.join(resources, PY_DIST_FOLDER);
   }
 
   logToFile(msg: string | Error) {
@@ -122,11 +130,6 @@ export default class PyHandler {
       fs.mkdirSync(this.logDir);
     }
     fs.appendFileSync(this.electronLogFile, `${message}\n`);
-  }
-
-  private logBackendOutput(msg: string | Error) {
-    this.logToFile(msg);
-    this.backendOutput += msg;
   }
 
   setCorsURL(url: string) {
@@ -176,7 +179,7 @@ export default class PyHandler {
     }
 
     const port = await selectPort();
-    const backendUrl = process.env.VUE_APP_BACKEND_URL;
+    const backendUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
 
     assert(backendUrl);
     const regExp = /(.*):\/\/(.*):(.*)/;
@@ -195,14 +198,12 @@ export default class PyHandler {
     }
 
     this._port = port;
-    this._websocketPort = await selectPort(port + 1);
-    this._websocketUrl = `${host}:${this._websocketPort}`;
     const args: string[] = getBackendArguments(options);
 
     if (this.guessPackaged()) {
-      this.startProcessPackaged(port, this._websocketPort, args);
+      this.startProcessPackaged(port, args, window);
     } else {
-      this.startProcess(port, this._websocketPort, args);
+      this.startProcess(port, args);
     }
 
     const childProcess = this.childProcess;
@@ -280,6 +281,11 @@ export default class PyHandler {
     }
   }
 
+  private logBackendOutput(msg: string | Error) {
+    this.logToFile(msg);
+    this.backendOutput += msg;
+  }
+
   private terminateBackend = (client: ChildProcess) =>
     new Promise<void>((resolve, reject) => {
       client.on('exit', () => {
@@ -304,14 +310,6 @@ export default class PyHandler {
     return fs.existsSync(path);
   }
 
-  private static packagedBackendPath() {
-    const resources = process.resourcesPath ? process.resourcesPath : __dirname;
-    if (os.platform() === 'darwin') {
-      return path.join(resources, PyHandler.PY_DIST_FOLDER, 'rotkehlchen');
-    }
-    return path.join(resources, PyHandler.PY_DIST_FOLDER);
-  }
-
   private setFailureNotification(
     window: Electron.BrowserWindow | null,
     backendOutput: string | Error,
@@ -325,14 +323,12 @@ export default class PyHandler {
     }, 2000);
   }
 
-  private startProcess(port: number, websocketPort: number, args: string[]) {
+  private startProcess(port: number, args: string[]) {
     const defaultArgs: string[] = [
       '-m',
       'rotkehlchen',
       '--rest-api-port',
-      port.toString(),
-      '--websockets-api-port',
-      websocketPort.toString()
+      port.toString()
     ];
 
     if (this._corsURL) {
@@ -348,19 +344,8 @@ export default class PyHandler {
       }
       defaultArgs.push('--data-dir', tempPath);
     }
-    // in some systems the virtualenv's python is not detected from inside electron and the
-    // system python is used. Electron/node seemed to add /usr/bin to the path before the
-    // virtualenv directory and as such system's python is used. Not sure why this happens only
-    // in some systems. Check again in the future if this happens in Lefteris laptop Archlinux.
-    // To mitigate this if a virtualenv is detected we add its bin directory to the start
-    // start of the path
-    if (process.env.VIRTUAL_ENV) {
-      process.env.PATH =
-        process.env.VIRTUAL_ENV +
-        path.sep +
-        (process.platform === 'win32' ? 'Scripts;' : 'bin:') +
-        process.env.PATH;
-    } else {
+
+    if (!process.env.VIRTUAL_ENV) {
       this.logAndQuit(
         'ERROR: Running in development mode and not inside a python virtual environment'
       );
@@ -377,13 +362,26 @@ export default class PyHandler {
 
   private startProcessPackaged(
     port: number,
-    websocketPort: number,
-    args: string[]
+    args: string[],
+    window: Electron.CrossProcessExports.BrowserWindow
   ) {
-    const dist_dir = PyHandler.packagedBackendPath();
-    const files = fs.readdirSync(dist_dir);
+    const distDir = PyHandler.packagedBackendPath();
+    const files = fs.readdirSync(distDir);
     if (files.length === 0) {
       this.logAndQuit('ERROR: No files found in the dist directory');
+      return;
+    }
+
+    const binaries = files.filter(file => file.startsWith('rotkehlchen-'));
+
+    if (binaries.length > 1) {
+      const names = files.join(', ');
+      const error = `Expected only one backend binary but found multiple ones
+       in directory: ${names}.\nThis might indicate a problematic upgrade.\n\n
+       Please make sure only one binary file exists that matches the app version`;
+      this.logToFile(`ERROR: ${error}`);
+      this.setFailureNotification(window, error, BackendCode.TERMINATED);
+      return;
     }
 
     const exe = files.find(file => file.startsWith('rotkehlchen-'));
@@ -393,17 +391,12 @@ export default class PyHandler {
     }
 
     this.executable = exe;
-    const executable = path.join(dist_dir, exe);
+    const executable = path.join(distDir, exe);
     if (this._corsURL) {
       args.push('--api-cors', this._corsURL);
     }
     args.push('--logfile', this.backendLogFile);
-    args = [
-      '--rest-api-port',
-      port.toString(),
-      '--websockets-api-port',
-      websocketPort.toString()
-    ].concat(args);
+    args = ['--rest-api-port', port.toString()].concat(args);
     this.logToFile(
       `Starting packaged python subprocess: ${executable} ${args.join(' ')}`
     );
@@ -427,7 +420,7 @@ export default class PyHandler {
       return;
     }
 
-    const tasks: tasklist.Task[] = await tasklist();
+    const tasks: Task[] = await tasklist();
     this.logToFile(`Currently running: ${tasks.length} tasks`);
 
     const pids = tasks

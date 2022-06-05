@@ -1,6 +1,7 @@
 import { AddressIndexed, Balance, BigNumber } from '@rotki/common';
 import { DefiAccount } from '@rotki/common/lib/account';
 import { Blockchain, DefiProtocol } from '@rotki/common/lib/blockchain';
+import { ProfitLossModel } from '@rotki/common/lib/defi';
 import {
   AaveBorrowingEventType,
   AaveEvent,
@@ -17,14 +18,8 @@ import {
   Pool
 } from '@rotki/common/lib/defi/balancer';
 import { DexTrade } from '@rotki/common/lib/defi/dex';
-import {
-  XswapBalance,
-  XswapEventDetails,
-  XswapPool,
-  XswapPoolProfit
-} from '@rotki/common/lib/defi/xswap';
+import { get } from '@vueuse/core';
 import sortBy from 'lodash/sortBy';
-import { explorerUrls } from '@/components/helper/asset-urls';
 import { truncateAddress } from '@/filters';
 import i18n from '@/i18n';
 import { ProtocolVersion } from '@/services/defi/consts';
@@ -36,22 +31,23 @@ import {
   YearnVaultProfitLoss,
   YearnVaultsHistory
 } from '@/services/defi/types/yearn';
-import { Trade } from '@/services/history/types';
+import { useAssetInfoRetrieval } from '@/store/assets';
 import { Section, Status } from '@/store/const';
 import {
   AAVE,
   AIRDROP_POAP,
   COMPOUND,
-  getProtcolIcon,
+  getProtocolIcon,
   GETTER_BALANCER_BALANCES,
-  GETTER_UNISWAP_ASSETS,
   LIQUITY,
   MAKERDAO_DSR,
   MAKERDAO_VAULTS,
   YEARN_FINANCE_VAULTS,
   YEARN_FINANCE_VAULTS_V2
 } from '@/store/defi/const';
+import { useLiquityStore } from '@/store/defi/liquity';
 import { LiquityLoan } from '@/store/defi/liquity/types';
+import { useSushiswapStore } from '@/store/defi/sushiswap';
 import {
   AaveLoan,
   Airdrop,
@@ -69,20 +65,13 @@ import {
   MakerDAOVaultModel,
   OverviewDefiProtocol,
   PoapDelivery,
-  ProfitLossModel,
   TokenInfo
 } from '@/store/defi/types';
+import { useUniswap } from '@/store/defi/uniswap';
 import { balanceUsdValueSum, toProfitLossModel } from '@/store/defi/utils';
-import {
-  getBalances,
-  getEventDetails,
-  getPoolProfit,
-  getPools
-} from '@/store/defi/xswap-utils';
-import { SettingsState } from '@/store/settings/types';
 import { RotkehlchenState } from '@/store/types';
 import { Getters } from '@/store/typing';
-import { filterAddresses } from '@/store/utils';
+import { filterAddresses, getStatus } from '@/store/utils';
 import { Writeable } from '@/types';
 import { assert } from '@/utils/assertions';
 import { Zero } from '@/utils/bignumbers';
@@ -142,15 +131,9 @@ interface DefiGetters {
   yearnVaultsProfit: DefiGetterTypes.YearnVaultProfitType;
   yearnVaultsAssets: DefiGetterTypes.YearnVaultAssetType;
   aaveTotalEarned: (addresses: string[]) => ProfitLossModel[];
-  uniswapBalances: (addresses: string[]) => XswapBalance[];
-  basicDexTrades: (addresses: string[]) => Trade[];
-  uniswapPoolProfit: (addresses: string[]) => XswapPoolProfit[];
-  uniswapEvents: (addresses: string[]) => XswapEventDetails[];
-  uniswapAddresses: string[];
   dexTrades: (addresses: string[]) => DexTrade[];
   airdrops: (addresses: string[]) => Airdrop[];
   airdropAddresses: string[];
-  [GETTER_UNISWAP_ASSETS]: XswapPool[];
   [GETTER_BALANCER_BALANCES]: BalancerBalanceWithOwner[];
   balancerAddresses: string[];
   balancerEvents: (addresses: string[]) => BalancerEvent[];
@@ -336,20 +319,16 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     },
 
   loans:
-    (
-      {
-        aaveBalances,
-        aaveHistory,
-        makerDAOVaults,
-        compoundBalances,
-        compoundHistory: { events },
-        liquity
-      }: DefiState,
-      _dg,
-      _rs,
-      { 'balances/assetInfo': assetInfo }
-    ) =>
+    ({
+      aaveBalances,
+      aaveHistory,
+      makerDAOVaults,
+      compoundBalances,
+      compoundHistory: { events }
+    }: DefiState) =>
     (protocols: DefiProtocol[]): DefiLoan[] => {
+      const { assetInfo } = useAssetInfoRetrieval();
+
       const loans: DefiLoan[] = [];
       const showAll = protocols.length === 0;
 
@@ -375,7 +354,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           }
 
           for (const asset of assets) {
-            const symbol = assetInfo(asset)?.symbol ?? asset;
+            const symbol = get(assetInfo(asset))?.symbol ?? asset;
             loans.push({
               identifier: `${symbol} - ${truncateAddress(address, 6)}`,
               protocol: DefiProtocol.AAVE,
@@ -398,7 +377,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
             .filter(asset => !knownAssets.includes(asset));
 
           for (const asset of historyAssets) {
-            const symbol = assetInfo(asset)?.symbol ?? asset;
+            const symbol = get(assetInfo(asset))?.symbol ?? asset;
             loans.push({
               identifier: `${symbol} - ${truncateAddress(address, 6)}`,
               protocol: DefiProtocol.AAVE,
@@ -447,8 +426,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       }
 
       if (showAll || protocols.includes(DefiProtocol.LIQUITY)) {
-        assert(liquity);
-        const { events, balances } = liquity;
+        const { events, balances } = useLiquityStore();
         const balanceAddress = Object.keys(balances);
         const eventAddresses = Object.keys(events);
 
@@ -481,8 +459,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
         aaveBalances,
         aaveHistory,
         compoundBalances,
-        compoundHistory: { events },
-        liquity
+        compoundHistory: { events }
       }: DefiState,
       { loans }
     ) =>
@@ -651,10 +628,9 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       }
 
       if (loan.protocol === DefiProtocol.LIQUITY) {
-        assert(liquity);
         assert(loan.owner);
         const { owner } = loan;
-        const { balances, events } = liquity;
+        const { balances, events } = useLiquityStore();
 
         return {
           owner: owner,
@@ -668,7 +644,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     },
 
   loanSummary:
-    ({ makerDAOVaults, aaveBalances, compoundBalances, liquity }: DefiState) =>
+    ({ makerDAOVaults, aaveBalances, compoundBalances }: DefiState) =>
     (protocols: DefiProtocol[]): LoanSummary => {
       let totalCollateralUsd = Zero;
       let totalDebt = Zero;
@@ -716,7 +692,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       }
 
       if (showAll || protocols.includes(DefiProtocol.LIQUITY)) {
-        const balances = liquity!!.balances;
+        const { balances } = useLiquityStore();
         for (const address in balances) {
           const balance = balances[address];
           const { collateral, debt } = balance;
@@ -884,13 +860,10 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     },
 
   lendingBalances:
-    (
-      { dsrBalances, aaveBalances, compoundBalances }: DefiState,
-      _dg,
-      _rs,
-      { 'balances/getIdentifierForSymbol': getIdentifierForSymbol }
-    ) =>
+    ({ dsrBalances, aaveBalances, compoundBalances }: DefiState) =>
     (protocols: DefiProtocol[], addresses: string[]): DefiBalance[] => {
+      const { getAssetIdentifierForSymbol } = useAssetInfoRetrieval();
+
       const balances: DefiBalance[] = [];
       const showAll = protocols.length === 0;
       const allAddresses = addresses.length === 0;
@@ -908,7 +881,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           balances.push({
             address,
             protocol: DefiProtocol.MAKERDAO_DSR,
-            asset: getIdentifierForSymbol('DAI'),
+            asset: getAssetIdentifierForSymbol('DAI'),
             balance: { ...balance },
             effectiveInterestRate: `${format}%`
           });
@@ -958,22 +931,19 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     },
 
   lendingHistory:
-    (
-      {
-        dsrHistory,
-        aaveHistory,
-        compoundHistory,
-        yearnVaultsHistory,
-        yearnVaultsV2History
-      }: DefiState,
-      _dg,
-      _rs,
-      { 'balances/getIdentifierForSymbol': getIdentifierForSymbol }
-    ) =>
+    ({
+      dsrHistory,
+      aaveHistory,
+      compoundHistory,
+      yearnVaultsHistory,
+      yearnVaultsV2History
+    }: DefiState) =>
     (
       protocols: DefiProtocol[],
       addresses: string[]
     ): DefiLendingHistory<DefiProtocol>[] => {
+      const { getAssetIdentifierForSymbol } = useAssetInfoRetrieval();
+
       const defiLendingHistory: DefiLendingHistory<DefiProtocol>[] = [];
       const showAll = protocols.length === 0;
       const allAddresses = addresses.length === 0;
@@ -993,7 +963,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
               eventType: movement.movementType,
               protocol: DefiProtocol.MAKERDAO_DSR,
               address,
-              asset: getIdentifierForSymbol('DAI'),
+              asset: getAssetIdentifierForSymbol('DAI'),
               value: movement.value,
               blockNumber: movement.blockNumber,
               timestamp: movement.timestamp,
@@ -1121,12 +1091,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       return sortBy(defiLendingHistory, 'timestamp').reverse();
     },
 
-  defiOverview: (
-    { allProtocols },
-    { loanSummary, totalLendingDeposit },
-    _,
-    { status }
-  ) => {
+  defiOverview: ({ allProtocols }, { loanSummary, totalLendingDeposit }, _) => {
     function shouldDisplay(summary: DefiProtocolSummary) {
       const lending = summary.totalLendingDepositUsd.gt(0);
       const debt = summary.totalDebtUsd.gt(0);
@@ -1142,7 +1107,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       noLiabilities?: boolean,
       noDeposits?: boolean
     ): DefiProtocolSummary | undefined => {
-      const currentStatus = status(section);
+      const currentStatus = getStatus(section);
       if (
         currentStatus !== Status.LOADED &&
         currentStatus !== Status.REFRESHING
@@ -1156,7 +1121,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       return {
         protocol: {
           name: name,
-          icon: getProtcolIcon(name)
+          icon: getProtocolIcon(name)
         },
         liabilities: !noLiabilities,
         deposits: !noDeposits,
@@ -1243,7 +1208,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           summary[protocol] = {
             protocol: {
               ...entry.protocol,
-              icon: getProtcolIcon(protocol)
+              icon: getProtocolIcon(protocol)
             },
             tokenInfo: {
               tokenName: entry.baseBalance.tokenName,
@@ -1291,7 +1256,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       }
     }
 
-    const overviewStatus = status(Section.DEFI_OVERVIEW);
+    const overviewStatus = getStatus(Section.DEFI_OVERVIEW);
     if (
       overviewStatus === Status.LOADED ||
       overviewStatus === Status.REFRESHING
@@ -1300,7 +1265,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       const makerDAODSRSummary: DefiProtocolSummary = {
         protocol: {
           name: MAKERDAO_DSR,
-          icon: getProtcolIcon(MAKERDAO_DSR)
+          icon: getProtocolIcon(MAKERDAO_DSR)
         },
         tokenInfo: null,
         assets: [],
@@ -1318,7 +1283,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       const makerDAOVaultSummary: DefiProtocolSummary = {
         protocol: {
           name: MAKERDAO_VAULTS,
-          icon: getProtcolIcon(MAKERDAO_VAULTS)
+          icon: getProtocolIcon(MAKERDAO_VAULTS)
         },
         tokenInfo: null,
         assets: [],
@@ -1371,16 +1336,13 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
   },
 
   yearnVaultsProfit:
-    (
-      { yearnVaultsHistory, yearnVaultsV2History },
-      _dg,
-      _rs,
-      { 'balances/assetSymbol': assetSymbol }
-    ) =>
+    ({ yearnVaultsHistory, yearnVaultsV2History }) =>
     (
       addresses: string[],
       version: ProtocolVersion = ProtocolVersion.V1
     ): YearnVaultProfitLoss[] => {
+      const { assetSymbol } = useAssetInfoRetrieval();
+
       const vaultsHistory =
         version === ProtocolVersion.V1
           ? yearnVaultsHistory
@@ -1406,7 +1368,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           if (!yearnVaultsProfit[vault]) {
             let vaultName = vault;
             if (vault.startsWith('_ceth_')) {
-              vaultName = `${assetSymbol(vault)} Vault`;
+              vaultName = `${get(assetSymbol(vault))} Vault`;
             }
 
             yearnVaultsProfit[vault] = {
@@ -1426,16 +1388,12 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     },
 
   yearnVaultsAssets:
-    (
-      { yearnVaultsBalances, yearnVaultsV2Balances },
-      _dg,
-      _rs,
-      { 'balances/assetSymbol': assetSymbol }
-    ) =>
+    ({ yearnVaultsBalances, yearnVaultsV2Balances }) =>
     (
       addresses: string[],
       version: ProtocolVersion = ProtocolVersion.V1
     ): YearnVaultAsset[] => {
+      const { assetSymbol } = useAssetInfoRetrieval();
       const vaultsBalances =
         version === ProtocolVersion.V1
           ? yearnVaultsBalances
@@ -1452,7 +1410,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           let vaultName = vault;
 
           if (vault.startsWith('0x')) {
-            const tokenSymbol = assetSymbol(vaults[vault].vaultToken);
+            const tokenSymbol = get(assetSymbol(vaults[vault].vaultToken));
             vaultName = `${tokenSymbol} Vault`;
           }
 
@@ -1528,78 +1486,11 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       }
       return earned;
     },
-
-  uniswapBalances:
-    ({ uniswapBalances }) =>
-    (addresses: string[]): XswapBalance[] => {
-      return getBalances(uniswapBalances, addresses);
-    },
-  basicDexTrades:
-    ({ uniswapTrades, balancerTrades, sushiswap }, _r, { settings }) =>
-    (addresses): Trade[] => {
-      const {
-        explorers: { ETH }
-      }: SettingsState = settings!;
-      const txUrl = ETH?.transaction ?? explorerUrls.ETH.transaction;
-      function transform(
-        trades: DexTrades,
-        location: 'uniswap' | 'balancer' | 'sushiswap'
-      ): Trade[] {
-        const simpleTrades: Trade[] = [];
-        for (const address in trades) {
-          if (addresses.length > 0 && !addresses.includes(address)) {
-            continue;
-          }
-          const dexTrade = trades[address];
-          const linkUrl = txUrl.endsWith('/')
-            ? `${txUrl}${dexTrade[0].txHash}`
-            : `${txUrl}/${dexTrade[0].txHash}`;
-          const convertedTrades: Trade[] = dexTrade.map(trade => ({
-            tradeId: trade.tradeId,
-            location: location,
-            amount: trade.amount,
-            fee: trade.fee,
-            feeCurrency: trade.feeCurrency,
-            timestamp: trade.timestamp,
-            baseAsset: trade.baseAsset,
-            quoteAsset: trade.quoteAsset,
-            rate: trade.rate,
-            tradeType: 'buy',
-            link: linkUrl,
-            notes: '',
-            ignoredInAccounting: false
-          }));
-          simpleTrades.push(...convertedTrades);
-        }
-        return simpleTrades;
-      }
-
-      const trades: Trade[] = [];
-      trades.push(...transform(uniswapTrades, 'uniswap'));
-      trades.push(...transform(balancerTrades, 'balancer'));
-      if (sushiswap) {
-        trades.push(...transform(sushiswap.trades, 'sushiswap'));
-      }
-      return sortBy(trades, 'timestamp').reverse();
-    },
-  uniswapPoolProfit:
-    ({ uniswapEvents }) =>
-    (addresses: string[]): XswapPoolProfit[] => {
-      return getPoolProfit(uniswapEvents, addresses);
-    },
-  uniswapEvents:
-    ({ uniswapEvents }) =>
-    (addresses): XswapEventDetails[] => {
-      return getEventDetails(uniswapEvents, addresses);
-    },
-  uniswapAddresses: ({ uniswapEvents, uniswapBalances }) => {
-    return Object.keys(uniswapBalances)
-      .concat(Object.keys(uniswapEvents))
-      .filter(uniqueStrings);
-  },
   dexTrades:
-    ({ uniswapTrades, balancerTrades, sushiswap }) =>
+    ({ balancerTrades }) =>
     (addresses): DexTrade[] => {
+      const { trades: uniswapTrades } = useUniswap();
+      const { trades: sushiswapTrades } = useSushiswapStore();
       const trades: DexTrade[] = [];
       const addTrades = (
         dexTrades: DexTrades,
@@ -1613,10 +1504,10 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
           trades.push(...dexTrades[address]);
         }
       };
-      addTrades(uniswapTrades, addresses, trades);
+      addTrades(uniswapTrades as DexTrades, addresses, trades);
       addTrades(balancerTrades, addresses, trades);
-      if (sushiswap) {
-        addTrades(sushiswap.trades, addresses, trades);
+      if (sushiswapTrades) {
+        addTrades(sushiswapTrades as DexTrades, addresses, trades);
       }
 
       return sortBy(trades, 'timestamp').reverse();
@@ -1659,9 +1550,6 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       return data;
     },
   airdropAddresses: ({ airdrops }) => Object.keys(airdrops),
-  [GETTER_UNISWAP_ASSETS]: ({ uniswapEvents, uniswapBalances }) => {
-    return getPools(uniswapBalances, uniswapEvents);
-  },
   [GETTER_BALANCER_BALANCES]: ({ balancerBalances }) => {
     const balances: BalancerBalanceWithOwner[] = [];
     for (const address in balancerBalances) {
@@ -1676,8 +1564,9 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
   },
   balancerAddresses: ({ balancerBalances }) => Object.keys(balancerBalances),
   balancerEvents:
-    ({ balancerEvents }, _dg, _rs, { 'balances/assetSymbol': assetSymbol }) =>
+    ({ balancerEvents }) =>
     (addresses): BalancerEvent[] => {
+      const { assetSymbol } = useAssetInfoRetrieval();
       const events: BalancerEvent[] = [];
       filterAddresses(balancerEvents, addresses, item => {
         for (let i = 0; i < item.length; i++) {
@@ -1687,7 +1576,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
               ...value,
               pool: {
                 name: poolDetail.poolTokens
-                  .map(pool => assetSymbol(pool.token))
+                  .map(pool => get(assetSymbol(pool.token)))
                   .join('/'),
                 address: poolDetail.poolAddress
               }
@@ -1697,12 +1586,8 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
       });
       return events;
     },
-  balancerPools: (
-    _,
-    { balancerBalances, balancerEvents },
-    _rs,
-    { 'balances/assetSymbol': assetSymbol }
-  ) => {
+  balancerPools: (_, { balancerBalances, balancerEvents }, _rs) => {
+    const { assetSymbol } = useAssetInfoRetrieval();
     const pools: { [address: string]: Pool } = {};
     const events = balancerEvents([]);
 
@@ -1711,7 +1596,9 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
         continue;
       }
       pools[balance.address] = {
-        name: balance.tokens.map(token => assetSymbol(token.token)).join('/'),
+        name: balance.tokens
+          .map(token => get(assetSymbol(token.token)))
+          .join('/'),
         address: balance.address
       };
     }
@@ -1729,8 +1616,9 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
     return Object.values(pools);
   },
   balancerProfitLoss:
-    ({ balancerEvents }, _dg, _rs, { 'balances/assetSymbol': assetSymbol }) =>
+    ({ balancerEvents }) =>
     addresses => {
+      const { assetSymbol } = useAssetInfoRetrieval();
       const balancerProfitLoss: { [pool: string]: BalancerProfitLoss } = {};
       filterAddresses(balancerEvents, addresses, item => {
         for (let i = 0; i < item.length; i++) {
@@ -1740,7 +1628,7 @@ export const getters: Getters<DefiState, DefiGetters, RotkehlchenState, any> = {
               pool: {
                 address: entry.poolAddress,
                 name: entry.poolTokens
-                  .map(token => assetSymbol(token.token))
+                  .map(token => get(assetSymbol(token.token)))
                   .join('/')
               },
               tokens: entry.poolTokens.map(token => token.token),

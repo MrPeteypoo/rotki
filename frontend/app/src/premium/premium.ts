@@ -1,4 +1,3 @@
-import { RotkiPremiumInterface } from '@rotki/common/lib/premium';
 import Chart from 'chart.js';
 import Vue, { VueConstructor } from 'vue';
 import PremiumLoading from '@/components/premium/PremiumLoading.vue';
@@ -61,7 +60,7 @@ function load(name: string): Promise<VueConstructor> {
     if (library[name]) {
       resolve(library[name]);
     } else {
-      resolve(PremiumLoadingError);
+      resolve(PremiumLoadingError as VueConstructor);
     }
   });
 }
@@ -165,6 +164,7 @@ declare global {
     Vue: any;
     Chart: typeof Chart;
     '@vue/composition-api': any;
-    rotki: RotkiPremiumInterface;
+    zod: any;
+    bn: any;
   }
 }

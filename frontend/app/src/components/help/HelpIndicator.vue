@@ -1,28 +1,37 @@
 <template>
   <menu-tooltip-button
     :tooltip="$t('help_sidebar.tooltip')"
-    class-name="secondary--text text--lighten-2"
-    @click="visibleUpdate(!visible)"
+    class-name="secondary--text text--lighten-4"
+    @click="toggleVisibility"
   >
     <v-icon :class="visible ? 'help--visible' : null"> mdi-help-circle </v-icon>
   </menu-tooltip-button>
 </template>
 
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import { defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
 
-@Component({
+export default defineComponent({
   name: 'HelpIndicator',
-  components: { MenuTooltipButton }
-})
-export default class HelpIndicator extends Vue {
-  @Prop({ required: true, type: Boolean })
-  visible!: boolean;
+  components: { MenuTooltipButton },
+  props: {
+    visible: { required: true, type: Boolean }
+  },
+  emits: ['visible:update'],
+  setup(props, { emit }) {
+    const { visible } = toRefs(props);
 
-  @Emit('visible:update')
-  visibleUpdate(_visible: boolean) {}
-}
+    const toggleVisibility = () => {
+      emit('visible:update', !get(visible));
+    };
+
+    return {
+      toggleVisibility
+    };
+  }
+});
 </script>
 
 <style scoped lang="scss">

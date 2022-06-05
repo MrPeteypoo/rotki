@@ -4,7 +4,7 @@ from unittest.mock import _patch, patch
 
 import requests
 
-from rotkehlchen.accounting.structures import Balance, BalanceType
+from rotkehlchen.accounting.structures.balance import Balance, BalanceType
 from rotkehlchen.assets.asset import Asset, EthereumToken
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
@@ -22,7 +22,7 @@ from rotkehlchen.tests.utils.exchanges import (
     patch_poloniex_balances_query,
     try_get_first_exchange,
 )
-from rotkehlchen.typing import BTCAddress, ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.types import BTCAddress, ChecksumEthAddress, Location, Timestamp
 
 
 class BalancesTestSetup(NamedTuple):
@@ -313,3 +313,60 @@ def add_starting_balances(datahandler) -> List[DBAssetBalance]:
     datahandler.db.add_multiple_location_data(location_data)
 
     return balances
+
+
+def add_starting_nfts(datahandler):
+    """Adds a time series for an account owning a NFT"""
+    datahandler.db.add_asset_identifiers(['_nft_pickle'])
+    balances = [
+        DBAssetBalance(
+            category=BalanceType.ASSET,
+            time=Timestamp(1488326400),
+            asset=Asset('_nft_pickle'),
+            amount='1',
+            usd_value='1000',
+        ), DBAssetBalance(
+            category=BalanceType.ASSET,
+            time=Timestamp(1488426400),
+            asset=Asset('_nft_pickle'),
+            amount='1',
+            usd_value='1000',
+        ), DBAssetBalance(
+            category=BalanceType.ASSET,
+            time=Timestamp(1488526400),
+            asset=Asset('_nft_pickle'),
+            amount='2',
+            usd_value='2000',
+        ), DBAssetBalance(
+            category=BalanceType.ASSET,
+            time=Timestamp(1488626400),
+            asset=Asset('_nft_pickle'),
+            amount='1',
+            usd_value='1000',
+        ),
+    ]
+    datahandler.db.add_multiple_balances(balances)
+    datahandler.db.conn.commit()
+    location_data = [
+        LocationData(
+            time=Timestamp(1488326400),
+            location=Location.TOTAL.serialize_for_db(),  # pylint: disable=no-member
+            usd_value='3000',
+        ),
+        LocationData(
+            time=Timestamp(1488426400),
+            location=Location.TOTAL.serialize_for_db(),  # pylint: disable=no-member
+            usd_value='4000',
+        ),
+        LocationData(
+            time=Timestamp(1488526400),
+            location=Location.TOTAL.serialize_for_db(),  # pylint: disable=no-member
+            usd_value='5000',
+        ),
+        LocationData(
+            time=Timestamp(1488626400),
+            location=Location.TOTAL.serialize_for_db(),  # pylint: disable=no-member
+            usd_value='5500',
+        ),
+    ]
+    datahandler.db.add_multiple_location_data(location_data)

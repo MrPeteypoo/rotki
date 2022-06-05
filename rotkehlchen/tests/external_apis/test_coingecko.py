@@ -2,10 +2,10 @@ import pytest
 
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR, A_YFI
-from rotkehlchen.errors import UnsupportedAsset
+from rotkehlchen.errors.asset import UnsupportedAsset
 from rotkehlchen.externalapis.coingecko import CoingeckoAssetData
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import Price
+from rotkehlchen.types import Price
 
 
 def assert_coin_data_same(given, expected, compare_description=False):

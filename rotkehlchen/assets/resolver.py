@@ -1,9 +1,9 @@
 from typing import Dict, Optional
 
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.globaldb import GlobalDBHandler
 
-from .typing import AssetData
+from .types import AssetData
 
 
 class AssetResolver():

@@ -44,6 +44,7 @@ export default defineComponent({
   props: {
     disabled: { required: false, type: Boolean, default: false }
   },
+  emits: ['ignore'],
   setup(prop, { emit }) {
     return {
       ignore: (ignore: boolean) => emit('ignore', ignore)
@@ -51,5 +52,3 @@ export default defineComponent({
   }
 });
 </script>
-
-<style scoped lang="scss"></style>

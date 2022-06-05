@@ -5,7 +5,7 @@ import gevent
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.chain.ethereum.defi.structures import (
     DefiBalance,
     DefiProtocol,
@@ -14,7 +14,7 @@ from rotkehlchen.chain.ethereum.defi.structures import (
 from rotkehlchen.constants.assets import A_BTC, A_DAI, A_ETH
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.blockchain import mock_beaconchain, mock_etherscan_query
-from rotkehlchen.typing import SupportedBlockchain
+from rotkehlchen.types import SupportedBlockchain
 
 
 def test_query_btc_balances(blockchain):

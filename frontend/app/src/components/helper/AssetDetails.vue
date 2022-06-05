@@ -1,39 +1,52 @@
 <template>
-  <asset-details-base
-    :hide-name="hideName"
-    :asset="currentAsset"
-    :opens-details="opensDetails"
-  />
+  <div>
+    <asset-details-base
+      :hide-name="hideName"
+      :asset="currentAsset"
+      :opens-details="opensDetails"
+      :dense="dense"
+    />
+  </div>
 </template>
 
 <script lang="ts">
-import { Component, Mixins, Prop } from 'vue-property-decorator';
+import { computed, defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import AssetDetailsBase from '@/components/helper/AssetDetailsBase.vue';
-import AssetMixin from '@/mixins/asset-mixin';
+import { useAssetInfoRetrieval } from '@/store/assets';
 
-@Component({
-  components: { AssetDetailsBase }
-})
-export default class AssetDetails extends Mixins(AssetMixin) {
-  @Prop({
-    required: true,
-    validator(value: string): boolean {
-      return !!value && value.length > 0;
-    }
-  })
-  asset!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  opensDetails!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  hideName!: boolean;
+export default defineComponent({
+  name: 'AssetDetails',
+  components: { AssetDetailsBase },
+  props: {
+    asset: {
+      required: true,
+      type: String,
+      validator: (value: string): boolean => {
+        return !!value && value.length > 0;
+      }
+    },
+    opensDetails: { required: false, type: Boolean, default: false },
+    hideName: { required: false, type: Boolean, default: false },
+    dense: { required: false, type: Boolean, default: false }
+  },
+  setup(props) {
+    const { asset } = toRefs(props);
 
-  get currentAsset() {
-    const details = this.assetInfo(this.asset);
+    const { assetInfo } = useAssetInfoRetrieval();
+
+    const currentAsset = computed(() => {
+      const details = get(assetInfo(get(asset)));
+      return {
+        symbol: details ? details.symbol : get(asset),
+        name: details ? details.name : get(asset),
+        identifier: details ? details.identifier : get(asset)
+      };
+    });
+
     return {
-      symbol: details ? details.symbol : this.asset,
-      name: details ? details.name : this.asset,
-      identifier: details ? details.identifier : this.asset
+      currentAsset
     };
   }
-}
+});
 </script>

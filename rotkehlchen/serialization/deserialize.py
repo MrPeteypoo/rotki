@@ -1,34 +1,38 @@
-from typing import TYPE_CHECKING, Any, Callable, Dict, Tuple, TypeVar, Union
+import logging
+from typing import TYPE_CHECKING, Any, Callable, Dict, Literal, Tuple, TypeVar, Union, overload
 
 from eth_utils import to_checksum_address
 
+from rotkehlchen.accounting.structures.base import HistoryEventType
 from rotkehlchen.assets.asset import Asset, EthereumToken
 from rotkehlchen.assets.utils import get_asset_by_symbol
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import (
-    ConversionError,
-    DeserializationError,
-    UnknownAsset,
-    UnprocessableTradePair,
-)
+from rotkehlchen.errors.asset import UnknownAsset, UnprocessableTradePair
+from rotkehlchen.errors.serialization import ConversionError, DeserializationError
 from rotkehlchen.externalapis.utils import read_hash, read_integer
 from rotkehlchen.fval import AcceptableFValInitInput, FVal
-from rotkehlchen.typing import (
+from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.types import (
     AssetAmount,
     AssetMovementCategory,
     ChecksumEthAddress,
+    EthereumInternalTransaction,
     EthereumTransaction,
     Fee,
     HexColorCode,
     Optional,
     Timestamp,
     TradePair,
-    TradeType,
+    deserialize_evm_tx_hash,
 )
 from rotkehlchen.utils.misc import convert_to_int, create_timestamp, iso8601ts_to_timestamp
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager
+
+
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
 
 
 def deserialize_fee(fee: Optional[str]) -> Fee:
@@ -217,7 +221,20 @@ def deserialize_timestamp_from_binance(time: int) -> Timestamp:
     return Timestamp(int(time / 1000))
 
 
-def deserialize_optional_fval(
+def deserialize_fval(
+        value: AcceptableFValInitInput,
+        name: str,
+        location: str,
+) -> FVal:
+    try:
+        result = FVal(value)
+    except ValueError as e:
+        raise DeserializationError(f'Failed to deserialize value entry: {str(e)} for {name} during {location}') from e  # noqa: E501
+
+    return result
+
+
+def deserialize_optional_to_fval(
         value: Optional[AcceptableFValInitInput],
         name: str,
         location: str,
@@ -230,12 +247,21 @@ def deserialize_optional_fval(
             f'Failed to deserialize value entry for {name} during {location} since null was given',
         )
 
-    try:
-        result = FVal(value)
-    except ValueError as e:
-        raise DeserializationError(f'Failed to deserialize value entry: {str(e)}') from e
+    return deserialize_fval(value=value, name=name, location=location)
 
-    return result
+
+def deserialize_optional_to_optional_fval(
+        value: Optional[AcceptableFValInitInput],
+        name: str,
+        location: str,
+) -> Optional[FVal]:
+    """
+    Deserializes an FVal from a field that was optional and if None returns None
+    """
+    if value is None:
+        return None
+
+    return deserialize_fval(value=value, name=name, location=location)
 
 
 def deserialize_asset_amount(amount: AcceptableFValInitInput) -> AssetAmount:
@@ -256,55 +282,6 @@ def deserialize_asset_amount_force_positive(amount: AcceptableFValInitInput) -> 
     if result < ZERO:
         result = AssetAmount(abs(result))
     return result
-
-
-def deserialize_trade_type(symbol: str) -> TradeType:
-    """Takes a string and attempts to turn it into a TradeType
-
-    Can throw DeserializationError if the symbol is not as expected
-    """
-    if not isinstance(symbol, str):
-        raise DeserializationError(
-            f'Failed to deserialize trade type symbol from {type(symbol)} entry',
-        )
-
-    if symbol in ('buy', 'LIMIT_BUY', 'BUY', 'Buy'):
-        return TradeType.BUY
-    if symbol in ('sell', 'LIMIT_SELL', 'SELL', 'Sell'):
-        return TradeType.SELL
-    if symbol == 'settlement_buy':
-        return TradeType.SETTLEMENT_BUY
-    if symbol == 'settlement_sell':
-        return TradeType.SETTLEMENT_SELL
-
-    # else
-    raise DeserializationError(
-        f'Failed to deserialize trade type symbol. Unknown symbol {symbol} for trade type',
-    )
-
-
-def deserialize_trade_type_from_db(symbol: str) -> TradeType:
-    """Takes a string from the DB and attempts to turn it into a TradeType
-
-    Can throw DeserializationError if the symbol is not as expected
-    """
-    if not isinstance(symbol, str):
-        raise DeserializationError(
-            f'Failed to deserialize trade type symbol from {type(symbol)} entry',
-        )
-
-    if symbol == 'A':
-        return TradeType.BUY
-    if symbol == 'B':
-        return TradeType.SELL
-    if symbol == 'C':
-        return TradeType.SETTLEMENT_BUY
-    if symbol == 'D':
-        return TradeType.SETTLEMENT_SELL
-    # else
-    raise DeserializationError(
-        f'Failed to deserialize trade type symbol. Unknown DB symbol {symbol} for trade type',
-    )
 
 
 def _split_pair(pair: TradePair) -> Tuple[str, str]:
@@ -358,24 +335,34 @@ def deserialize_trade_pair(pair: str) -> TradePair:
     return TradePair(pair)
 
 
-def deserialize_asset_movement_category(symbol: str) -> AssetMovementCategory:
+def deserialize_asset_movement_category(
+    value: Union[str, HistoryEventType],
+) -> AssetMovementCategory:
     """Takes a string and determines whether to accept it as an asset movement category
 
-    Can throw DeserializationError if symbol is not as expected
+    Can throw DeserializationError if value is not as expected
     """
-    if not isinstance(symbol, str):
+    if isinstance(value, str):
+        if value.lower() == 'deposit':
+            return AssetMovementCategory.DEPOSIT
+        if value.lower() in ('withdraw', 'withdrawal'):
+            return AssetMovementCategory.WITHDRAWAL
         raise DeserializationError(
-            f'Failed to deserialize asset movement category symbol from {type(symbol)} entry',
+            f'Failed to deserialize asset movement category symbol. Unknown {value}',
         )
 
-    if symbol.lower() == 'deposit':
-        return AssetMovementCategory.DEPOSIT
-    if symbol.lower() in ('withdraw', 'withdrawal'):
-        return AssetMovementCategory.WITHDRAWAL
+    if isinstance(value, HistoryEventType):
+        if value == HistoryEventType.DEPOSIT:
+            return AssetMovementCategory.DEPOSIT
+        if value == HistoryEventType.WITHDRAWAL:
+            return AssetMovementCategory.WITHDRAWAL
+        raise DeserializationError(
+            f'Failed to deserialize asset movement category from '
+            f'HistoryEventType and {value} entry',
+        )
 
-    # else
     raise DeserializationError(
-        f'Failed to deserialize asset movement category symbol. Unknown symbol {symbol}',
+        f'Failed to deserialize asset movement category from {type(value)} entry',
     )
 
 
@@ -513,10 +500,29 @@ def deserialize_optional(input_val: Optional[X], fn: Callable[[X], Y]) -> Option
     return fn(input_val)
 
 
+@overload
 def deserialize_ethereum_transaction(
         data: Dict[str, Any],
+        internal: Literal[True],
+        ethereum: Optional['EthereumManager'] = None,
+) -> EthereumInternalTransaction:
+    ...
+
+
+@overload
+def deserialize_ethereum_transaction(
+        data: Dict[str, Any],
+        internal: Literal[False],
         ethereum: Optional['EthereumManager'] = None,
 ) -> EthereumTransaction:
+    ...
+
+
+def deserialize_ethereum_transaction(
+        data: Dict[str, Any],
+        internal: bool,
+        ethereum: Optional['EthereumManager'] = None,
+) -> Union[EthereumTransaction, EthereumInternalTransaction]:
     """Reads dict data of a transaction and deserializes it.
     If the transaction is not from etherscan then it's missing some data
     so ethereum manager is used to fetch it.
@@ -525,10 +531,7 @@ def deserialize_ethereum_transaction(
     """
     source = 'etherscan' if ethereum is None else 'web3'
     try:
-        gas_price = read_integer(data=data, key='gasPrice', api=source)
-        tx_hash = read_hash(data=data, key='hash', api=source)
-
-        input_data = read_hash(data, 'input', source)
+        tx_hash = deserialize_evm_tx_hash(data['hash'])
         block_number = read_integer(data, 'blockNumber', source)
         if 'timeStamp' not in data:
             if ethereum is None:
@@ -539,22 +542,41 @@ def deserialize_ethereum_transaction(
         else:
             timestamp = deserialize_timestamp(data['timeStamp'])
 
+        from_address = deserialize_ethereum_address(data['from'])
+        is_empty_to_address = data['to'] != '' and data['to'] is not None
+        to_address = deserialize_ethereum_address(data['to']) if is_empty_to_address else None
+        value = read_integer(data, 'value', source)
+
+        if internal:
+            return EthereumInternalTransaction(
+                parent_tx_hash=tx_hash,
+                trace_id=int(data['traceId']),
+                timestamp=timestamp,
+                block_number=block_number,
+                from_address=from_address,
+                to_address=to_address,
+                value=value,
+            )
+
+        # else normal transaction
+        gas_price = read_integer(data=data, key='gasPrice', api=source)
+        input_data = read_hash(data, 'input', source)
         if 'gasUsed' not in data:
             if ethereum is None:
                 raise DeserializationError('Got in deserialize ethereum transaction without gasUsed and without ethereum manager')  # noqa: E501
-            receipt_data = ethereum.get_transaction_receipt(data['hash'])
+            tx_hash = deserialize_evm_tx_hash(data['hash'])
+            receipt_data = ethereum.get_transaction_receipt(tx_hash)
             gas_used = read_integer(receipt_data, 'gasUsed', source)
         else:
             gas_used = read_integer(data, 'gasUsed', source)
-
         nonce = read_integer(data, 'nonce', source)
         return EthereumTransaction(
             timestamp=timestamp,
             block_number=block_number,
             tx_hash=tx_hash,
-            from_address=deserialize_ethereum_address(data['from']),
-            to_address=deserialize_ethereum_address(data['to']) if data['to'] != '' else None,
-            value=read_integer(data, 'value', source),
+            from_address=from_address,
+            to_address=to_address,
+            value=value,
             gas=read_integer(data, 'gas', source),
             gas_price=gas_price,
             gas_used=gas_used,
@@ -563,5 +585,5 @@ def deserialize_ethereum_transaction(
         )
     except KeyError as e:
         raise DeserializationError(
-            f'ethereum transaction from {source} missing expected key {str(e)}',
+            f'ethereum {"internal" if internal else ""}transaction from {source} missing expected key {str(e)}',  # noqa: E501
         ) from e

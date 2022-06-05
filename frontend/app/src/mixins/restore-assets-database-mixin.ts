@@ -1,8 +1,9 @@
+import { Severity } from '@rotki/common/lib/messages';
 import { Component, Mixins } from 'vue-property-decorator';
 import { mapActions } from 'vuex';
 import BackendMixin from '@/mixins/backend-mixin';
-import { Severity } from '@/store/notifications/consts';
-import { notify } from '@/store/notifications/utils';
+import { useNotifications } from '@/store/notifications';
+import { useMainStore } from '@/store/store';
 
 @Component({
   methods: {
@@ -39,17 +40,24 @@ export default class RestoreAssetsDatabaseMixin extends Mixins(BackendMixin) {
         this.doubleConfirmation = true;
         this.confirmRestore = false;
       }
-      notify(message, title, Severity.ERROR, true);
+      const { notify } = useNotifications();
+      notify({
+        title,
+        message,
+        severity: Severity.ERROR,
+        display: true
+      });
     }
   }
 
   async updateComplete() {
+    const { connect, setConnected } = useMainStore();
     await this.logout();
-    this.$store.commit('setConnected', false);
+    setConnected(false);
     if (this.$interop.isPackaged) {
       await this.restartBackend();
     }
-    await this.$store.dispatch('connect');
+    await connect();
   }
 
   async confirmHardReset() {

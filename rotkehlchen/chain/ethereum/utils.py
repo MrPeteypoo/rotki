@@ -1,23 +1,27 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
+import logging
+from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
 
-from eth_utils import to_bytes, to_checksum_address
+from eth_utils import to_checksum_address
 from web3 import Web3
-from web3._utils.abi import exclude_indexed_event_inputs, normalize_event_input_types
-from web3._utils.encoding import hexstr_if_str
-from web3._utils.events import get_event_abi_types_for_decoding
+from web3.types import BlockIdentifier
 
 from rotkehlchen.assets.asset import Asset, EthereumToken
-from rotkehlchen.chain.ethereum.contracts import EthereumContract
-from rotkehlchen.constants.ethereum import ETH_MULTICALL, ETH_MULTICALL_2
-from rotkehlchen.errors import UnsupportedAsset
+from rotkehlchen.constants.assets import A_ETH
+from rotkehlchen.constants.ethereum import ETH_MULTICALL, ETH_MULTICALL_2, ETH_SPECIAL_ADDRESS
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import ChecksumEthAddress
-from rotkehlchen.utils.misc import hexstring_to_bytes
+from rotkehlchen.logging import RotkehlchenLogsAdapter
+from rotkehlchen.types import ChecksumEthAddress
+from rotkehlchen.utils.hexbytes import hexstring_to_bytes
 
 if TYPE_CHECKING:
+    from rotkehlchen.chain.ethereum.contracts import EthereumContract
     from rotkehlchen.chain.ethereum.manager import EthereumManager, NodeName
 
-ABI_CODEC = Web3().codec
+logger = logging.getLogger(__name__)
+log = RotkehlchenLogsAdapter(logger)
+
+
 # TODO: remove this once web3.py updates ENS library for supporting multichain
 # https://github.com/ethereum/web3.py/issues/1839
 ENS_RESOLVER_ABI_MULTICHAIN_ADDRESS = [
@@ -53,6 +57,13 @@ def token_normalized_value_decimals(token_amount: int, token_decimals: Optional[
     return token_amount / (FVal(10) ** FVal(token_decimals))
 
 
+def token_raw_value_decimals(token_amount: FVal, token_decimals: Optional[int]) -> int:
+    if token_decimals is None:  # if somehow no info on decimals ends up here assume 18
+        token_decimals = 18
+
+    return (token_amount * (FVal(10) ** FVal(token_decimals))).to_int(exact=False)
+
+
 def token_normalized_value(
         token_amount: int,
         token: EthereumToken,
@@ -77,16 +88,37 @@ def asset_normalized_value(amount: int, asset: Asset) -> FVal:
     return token_normalized_value_decimals(amount, decimals)
 
 
+def asset_raw_value(amount: FVal, asset: Asset) -> int:
+    """Takes in an amount and an asset and returns its raw(wei equivalent) value
+
+    May raise:
+    - UnsupportedAsset if the given asset is not ETH or an ethereum token
+    """
+    if asset.identifier == 'ETH':
+        decimals = 18
+    else:
+        token = EthereumToken.from_asset(asset)
+        if token is None:
+            raise UnsupportedAsset(asset.identifier)
+        decimals = token.decimals
+
+    return token_raw_value_decimals(amount, decimals)
+
+
 def multicall(
         ethereum: 'EthereumManager',
         calls: List[Tuple[ChecksumEthAddress, str]],
+        # only here to comply with multicall_2
+        require_success: bool = True,  # pylint: disable=unused-argument
         call_order: Optional[Sequence['NodeName']] = None,
+        block_identifier: BlockIdentifier = 'latest',
 ) -> Any:
     multicall_result = ETH_MULTICALL.call(
         ethereum=ethereum,
         method_name='aggregate',
         arguments=[calls],
         call_order=call_order,
+        block_identifier=block_identifier,
     )
     _, output = multicall_result
     return output
@@ -97,6 +129,7 @@ def multicall_2(
         calls: List[Tuple[ChecksumEthAddress, str]],
         require_success: bool,
         call_order: Optional[Sequence['NodeName']] = None,
+        block_identifier: BlockIdentifier = 'latest',
 ) -> List[Tuple[bool, bytes]]:
     """
     Use a MULTICALL_2 contract for an aggregated query. If require_success
@@ -107,12 +140,13 @@ def multicall_2(
         method_name='tryAggregate',
         arguments=[require_success, calls],
         call_order=call_order,
+        block_identifier=block_identifier,
     )
 
 
 def multicall_specific(
         ethereum: 'EthereumManager',
-        contract: EthereumContract,
+        contract: 'EthereumContract',
         method_name: str,
         arguments: List[Any],
         call_order: Optional[Sequence['NodeName']] = None,
@@ -121,18 +155,8 @@ def multicall_specific(
         contract.address,
         contract.encode(method_name=method_name, arguments=i),
     ) for i in arguments]
-    output = multicall(ethereum, calls, call_order)
+    output = multicall(ethereum, calls, True, call_order)
     return [contract.decode(x, method_name, arguments[0]) for x in output]
-
-
-def decode_event_data(data: str, event_abi: Dict[str, Any]) -> Tuple:
-    """Decode the data of an event according to the event's abi entry"""
-    log_data = hexstr_if_str(to_bytes, data)
-    log_data_abi = exclude_indexed_event_inputs(event_abi)  # type: ignore
-    log_data_normalized_inputs = normalize_event_input_types(log_data_abi)
-    log_data_types = get_event_abi_types_for_decoding(log_data_normalized_inputs)
-    decoded_log_data = ABI_CODEC.decode_abi(log_data_types, log_data)
-    return decoded_log_data
 
 
 def generate_address_via_create2(
@@ -161,3 +185,20 @@ def generate_address_via_create2(
         Web3.keccak(hexstring_to_bytes(init_code)),
     )[12:].hex()
     return to_checksum_address(contract_address)
+
+
+def ethaddress_to_asset(address: ChecksumEthAddress) -> Optional[Asset]:
+    """Takes an ethereum address and returns a token/asset for it
+
+    Checks for special cases like the special ETH address used in some protocols
+    """
+    if address == ETH_SPECIAL_ADDRESS:
+        return A_ETH
+
+    try:
+        asset = EthereumToken(address)
+    except UnknownAsset:
+        log.error(f'Could not find asset/token for address {address}')
+        return None
+
+    return asset

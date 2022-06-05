@@ -27,6 +27,7 @@
 
 <script lang="ts">
 import { computed, defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import RefreshButton from '@/components/helper/RefreshButton.vue';
 
 export default defineComponent({
@@ -36,13 +37,14 @@ export default defineComponent({
     title: { required: true, type: String },
     loading: { required: true, type: Boolean }
   },
+  emits: ['refresh'],
   setup(props, { emit }) {
     const { title } = toRefs(props);
     const refresh = () => {
       emit('refresh');
     };
     const lowercaseTitle = computed(() => {
-      return title.value.toLocaleLowerCase();
+      return get(title).toLocaleLowerCase();
     });
     return {
       refresh,

@@ -5,7 +5,8 @@
         <v-btn
           text
           icon
-          class="secondary--text text--lighten-4 mr-4"
+          target="_blank"
+          class="secondary--text text--lighten-4"
           :href="$interop.isPackaged ? undefined : $interop.premiumURL"
           v-on="on"
           @click="
@@ -25,10 +26,9 @@
   </v-tooltip>
 </template>
 <script lang="ts">
-import { Vue, Component } from 'vue-property-decorator';
+import { defineComponent } from '@vue/composition-api';
 
-@Component({
+export default defineComponent({
   name: 'ThemeSwitchLock'
-})
-export default class ThemeSwitchLock extends Vue {}
+});
 </script>

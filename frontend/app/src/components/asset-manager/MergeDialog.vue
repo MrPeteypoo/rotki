@@ -36,7 +36,7 @@
           persistent-hint
           :hint="$t('merge_dialog.source_hint')"
           :error-messages="errorMessages"
-          @focus="removeErrors()"
+          @focus="clearErrors()"
         />
         <v-row align="center" justify="center" class="my-4">
           <v-col cols="auto">
@@ -56,76 +56,86 @@
 </template>
 
 <script lang="ts">
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
-import { mapActions } from 'vuex';
-import { AssetMergePayload } from '@/store/assets/types';
-import { ActionStatus } from '@/store/types';
+import { defineComponent, ref } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
+import i18n from '@/i18n';
+import { useAssets } from '@/store/assets';
 
-@Component({
+export default defineComponent({
   name: 'MergeDialog',
-  methods: {
-    ...mapActions('assets', ['mergeAssets'])
-  }
-})
-export default class MergeDialog extends Vue {
-  @Prop({ required: true, type: Boolean })
-  value!: boolean;
-  @Emit()
-  input(_value: boolean) {
-    setTimeout(() => this.reset(), 100);
-  }
+  props: {
+    value: { required: true, type: Boolean }
+  },
+  emits: ['input'],
+  setup(_, { emit }) {
+    const done = ref(false);
+    const valid = ref(false);
+    const errorMessages = ref<string[]>([]);
+    const target = ref('');
+    const source = ref('');
+    const pending = ref(false);
 
-  private reset() {
-    this.done = false;
-    this.target = '';
-    this.source = '';
-    this.valid = false;
-    this.pending = false;
-    this.errorMessages = [];
-  }
+    const { mergeAssets } = useAssets();
 
-  mergeAssets!: (payload: AssetMergePayload) => Promise<ActionStatus>;
+    const reset = () => {
+      set(done, false);
+      set(target, '');
+      set(source, '');
+      set(valid, false);
+      set(pending, false);
+      set(errorMessages, []);
+    };
 
-  done: boolean = false;
-  valid: boolean = false;
-  errorMessages: string[] = [];
+    const clearErrors = () => {
+      const elements = get(errorMessages).length;
+      for (let i = 0; i < elements; i++) {
+        set(errorMessages, []);
+      }
+    };
 
-  target: string = '';
-  source: string = '';
+    async function merge() {
+      set(pending, true);
+      const result = await mergeAssets({
+        sourceIdentifier: get(source),
+        targetIdentifier: get(target)
+      });
 
-  pending: boolean = false;
-
-  readonly sourceRules = [
-    (v: string) => !!v || this.$t('merge_dialog.source.non_empty').toString()
-  ];
-  readonly targetRules = [
-    (v: string) => !!v || this.$t('merge_dialog.target.non_empty').toString()
-  ];
-
-  removeErrors() {
-    const elements = this.errorMessages.length;
-    for (let i = 0; i < elements; i++) {
-      this.errorMessages.pop();
+      if (result.success) {
+        set(done, true);
+      } else {
+        set(errorMessages, [
+          ...get(errorMessages),
+          result.message ?? i18n.t('merge_dialog.error').toString()
+        ]);
+      }
+      set(pending, false);
     }
-  }
 
-  async merge() {
-    this.pending = true;
-    const { success, message } = await this.mergeAssets({
-      sourceIdentifier: this.source,
-      targetIdentifier: this.target
-    });
+    const input = (value: boolean) => {
+      emit('input', value);
+      setTimeout(() => reset(), 100);
+    };
 
-    if (success) {
-      this.done = true;
-    } else {
-      this.errorMessages.push(
-        message ?? this.$t('merge_dialog.error').toString()
-      );
-    }
-    this.pending = false;
+    const sourceRules = [
+      (v: string) => !!v || i18n.t('merge_dialog.source.non_empty').toString()
+    ];
+    const targetRules = [
+      (v: string) => !!v || i18n.t('merge_dialog.target.non_empty').toString()
+    ];
+
+    return {
+      done,
+      valid,
+      errorMessages,
+      target,
+      source,
+      pending,
+      sourceRules,
+      targetRules,
+      merge,
+      input,
+      clearErrors
+    };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

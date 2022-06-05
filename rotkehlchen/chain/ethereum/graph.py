@@ -1,18 +1,17 @@
 import json
 import logging
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Literal, Optional, Tuple
 
 import gevent
 import requests
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from typing_extensions import Literal
 
 from rotkehlchen.constants.timing import QUERY_RETRY_TIMES
-from rotkehlchen.errors import RemoteError
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)

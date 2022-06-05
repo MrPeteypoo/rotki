@@ -1,6 +1,7 @@
 /* istanbul ignore file */
 
 import VueCompositionAPI, { provide } from '@vue/composition-api';
+import { createPinia, PiniaVuePlugin } from 'pinia';
 import Vue from 'vue';
 import App from '@/App.vue';
 import '@/filters';
@@ -11,7 +12,8 @@ import 'typeface-roboto-mono';
 import './register-sw';
 import { Interop } from '@/plugins/interop';
 import vuetify from '@/plugins/vuetify';
-import { setupPremium } from '@/premium/setup-interface';
+import { setupPremium, usePremiumApi } from '@/premium/setup-interface';
+import { storePiniaPlugins } from '@/store/debug';
 import { setupDayjs } from '@/utils/date';
 import { setupFormatter } from '@/utils/setup-formatter';
 import i18n from './i18n';
@@ -24,6 +26,7 @@ Vue.config.productionTip = false;
 Vue.use(Api);
 Vue.use(Interop);
 Vue.use(VueCompositionAPI);
+Vue.use(PiniaVuePlugin);
 
 setupPremium();
 
@@ -38,13 +41,18 @@ Vue.directive('blur', {
   }
 });
 
+const pinia = createPinia();
+pinia.use(storePiniaPlugins);
+
 new Vue({
   setup() {
     provide('vuex-store', store);
+    provide('premium', usePremiumApi());
   },
   vuetify,
   router,
   store,
+  pinia,
   i18n,
   render: h => h(App)
 }).$mount('#app');

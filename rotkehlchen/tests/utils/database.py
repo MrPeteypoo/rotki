@@ -1,14 +1,20 @@
+import os
 import random
+from pathlib import Path
+from shutil import copyfile
 from typing import Any, Dict, List, Optional
 from unittest.mock import _patch, patch
+
+from pysqlcipher3 import dbapi2 as sqlcipher
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.settings import ModifiableDBSettings
 from rotkehlchen.db.utils import BlockchainAccounts
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.tests.utils.constants import DEFAULT_TESTS_MAIN_CURRENCY
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ApiKey,
     BlockchainAccountData,
     ExternalService,
@@ -44,20 +50,28 @@ def maybe_include_cryptocompare_key(db: DBHandler, include_cryptocompare_key: bo
 
 
 def add_blockchain_accounts_to_db(db: DBHandler, blockchain_accounts: BlockchainAccounts) -> None:
-    db.add_blockchain_accounts(
-        SupportedBlockchain.ETHEREUM,
-        [BlockchainAccountData(address=x) for x in blockchain_accounts.eth],
-    )
-    db.add_blockchain_accounts(
-        SupportedBlockchain.BITCOIN,
-        [BlockchainAccountData(address=x) for x in blockchain_accounts.btc],
-    )
+    try:
+        db.add_blockchain_accounts(
+            SupportedBlockchain.ETHEREUM,
+            [BlockchainAccountData(address=x) for x in blockchain_accounts.eth],
+        )
+        db.add_blockchain_accounts(
+            SupportedBlockchain.BITCOIN,
+            [BlockchainAccountData(address=x) for x in blockchain_accounts.btc],
+        )
+    except InputError as e:
+        raise AssertionError(
+            f'Got error at test setup blockchain account addition: {str(e)} '
+            f'Probably using two different databases or too many fixtures initialized. '
+            f'For example do not initialize both a rotki api server and another DB at same time',
+        ) from e
 
 
 def add_settings_to_test_db(
         db: DBHandler,
         db_settings: Optional[Dict[str, Any]],
         ignored_assets: Optional[List[Asset]],
+        data_migration_version: Optional[int],
 ) -> None:
     settings = {
         # DO not submit usage analytics during tests
@@ -73,6 +87,13 @@ def add_settings_to_test_db(
     if ignored_assets:
         for asset in ignored_assets:
             db.add_to_ignored_assets(asset)
+
+    if data_migration_version is not None:
+        db.conn.cursor().execute(
+            'INSERT OR REPLACE INTO settings(name, value) VALUES(?, ?)',
+            ('last_data_migration', data_migration_version),
+        )
+        db.conn.commit()
 
 
 def add_tags_to_test_db(db: DBHandler, tags: List[Dict[str, Any]]) -> None:
@@ -114,3 +135,20 @@ def mock_dbhandler_ensura_data_integrity() -> _patch:
         'rotkehlchen.db.dbhandler.DBHandler.ensure_data_integrity',
         lambda x: None,
     )
+
+
+def _use_prepared_db(user_data_dir: Path, filename: str) -> None:
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    copyfile(
+        os.path.join(os.path.dirname(dir_path), 'data', filename),
+        user_data_dir / 'rotkehlchen.db',
+    )
+
+
+def _init_prepared_db(user_data_dir: Path, filename: str):
+    _use_prepared_db(user_data_dir, filename)
+    password = '123'
+    conn = sqlcipher.connect(str(user_data_dir / 'rotkehlchen.db'))  # pylint: disable=no-member
+    conn.executescript(f'PRAGMA key={password};')
+    conn.execute('PRAGMA foreign_keys=ON;')
+    return conn

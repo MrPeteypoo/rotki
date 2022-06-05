@@ -1,7 +1,6 @@
 import { balanceKeys } from '@/services/consts';
 import { OverviewDefiProtocol } from '@/store/defi/types';
 
-export const GETTER_UNISWAP_ASSETS = 'uniswapAssets' as const;
 export const GETTER_BALANCER_BALANCES = 'balancerBalances' as const;
 export const ACTION_PURGE_PROTOCOL = 'purgeProtocol' as const;
 
@@ -321,7 +320,7 @@ const ICON_LIST: { [protocol in OverviewDefiProtocol]: string } = {
   [GELATO]: 'gelato.svg'
 };
 
-export function getProtcolIcon(name: OverviewDefiProtocol): string {
+export function getProtocolIcon(name: OverviewDefiProtocol): string {
   return ICON_LIST[name] ?? '';
 }
 
@@ -363,17 +362,27 @@ export const AIRDROP_CURVE = 'curve';
 export const AIRDROP_POAP = 'poap';
 export const AIRDROP_CONVEX = 'convex';
 export const AIRDROP_FOX = 'fox';
+export const AIRDROP_ENS = 'ens';
+export const AIRDROP_PARASWAP = 'psp';
+export const AIRDROP_SADDLE = 'sdl';
+export const AIRDROP_COW_GNOSIS = 'cowGnosis';
+export const AIRDROP_COW_MAINNET = 'cowMainnet';
 
 export const AIRDROPS = [
   AIRDROP_1INCH,
   AIRDROP_TORNADO,
   AIRDROP_UNISWAP,
   AIRDROP_CORNICHON,
+  AIRDROP_COW_GNOSIS,
+  AIRDROP_COW_MAINNET,
   AIRDROP_GRAIN,
   AIRDROP_LIDO,
   AIRDROP_FURUCOMBO,
   AIRDROP_CURVE,
   AIRDROP_POAP,
   AIRDROP_CONVEX,
-  AIRDROP_FOX
+  AIRDROP_FOX,
+  AIRDROP_ENS,
+  AIRDROP_PARASWAP,
+  AIRDROP_SADDLE
 ] as const;

@@ -1,14 +1,13 @@
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple
 
-from typing_extensions import Literal
-
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken, UnderlyingToken
 from rotkehlchen.assets.utils import get_or_create_ethereum_token
 from rotkehlchen.chain.ethereum.trades import AMMSwap, AMMTrade
 from rotkehlchen.constants import ZERO
-from rotkehlchen.errors import DeserializationError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.history.deserialization import deserialize_price
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import (
@@ -16,9 +15,9 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_ethereum_address,
     deserialize_timestamp,
 )
-from rotkehlchen.typing import AssetAmount, ChecksumEthAddress, Location, Price, TradeType
+from rotkehlchen.types import AssetAmount, ChecksumEthAddress, Location, Price, TradeType
 
-from .typing import (
+from .types import (
     BalancerBPTEvent,
     BalancerBPTEventType,
     BalancerInvestEvent,

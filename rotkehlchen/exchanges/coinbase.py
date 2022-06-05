@@ -10,12 +10,14 @@ from urllib.parse import urlencode
 import requests
 
 from rotkehlchen.accounting.ledger_actions import LedgerAction, LedgerActionType
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.assets.converters import asset_from_coinbase
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.data_structures import AssetMovement, MarginPosition, Trade
 from rotkehlchen.exchanges.exchange import ExchangeInterface, ExchangeQueryBalances
 from rotkehlchen.exchanges.utils import deserialize_asset_movement_address, get_key_if_has_val
@@ -27,9 +29,8 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_asset_movement_category,
     deserialize_fee,
     deserialize_timestamp_from_date,
-    deserialize_trade_type,
 )
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     ApiKey,
     ApiSecret,
     AssetAmount,
@@ -38,6 +39,7 @@ from rotkehlchen.typing import (
     Location,
     Price,
     Timestamp,
+    TradeType,
 )
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.mixins.cacheable import cache_response_timewise
@@ -60,7 +62,7 @@ def trade_from_coinbase(raw_trade: Dict[str, Any]) -> Optional[Trade]:
     Mary raise:
         - UnknownAsset due to Asset instantiation
         - DeserializationError due to unexpected format of dict entries
-        - KeyError due to dict entires missing an expected entry
+        - KeyError due to dict entries missing an expected entry
     """
 
     if raw_trade['status'] != 'completed':
@@ -76,7 +78,7 @@ def trade_from_coinbase(raw_trade: Dict[str, Any]) -> Optional[Trade]:
         raw_time = raw_trade['payout_at']
 
     timestamp = deserialize_timestamp_from_date(raw_time, 'iso8601', 'coinbase')
-    trade_type = deserialize_trade_type(raw_trade['resource'])
+    trade_type = TradeType.deserialize(raw_trade['resource'])
     tx_amount = deserialize_asset_amount(raw_trade['amount']['amount'])
     tx_asset = asset_from_coinbase(raw_trade['amount']['currency'], time=timestamp)
     native_amount = deserialize_asset_amount(raw_trade['subtotal']['amount'])
@@ -108,7 +110,7 @@ def trade_from_conversion(trade_a: Dict[str, Any], trade_b: Dict[str, Any]) -> O
     Mary raise:
     - UnknownAsset due to Asset instantiation
     - DeserializationError due to unexpected format of dict entries
-    - KeyError due to dict entires missing an expected entry
+    - KeyError due to dict entries missing an expected entry
     """
     # Check that the status is complete
     if trade_a['status'] != 'completed':
@@ -119,7 +121,6 @@ def trade_from_conversion(trade_a: Dict[str, Any], trade_b: Dict[str, Any]) -> O
         trade_a, trade_b = trade_b, trade_a
 
     timestamp = deserialize_timestamp_from_date(trade_a['updated_at'], 'iso8601', 'coinbase')
-    trade_type = deserialize_trade_type('sell')
     tx_amount = AssetAmount(abs(deserialize_asset_amount(trade_a['amount']['amount'])))
     tx_asset = asset_from_coinbase(trade_a['amount']['currency'], time=timestamp)
     native_amount = deserialize_asset_amount(trade_b['amount']['amount'])
@@ -133,14 +134,34 @@ def trade_from_conversion(trade_a: Dict[str, Any], trade_b: Dict[str, Any]) -> O
     amount_before_fee = deserialize_asset_amount(trade_a['native_amount']['amount'])
     # amount_after_fee + amount_before_fee is a negative amount and the fee needs to be positive
     conversion_native_fee_amount = abs(amount_after_fee + amount_before_fee)
-    if ZERO not in (tx_amount, conversion_native_fee_amount, amount_before_fee):
-        # We have the fee amount in the native currency. To get it in the
-        # converted asset we have to get the rate
-        asset_native_rate = tx_amount / abs(amount_before_fee)
-        fee_amount = Fee(conversion_native_fee_amount * asset_native_rate)
+    if ZERO not in (tx_amount, conversion_native_fee_amount, amount_before_fee, amount_after_fee):
+        # To get the asset in which the fee is nominated we pay attention to the creation
+        # date of each event. As per our hypothesis the fee is nominated in the asset
+        # for which the first transaction part was initialized
+        time_created_a = deserialize_timestamp_from_date(
+            date=trade_a['created_at'],
+            formatstr='iso8601',
+            location='coinbase',
+        )
+        time_created_b = deserialize_timestamp_from_date(
+            date=trade_b['created_at'],
+            formatstr='iso8601',
+            location='coinbase',
+        )
+        if time_created_a < time_created_b:
+            # We have the fee amount in the native currency. To get it in the
+            # converted asset we have to get the rate
+            asset_native_rate = tx_amount / abs(amount_before_fee)
+            fee_amount = Fee(conversion_native_fee_amount * asset_native_rate)
+            fee_asset = asset_from_coinbase(trade_a['amount']['currency'], time=timestamp)
+        else:
+            trade_b_amount = abs(deserialize_asset_amount(trade_b['amount']['amount']))
+            asset_native_rate = trade_b_amount / abs(amount_after_fee)
+            fee_amount = Fee(conversion_native_fee_amount * asset_native_rate)
+            fee_asset = asset_from_coinbase(trade_b['amount']['currency'], time=timestamp)
     else:
         fee_amount = Fee(ZERO)
-    fee_asset = asset_from_coinbase(trade_a['amount']['currency'], time=timestamp)
+        fee_asset = asset_from_coinbase(trade_a['amount']['currency'], time=timestamp)
 
     return Trade(
         timestamp=timestamp,
@@ -148,7 +169,7 @@ def trade_from_conversion(trade_a: Dict[str, Any], trade_b: Dict[str, Any]) -> O
         # in coinbase you are buying/selling tx_asset for native_asset
         base_asset=tx_asset,
         quote_asset=native_asset,
-        trade_type=trade_type,
+        trade_type=TradeType.SELL,
         amount=amount,
         rate=rate,
         fee=fee_amount,
@@ -469,7 +490,7 @@ class Coinbase(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             self,
             start_ts: Timestamp,
             end_ts: Timestamp,
-    ) -> List[Trade]:
+    ) -> Tuple[List[Trade], Tuple[Timestamp, Timestamp]]:
         account_data = self._api_query('accounts')
         # now get the account ids and for each one query buys/sells
         # Looking at coinbase's API no other type of transaction
@@ -577,7 +598,7 @@ class Coinbase(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             if trade and start_ts <= trade.timestamp <= end_ts:
                 trades.append(trade)
 
-        return trades
+        return trades, (start_ts, end_ts)
 
     def _deserialize_asset_movement(self, raw_data: Dict[str, Any]) -> Optional[AssetMovement]:
         """Processes a single deposit/withdrawal from coinbase and deserializes it
@@ -603,7 +624,6 @@ class Coinbase(ExchangeInterface):  # lgtm[py/missing-call-to-init]
             transaction_id = None
             transaction_url = raw_data.get('id', '')
             fee = Fee(ZERO)
-            # movement_category: Union[Literal['deposit'], Literal['withdrawal']]
             if 'type' in raw_data:
                 # Then this should be a "send" which is the way Coinbase uses to send
                 # crypto outside of the exchange, or from one user to another.
@@ -641,8 +661,13 @@ class Coinbase(ExchangeInterface):  # lgtm[py/missing-call-to-init]
                 if 'network' in raw_data:
                     transaction_id = get_key_if_has_val(raw_data['network'], 'hash')
                     transaction_url = get_key_if_has_val(raw_data['network'], 'transaction_url')
-                if 'to' in raw_data:
-                    address = deserialize_asset_movement_address(raw_data['to'], 'address', asset)
+                raw_to = raw_data.get('to')
+                if raw_to is not None:
+                    address = deserialize_asset_movement_address(raw_to, 'address', asset)
+
+                if 'to' in raw_data and raw_to is None:  # Internal movement between coinbase accs
+                    return None  # Can ignore. https://github.com/rotki/rotki/issues/3901
+
                 if 'from' in raw_data:
                     movement_category = AssetMovementCategory.DEPOSIT
             else:

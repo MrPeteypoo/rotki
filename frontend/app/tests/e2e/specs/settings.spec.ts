@@ -4,7 +4,7 @@ import { GeneralSettingsPage } from '../pages/general-settings-page';
 import { RotkiApp } from '../pages/rotki-app';
 import { UserSecuritySettingsPage } from '../pages/user-security-settings-page';
 
-describe('Settings', () => {
+describe('settings', () => {
   let username: string;
   let password: string;
   let newPassword: string;
@@ -33,12 +33,11 @@ describe('Settings', () => {
     pageGeneral = new GeneralSettingsPage();
     pageUserSecurity = new UserSecuritySettingsPage();
     pageAccounting = new AccountingSettingsPage();
-    app.visit();
-    app.createAccount(username, password);
+    app.fasterLogin(username);
   });
 
   after(() => {
-    app.logout();
+    app.fasterLogout();
   });
 
   describe('General Settings', () => {
@@ -126,6 +125,13 @@ describe('Settings', () => {
     });
 
     describe('ignored asset settings', () => {
+      let ignoredAssets = 0;
+      before(() => {
+        pageAccounting.ignoredAssets().then(ignored => {
+          ignoredAssets = parseInt(ignored);
+        });
+      });
+
       it('add an ignored asset and validate UI message it has been added', () => {
         pageAccounting.addIgnoredAsset('1SG');
         pageAccounting.confirmInlineSuccess(
@@ -133,7 +139,7 @@ describe('Settings', () => {
           '1SG'
         );
       });
-      it('add another 2 ignored assets and confirm count is 3', () => {
+      it('add another 2 ignored assets and confirm count increased by 3', () => {
         pageAccounting.addIgnoredAsset('ZIX');
         pageAccounting.confirmInlineSuccess(
           '.accounting-settings__asset-to-ignore',
@@ -144,22 +150,17 @@ describe('Settings', () => {
           '.accounting-settings__asset-to-ignore',
           '1CR'
         );
-        pageAccounting.ignoredAssetCount('3');
+        // @ts-ignore
+        pageAccounting.ignoredAssetCount(ignoredAssets + 3);
       });
-      it('cannot add already ignored asset & validate UI message', () => {
-        pageAccounting.addIgnoredAsset('1SG');
-        pageAccounting.confirmInlineFailure(
-          '.accounting-settings__asset-to-ignore',
-          '1SG'
-        );
-      });
-      it('remove an ignored asset, validate UI message, and confirm count is 2', () => {
+      it('remove an ignored asset, validate UI message, and confirm count decreased by one', () => {
         pageAccounting.remIgnoredAsset('1SG');
         pageAccounting.confirmInlineSuccess(
           '.accounting-settings__ignored-assets',
           '1SG'
         );
-        pageAccounting.ignoredAssetCount('2');
+        // @ts-ignore
+        pageAccounting.ignoredAssetCount(ignoredAssets + 2);
       });
     });
   });
@@ -174,7 +175,7 @@ describe('Settings', () => {
 
   describe('Verify settings persist after re-login', () => {
     it('Log in with new password', () => {
-      app.logout();
+      app.fasterLogout();
       // If we don't visit the logout doesn't persist the skip_update parameter
       app.visit();
       app.login(username, newPassword);
@@ -188,6 +189,12 @@ describe('Settings', () => {
 
     it('Accounting settings', () => {
       pageAccounting.visit();
+
+      let ignoredAssets = 0;
+      pageAccounting.ignoredAssets().then(ignored => {
+        ignoredAssets = parseInt(ignored);
+      });
+
       pageAccounting.verifySwitchState(
         '.accounting-settings__crypto2crypto',
         'false'
@@ -200,7 +207,7 @@ describe('Settings', () => {
         '.accounting-settings__taxfree-period',
         'false'
       );
-      pageAccounting.ignoredAssetCount('2');
+      pageAccounting.ignoredAssetCount(ignoredAssets + 2);
     });
   });
 });

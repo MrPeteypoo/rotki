@@ -2,7 +2,8 @@
   <v-card
     v-bind="$attrs"
     :class="{
-      [$style['no-radius-bottom']]: noRadiusBottom
+      [$style['no-radius-bottom']]: noRadiusBottom,
+      [$style['full-height']]: fullHeight
     }"
     v-on="$listeners"
   >
@@ -51,7 +52,7 @@
         <slot name="options" />
       </div>
     </v-card-text>
-    <v-card-actions v-if="$slots.buttons" ref="actions">
+    <v-card-actions v-if="$slots.buttons" ref="actions" :class="$style.actions">
       <slot name="buttons" />
     </v-card-actions>
   </v-card>
@@ -65,6 +66,7 @@ import {
   ref,
   toRefs
 } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import CardTitle from '@/components/typography/CardTitle.vue';
 
 const Card = defineComponent({
@@ -73,7 +75,8 @@ const Card = defineComponent({
   props: {
     outlinedBody: { required: false, type: Boolean, default: false },
     contained: { required: false, type: Boolean, default: false },
-    noRadiusBottom: { required: false, type: Boolean, default: false }
+    noRadiusBottom: { required: false, type: Boolean, default: false },
+    fullHeight: { required: false, type: Boolean, default: false }
   },
   setup(props) {
     const { contained } = toRefs(props);
@@ -83,16 +86,16 @@ const Card = defineComponent({
 
     onMounted(() => {
       setTimeout(() => {
-        top.value = body.value?.getBoundingClientRect().top ?? 0;
+        set(top, get(body)?.getBoundingClientRect().top ?? 0);
       }, 1000);
     });
 
     const bodyStyle = computed(() => {
-      if (!contained.value) {
+      if (!get(contained)) {
         return null;
       }
-      const bodyTop = top.value;
-      const actionsHeight = actions.value?.getBoundingClientRect().height ?? 0;
+      const bodyTop = get(top);
+      const actionsHeight = get(actions)?.getBoundingClientRect().height ?? 0;
       const diff = bodyTop + actionsHeight;
 
       return {
@@ -112,8 +115,6 @@ export default Card;
 </script>
 
 <style module lang="scss">
-@import '~@/scss/scroll';
-
 .title {
   margin-top: -22px;
 }
@@ -129,12 +130,18 @@ export default Card;
 .contained {
   max-height: calc(100vh - 206px);
   overflow-y: scroll;
-
-  @extend .themed-scrollbar;
 }
 
 .no-radius-bottom {
   border-bottom-left-radius: 0 !important;
   border-bottom-right-radius: 0 !important;
+}
+
+.actions {
+  padding: 16px !important;
+}
+
+.full-height {
+  height: 100%;
 }
 </style>

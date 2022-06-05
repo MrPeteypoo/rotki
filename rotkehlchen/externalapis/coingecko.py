@@ -1,22 +1,24 @@
 import json
 import logging
-from typing import Any, Dict, List, NamedTuple, Optional, Union, overload
+from typing import Any, Dict, List, Literal, NamedTuple, Optional, Union, overload
 from urllib.parse import urlencode
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.constants.timing import DAY_IN_SECONDS, DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import RemoteError, UnsupportedAsset
+from rotkehlchen.errors.asset import UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
-from rotkehlchen.history.typing import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.interfaces import HistoricalPriceOracleInterface
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import Price, Timestamp
+from rotkehlchen.types import Price, Timestamp
 from rotkehlchen.utils.misc import create_timestamp, timestamp_to_date
 
 logger = logging.getLogger(__name__)
@@ -202,6 +204,58 @@ DELISTED_ASSETS = [
     strethaddress_to_identifier('0x23b75Bc7AaF28e2d6628C3f424B3882F8f072a3c'),
     'BTCS',
     strethaddress_to_identifier('0x491C9A23DB85623EEd455a8EfDd6AbA9b911C5dF'),
+    strethaddress_to_identifier('0x8aA33A7899FCC8eA5fBe6A608A109c3893A1B8b2'),
+    'ARB-2',
+    'BAY',
+    'UNITY',
+    strethaddress_to_identifier('0x8d80de8A78198396329dfA769aD54d24bF90E7aa'),
+    strethaddress_to_identifier('0x5bEaBAEBB3146685Dd74176f68a0721F91297D37'),
+    strethaddress_to_identifier('0x82f4dED9Cec9B5750FBFf5C2185AEe35AfC16587'),
+    strethaddress_to_identifier('0x74CEDa77281b339142A36817Fa5F9E29412bAb85'),
+    strethaddress_to_identifier('0xDDe12a12A6f67156e0DA672be05c374e1B0a3e57'),
+    strethaddress_to_identifier('0x2bDC0D42996017fCe214b21607a515DA41A9E0C5'),
+    strethaddress_to_identifier('0x1c79ab32C66aCAa1e9E81952B8AAa581B43e54E7'),
+    strethaddress_to_identifier('0xD3C00772B24D997A812249ca637a921e81357701'),
+    'DCT',
+    'NOTE',
+    'SLR',
+    'SXC',
+    strethaddress_to_identifier('0x6fFF3806Bbac52A20e0d79BC538d527f6a22c96b'),
+    strethaddress_to_identifier('0x78B7FADA55A64dD895D8c8c35779DD8b67fA8a05'),
+    strethaddress_to_identifier('0x4D8fc1453a0F359e99c9675954e656D80d996FbF'),
+    strethaddress_to_identifier('0xFAd572db566E5234AC9Fc3d570c4EdC0050eAA92'),
+    strethaddress_to_identifier('0xBB49A51Ee5a66ca3a8CbE529379bA44Ba67E6771'),
+    strethaddress_to_identifier('0x2e071D2966Aa7D8dECB1005885bA1977D6038A65'),
+    strethaddress_to_identifier('0x6589fe1271A0F29346796C6bAf0cdF619e25e58e'),
+    strethaddress_to_identifier('0xDd6C68bb32462e01705011a4e2Ad1a60740f217F'),
+    strethaddress_to_identifier('0x13C2fab6354d3790D8ece4f0f1a3280b4A25aD96'),
+    strethaddress_to_identifier('0x5979F50f1D4c08f9A53863C2f39A7B0492C38d0f'),
+    strethaddress_to_identifier('0xaE73B38d1c9A8b274127ec30160a4927C4d71824'),
+    strethaddress_to_identifier('0x12e51E77DAAA58aA0E9247db7510Ea4B46F9bEAd'),
+    strethaddress_to_identifier('0xcbb20D755ABAD34cb4a9b5fF6Dd081C76769f62e'),
+    strethaddress_to_identifier('0xB4EaF48bD7f72356e1019C157e91b81A1C541073'),
+    strethaddress_to_identifier('0x2a093BcF0C98Ef744Bb6F69D74f2F85605324290'),
+    strethaddress_to_identifier('0x7B22938ca841aA392C93dBB7f4c42178E3d65E88'),
+    strethaddress_to_identifier('0x47bc01597798DCD7506DCCA36ac4302fc93a8cFb'),
+    strethaddress_to_identifier('0x6aEDbF8dFF31437220dF351950Ba2a3362168d1b'),
+    strethaddress_to_identifier('0x31f3D9D1BeCE0c033fF78fA6DA60a6048F3E13c5'),
+    strethaddress_to_identifier('0x00c4B398500645eb5dA00a1a379a88B11683ba01'),
+    strethaddress_to_identifier('0x5B2e4a700dfBc560061e957edec8F6EeEb74a320'),
+    strethaddress_to_identifier('0x68AA3F232dA9bdC2343465545794ef3eEa5209BD'),
+    strethaddress_to_identifier('0x905E337c6c8645263D3521205Aa37bf4d034e745'),
+    strethaddress_to_identifier('0xE477292f1B3268687A29376116B0ED27A9c76170'),
+    strethaddress_to_identifier('0x9fBFed658919A896B5Dc7b00456Ce22D780f9B65'),
+    strethaddress_to_identifier('0xAFe60511341a37488de25Bef351952562E31fCc1'),
+    strethaddress_to_identifier('0x3c4bEa627039F0B7e7d21E34bB9C9FE962977518'),
+    strethaddress_to_identifier('0x48FF53777F747cFB694101222a944dE070c15D36'),
+    strethaddress_to_identifier('0xe2DA716381d7E0032CECaA5046b34223fC3f218D'),
+    strethaddress_to_identifier('0x2fdF40C484b1BD6F1c214ACAC737FEDc8b03E5a8'),
+    strethaddress_to_identifier('0x88665A7556E1B3C939D6661248116886845249a8'),
+    'XVC',
+    'MCN',
+    strethaddress_to_identifier('0xac2e58A06E6265F1Cf5084EE58da68e5d75b49CA'),
+    strethaddress_to_identifier('0x50f09629d0afDF40398a3F317cc676cA9132055c'),
+    strethaddress_to_identifier('0xd234BF2410a0009dF9c3C63b610c09738f18ccD7'),
 ]
 
 COINGECKO_SIMPLE_VS_CURRENCIES = [
@@ -266,9 +320,10 @@ COINGECKO_SIMPLE_VS_CURRENCIES = [
 ]
 
 
-class Coingecko():
+class Coingecko(HistoricalPriceOracleInterface):
 
     def __init__(self) -> None:
+        super().__init__(oracle_name='coingecko')
         self.session = requests.session()
         self.session.headers.update({'User-Agent': 'rotkehlchen'})
         self.all_coins_cache: Optional[Dict[str, Dict[str, Any]]] = None
@@ -502,16 +557,24 @@ class Coingecko():
             location='historical price',
         )
         if not vs_currency:
-            return Price(ZERO)
+            raise NoPriceForGivenTimestamp(
+                from_asset=from_asset,
+                to_asset=to_asset,
+                time=timestamp,
+            )
 
         try:
             from_coingecko_id = from_asset.to_coingecko()
-        except UnsupportedAsset:
+        except UnsupportedAsset as e:
             log.warning(
                 f'Tried to query coingecko historical price from {from_asset.identifier} '
                 f'to {to_asset.identifier}. But from_asset is not supported in coingecko',
             )
-            return Price(ZERO)
+            raise NoPriceForGivenTimestamp(
+                from_asset=from_asset,
+                to_asset=to_asset,
+                time=timestamp,
+            ) from e
 
         # check DB cache
         price_cache_entry = GlobalDBHandler().get_historical_price(
@@ -544,7 +607,11 @@ class Coingecko():
                 f'to {to_asset.identifier}. But got key error for {str(e)} when '
                 f'processing the result.',
             )
-            return Price(ZERO)
+            raise NoPriceForGivenTimestamp(
+                from_asset=from_asset,
+                to_asset=to_asset,
+                time=timestamp,
+            ) from e
 
         # save result in the DB and return
         date_timestamp = create_timestamp(date, formatstr='%d-%m-%Y')

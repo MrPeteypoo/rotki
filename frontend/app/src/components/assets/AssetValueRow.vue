@@ -46,28 +46,28 @@
   </v-row>
 </template>
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
-import { mapGetters } from 'vuex';
+import { computed, defineComponent, toRefs } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import CardTitle from '@/components/typography/CardTitle.vue';
+import { useAssetInfoRetrieval } from '@/store/assets';
 import { AssetPriceInfo } from '@/store/balances/types';
 
-@Component({
+export default defineComponent({
+  name: 'AssetValueRow',
   components: { CardTitle },
-  computed: {
-    ...mapGetters('balances', ['assetPriceInfo'])
-  }
-})
-export default class AssetValueRow extends Vue {
-  @Prop({ required: true, type: String })
-  identifier!: string;
-  @Prop({ required: true, type: String })
-  symbol!: string;
-  assetPriceInfo!: (asset: string) => AssetPriceInfo;
+  props: {
+    identifier: { required: true, type: String },
+    symbol: { required: true, type: String }
+  },
+  setup(props) {
+    const { identifier } = toRefs(props);
+    const { assetPriceInfo } = useAssetInfoRetrieval();
 
-  get info(): AssetPriceInfo {
-    return this.assetPriceInfo(this.identifier);
+    const info = computed<AssetPriceInfo>(() => {
+      return get(assetPriceInfo(get(identifier)));
+    });
+
+    return { info };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

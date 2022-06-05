@@ -2,13 +2,12 @@ import json
 import logging
 from http import HTTPStatus
 from json.decoder import JSONDecodeError
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, overload
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union, overload
 from urllib.parse import urlencode
 
 import requests
-from typing_extensions import Literal
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.chain.ethereum.utils import asset_normalized_value
 from rotkehlchen.constants.assets import (
@@ -121,18 +120,19 @@ from rotkehlchen.constants.assets import (
 from rotkehlchen.constants.misc import ZERO
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
 from rotkehlchen.db.loopring import DBLoopring
-from rotkehlchen.errors import DeserializationError, RemoteError
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_int_from_str
-from rotkehlchen.typing import ChecksumEthAddress, ExternalService
+from rotkehlchen.types import ChecksumEthAddress, ExternalService
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.premium.premium import Premium
@@ -295,6 +295,7 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
             premium: Optional['Premium'],  # pylint: disable=unused-argument
     ) -> None:
         super().__init__(database=database, service_name=ExternalService.LOOPRING)
+        LockableQueryMixIn.__init__(self)
         api_key = self._get_api_key()
         self.msg_aggregator = msg_aggregator
         self.session = requests.session()
@@ -527,9 +528,6 @@ class Loopring(ExternalServiceWithApiKey, EthereumModule, LockableQueryMixIn):
         return result
 
     # -- Methods following the EthereumModule interface -- #
-    def on_startup(self) -> None:
-        pass
-
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
         pass
 

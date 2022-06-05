@@ -2,32 +2,32 @@ import datetime
 import logging
 from collections import defaultdict
 from operator import add, sub
-from typing import TYPE_CHECKING, DefaultDict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, DefaultDict, List, Literal, Optional, Set, Tuple
 
 from gevent.lock import Semaphore
-from typing_extensions import Literal
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken, UnderlyingToken
 from rotkehlchen.assets.utils import add_ethereum_token_to_db
 from rotkehlchen.chain.ethereum.graph import (
-    SUBGRAPH_REMOTE_ERROR_MSG,
     GRAPH_QUERY_LIMIT,
     GRAPH_QUERY_SKIP_LIMIT,
+    SUBGRAPH_REMOTE_ERROR_MSG,
     Graph,
     format_query_indentation,
 )
 from rotkehlchen.chain.ethereum.interfaces.ammswap.graph import TOKEN_DAY_DATAS_QUERY
 from rotkehlchen.chain.ethereum.trades import AMMSwap, AMMTrade
 from rotkehlchen.constants import ZERO
-from rotkehlchen.errors import DeserializationError, ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.misc import ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.price import query_usd_price_or_use_default
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import AssetAmount, ChecksumEthAddress, Location, Price, Timestamp
+from rotkehlchen.types import AssetAmount, ChecksumEthAddress, Location, Price, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.misc import ts_now
@@ -41,7 +41,7 @@ from .graph import (
     SWAPS_QUERY,
     TOKENPRICES_QUERY,
 )
-from .typing import (
+from .types import (
     BALANCER_EVENTS_PREFIX,
     BALANCER_TRADES_PREFIX,
     POOL_MAX_NUMBER_TOKENS,
@@ -82,7 +82,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.db.dbhandler import DBHandler
 
@@ -1364,9 +1364,6 @@ class Balancer(EthereumModule):
         return address_to_trades
 
     # -- Methods following the EthereumModule interface -- #
-    def on_startup(self) -> None:
-        pass
-
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
         pass
 

@@ -4,6 +4,7 @@ import { Interop, TrayUpdate } from '@/electron-main/ipc';
 import {
   IPC_ABOUT,
   IPC_CHECK_FOR_UPDATES,
+  IPC_CLEAR_PASSWORD,
   IPC_CLOSE_APP,
   IPC_CONFIG,
   IPC_DARK_MODE,
@@ -11,7 +12,9 @@ import {
   IPC_DOWNLOAD_PROGRESS,
   IPC_DOWNLOAD_UPDATE,
   IPC_GET_DEBUG,
+  IPC_GET_PASSWORD,
   IPC_INSTALL_UPDATE,
+  IPC_LOG_TO_FILE,
   IPC_METAMASK_IMPORT,
   IPC_OPEN_DIRECTORY,
   IPC_OPEN_PATH,
@@ -19,9 +22,9 @@ import {
   IPC_PREMIUM_LOGIN,
   IPC_RESTART_BACKEND,
   IPC_SERVER_URL,
+  IPC_STORE_PASSWORD,
   IPC_TRAY_UPDATE,
-  IPC_VERSION,
-  IPC_WEBSOCKET_URL
+  IPC_VERSION
 } from '@/electron-main/ipc-commands';
 
 function ipcAction<T>(message: string, arg?: any): Promise<T> {
@@ -35,7 +38,7 @@ function ipcAction<T>(message: string, arg?: any): Promise<T> {
 
 const isDevelopment = process.env.NODE_ENV !== 'production';
 
-type DebugSettings = { vuex: boolean };
+type DebugSettings = { persistStore: boolean };
 let debugSettings: DebugSettings | undefined = isDevelopment
   ? ipcRenderer.sendSync(IPC_GET_DEBUG)
   : undefined;
@@ -66,7 +69,6 @@ contextBridge.exposeInMainWorld('interop', {
       }
     : undefined,
   serverUrl: (): string => ipcRenderer.sendSync(IPC_SERVER_URL),
-  websocketUrl: (): string => ipcRenderer.sendSync(IPC_WEBSOCKET_URL),
   metamaskImport: () => ipcAction(IPC_METAMASK_IMPORT),
   restartBackend: options => ipcAction(IPC_RESTART_BACKEND, options),
   checkForUpdates: () => ipcAction(IPC_CHECK_FOR_UPDATES),
@@ -87,5 +89,12 @@ contextBridge.exposeInMainWorld('interop', {
   openPath: (path: string) => ipcRenderer.send(IPC_OPEN_PATH, path),
   config: (defaults: boolean) => ipcAction(IPC_CONFIG, defaults),
   updateTray: (trayUpdate: TrayUpdate) =>
-    ipcRenderer.send(IPC_TRAY_UPDATE, trayUpdate)
+    ipcRenderer.send(IPC_TRAY_UPDATE, trayUpdate),
+  logToFile(message: string) {
+    ipcRenderer.send(IPC_LOG_TO_FILE, message);
+  },
+  storePassword: (username: string, password: string) =>
+    ipcAction(IPC_STORE_PASSWORD, { username, password }),
+  getPassword: (username: string) => ipcAction(IPC_GET_PASSWORD, username),
+  clearPassword: (username: string) => ipcAction(IPC_CLEAR_PASSWORD, username)
 } as Interop);

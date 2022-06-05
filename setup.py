@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import pathlib
+from os import environ
 
 from pkg_resources import parse_requirements
 from setuptools import find_packages, setup
@@ -13,7 +14,7 @@ directory = pathlib.Path(__file__).parent
 requirements = directory.joinpath('requirements.txt').read_text()
 requirements = [str(r) for r in parse_requirements(requirements)]
 
-version = '1.21.2'  # Do not edit: this is maintained by bumpversion (see .bumpversion.cfg)
+version = '1.24.1'  # Do not edit: this is maintained by bumpversion (see .bumpversion.cfg)
 
 setup(
     name='rotkehlchen',
@@ -28,9 +29,11 @@ setup(
         # TODO: Investigate if it's needed. rotkehlchen.spec is where files seem to be copied
         'rotkehlchen': ['data/*.json', 'data/*.meta', 'data/*.db'],
     },
-    python_requires='>=3.6',
+    python_requires='>=3.9',
     install_requires=requirements,
-    use_scm_version=True,
+    use_scm_version={
+        'fallback_version': environ.get('PACKAGE_FALLBACK_VERSION') or version,
+    },
     setup_requires=['setuptools_scm'],
     long_description=directory.joinpath('README.md').read_text(),
     long_description_content_type='text/markdown',

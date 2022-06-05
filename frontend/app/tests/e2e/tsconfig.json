@@ -1,18 +1,8 @@
 {
+  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "strict": true,
-    "sourceMap": true,
-    "baseUrl": "../../node_modules",
-    "module": "commonjs",
-    "target": "es2018",
-    "lib": ["dom", "es2018"],
-    "types": ["cypress"],
-    "paths": {
-      "@/*": ["../src/*"]
-    },
-    "experimentalDecorators": true
+    "types": ["cypress"]
   },
-  "include": ["**/*.ts"],
-  "exclude": ["../unit/**/*.ts", "../spectron/**/*.ts"],
+  "include": ["**/*.ts", ".eslintrc.js"],
   "compileOnSave": false
 }

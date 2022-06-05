@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures import BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.assets.asset import Asset, EthereumToken, UnderlyingToken
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants.assets import A_BAT
@@ -29,7 +29,7 @@ from rotkehlchen.tests.utils.globaldb import (
     underlying_address3,
     underlying_address4,
 )
-from rotkehlchen.typing import Location
+from rotkehlchen.types import Location
 
 
 def assert_token_entry_exists_in_result(
@@ -142,8 +142,8 @@ def test_adding_custom_tokens(rotkehlchen_api_server):
         status_code=HTTPStatus.CONFLICT,
     )
 
-    # also test that the addition of underlying tokens has created proper asset entires for them
-    cursor = GlobalDBHandler()._conn.cursor()
+    # also test that the addition of underlying tokens has created proper asset entries for them
+    cursor = GlobalDBHandler().conn.cursor()
     result = cursor.execute(
         'SELECT COUNT(*) from assets WHERE identifier IN (?, ?, ?, ?)',
         [ETHEREUM_DIRECTIVE + x for x in [underlying_address1, underlying_address2, underlying_address3, underlying_address4]],  # noqa: E501
@@ -385,7 +385,7 @@ def test_deleting_custom_tokens(rotkehlchen_api_server):
     underlying1_id = ETHEREUM_DIRECTIVE + underlying_address1
     underlying2_id = ETHEREUM_DIRECTIVE + underlying_address2
     underlying3_id = ETHEREUM_DIRECTIVE + underlying_address3
-    cursor = GlobalDBHandler()._conn.cursor()
+    cursor = GlobalDBHandler().conn.cursor()
     initial_underlying_num = cursor.execute('SELECT COUNT(*) from underlying_tokens_list').fetchone()[0]  # noqa: E501
 
     # Make sure the equivalent assets we will delete exist in the DB
@@ -528,6 +528,7 @@ def test_custom_tokens_delete_guard(rotkehlchen_api_server):
     user_db = rotkehlchen_api_server.rest_api.rotkehlchen.data.db
     token0_id = ETHEREUM_DIRECTIVE + INITIAL_TOKENS[0].ethereum_address
     user_db.add_manually_tracked_balances([ManuallyTrackedBalance(
+        id=-1,
         asset=Asset(token0_id),
         label='manual1',
         amount=FVal(1),

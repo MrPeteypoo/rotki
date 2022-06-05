@@ -3,25 +3,24 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
+import { defineComponent } from '@vue/composition-api';
 import TabNavigation, {
   TabContent
 } from '@/components/helper/TabNavigation.vue';
 import { Routes } from '@/router/routes';
 
-@Component({
-  components: { TabNavigation }
-})
-export default class DecentralizedDeposits extends Vue {
-  readonly tabs: TabContent[] = [
-    {
-      name: this.$tc('decentralized_deposits.protocols'),
-      routeTo: Routes.DEFI_DEPOSITS_PROTOCOLS
-    },
-    {
-      name: this.$tc('decentralized_deposits.liquidity'),
-      routeTo: Routes.DEFI_DEPOSITS_LIQUIDITY
-    }
-  ];
-}
+export default defineComponent({
+  name: 'DecentralizedDeposits',
+  components: { TabNavigation },
+  setup() {
+    const tabs: TabContent[] = [
+      Routes.DEFI_DEPOSITS_PROTOCOLS,
+      Routes.DEFI_DEPOSITS_LIQUIDITY
+    ];
+
+    return {
+      tabs
+    };
+  }
+});
 </script>

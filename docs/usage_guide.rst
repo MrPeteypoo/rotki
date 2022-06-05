@@ -21,15 +21,24 @@ When you start rotki you are greeted with a sign-in/signup prompt.
 
 .. role:: red
 
-For creating an account press "Create New Account" and provide a username and a password:
+For creating an account press "Create New Account".
+You can choose to enable premium feature or not.
+
+If you want to restore an account using premium sync during the account creation, then you can **Enable premium**,
+and enable **Restore synced database**, and insert your **API Key** and the **secret** here.
+
+Then you can click **Continue** button.
+
+.. image:: images/rotki_create_account_enable_sync.png
+   :alt: Enable premium sync
+   :align: center
+
+You have to provide a username and a password:
 
   - **Username**: it is just an identifier for your database; a local user.
   - **Password**: :red:`Do not forget this password`. It is used to encrypt all your local files.
 
-If you want to restore an account using premium sync during the account creation, then you can **Enable premium**,
-and insert your **API Key** and the **secret** here.
-
-For a completely new account it is suggested to add your premium API key and secret using :ref:`set-up-rotki-premium`
+For a completely new account, premium API key and secret can be added either using the prompt provided or using :ref:`set-up-rotki-premium`
 after logging in with the new account.
 
 .. image:: images/rotki_create_account.png
@@ -61,7 +70,7 @@ If you already have an account just write the name and the password at the sign 
 Set up rotki Premium
 ======================
 
-If you decide to purchase `rotki Premium <https://rotki.com/products/>`_ at a later time, you can set it up via API Keys -> rotki Premium.
+If you decide to purchase `rotki Premium <https://rotki.com/products/>`_ at a later time, you can set it up via :menuselection:`API Keys --> rotki Premium`.
 
 .. image:: images/rotki_premium_set.png
    :alt: Set up rotki premium API key/secret pair in an existing account
@@ -90,7 +99,7 @@ Bear in mind that in case of using multiple accounts/devices with the data sync 
    :alt: Replace local database with remote backup
    :align: center
 
-You can manually move the global DB that contains the assets from one system to the other too. Find the :ref:`rotki_data_directory` in the source system. Assuming it's linux it will be ``~/.local/share/rotki/data``. The global db is then ``~/.local/share/rotki/data/global_data/global.db``. Manually move it to the equivalent location in the new system.
+You can manually move the global DB that contains the assets from one system to the other too. Find the :ref:`rotki_data_directory` in the source system. Assuming it's linux it will be :file:`~/.local/share/rotki/data`. The global db is then :file:`~/.local/share/rotki/data/global_data/global.db`. Manually move it to the equivalent location in the new system.
 
 
 Customizing
@@ -214,12 +223,20 @@ Price Oracle settings
 
 Here you can customize the precedence of querying that price oracles will have. That means which price source to check first, which second and so on and so forth both for current but also for historical prices.
 
+DeFi oracles like Uniswap V2 and Uniswap V3 use only on chain information to get current prices, this means that it is a bit slower to query information from them but you depend only on the ethereum chain to query the prices.
+Also prices for some assets may differ from Coingecko or CryptoCompare depending on the conditions of the pools at the moment of making the query.
+
 Frontend only settings
 -----------------------
 
 .. image:: images/sc_frontendonly_settings1.png
    :alt: Customizing the app's frontend only settings
    :align: center
+
+Animations effect
+^^^^^^^^^^^^^^^^^
+
+It is possible to reduce the animation effect in differents part of the app to improve the performance in case where this is needed. This will affect the quality of the animations but the user will get a better usage of the resources.
 
 Data scrambling
 ^^^^^^^^^^^^^^^
@@ -235,6 +252,12 @@ Graph basis
 ^^^^^^^^^^^^^^^^^^^^^
 
 Configure whether the graph y-axis will start at 0 or the minimum amount for the period.
+
+Include NFTs in graphs and total amounts
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Configure whether to include NFTs in the calculation for the total net worth and the graphs displayed in the dashboard and statistic section.
+
 
 Automatic balance refresh
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -316,6 +339,14 @@ Ignored assets
 ^^^^^^^^^^^^^^^
 
 Specify which assets you own and would like to completely ignore from all calculations and balance queries. Any actions that involve these assets are ignored.
+We have introduced a mechanism to populate the ignore list with assets labeled as spam/scam by us. This list can be re-queried at any time by the user by clicking on ``Sync the list of ignored assets``.
+
+You can also ignore asset by clicking asset icons anywhere on the app, that will redirect you to this overview asset page. In this page, you can ignore or un-ignore selected asset.
+
+.. image:: images/asset_overview.png
+   :alt: Asset overview page
+   :align: center
+
 
 .. _ledger_action_settings:
 
@@ -361,6 +392,38 @@ By choosing the "user & security" section of the settings you can change the use
    :alt: Changing the user's password
    :align: center
 
+Database Info & User Database Backups
+-------------------------------------
+
+By visiting the database info section you can see information about your user and global database,
+such as the user database directory, size and version.
+
+.. image:: images/sc_db_backup.png
+   :alt: Creating database backups
+   :align: center
+
+You can create new database backups by pressing the ``Create new backup`` button.
+To delete a backup you can press the trash can icon on the database row.
+
+The download button provides an easy way to save the backups locally, and it can be
+especially helpful if you run the docker instance on a remote machine.
+
+Exporting and importing custom assets
+-------------------------------------
+
+When migrating from one computer to another you will also need to move your custom assets entries.
+To do this you can use the export/import function provided by rotki.
+
+This function will create a zip archive of all your custom assets. You can then use the import function
+in a different instance of rotki to easily transfer your custom asset entries.
+
+.. image:: images/sc_custom_import_export.png
+   :alt: Importing
+   :align: center
+
+.. warning::
+    This archive cannot be used as a backup/restore across different versions of rotki since there is
+    absolutely no guarantee that there will be no breaking format changes across versions.
 
 Purging data
 -----------------
@@ -470,7 +533,7 @@ Adding an exchange
 
 You can integrate many different exchanges with rotki. Currently supported exchanges are:
 Kraken, Poloniex, Bittrex, Bitmex, Bitfinex, Binance, Binance US, bitcoin.de, Coinbase,
-Coinbase Pro, Gemini, Iconomi, Bitstamp, KuCoin, FTX.
+Coinbase Pro, Gemini, Iconomi, Bitstamp, KuCoin, FTX, FTX US, Independent Reserve.
 
 To do so you have to go to your exchange and create an API key (see the section :ref:`api-key-permissions`).
 
@@ -484,6 +547,8 @@ Press the plus button to open the exchange addition menu.
 Then copy and paste the ``API Key`` and the ``API Secret`` in the respective text fields and press Save.
 
 If all went well, you should be able to see your newly added exchange. If not please doublecheck that the key and secret are correct.
+
+You also have option to enable/disable synchronization for the connected exchanges. Usually, you may want to disable the synchronization to prevent your IP get banned because of too many syncs.
 
 .. image:: images/rotki_add_exchange_3.png
    :alt: Add API keys for a new exchange
@@ -541,7 +606,7 @@ At the moment there is no compulsory API key. But if you don't use your own node
 Cointracking.info
 ====================
 
-You can also import data from `cointracking.info <https://cointracking.info/>`_ into rotki by clicking on "Import Data" on the left sidebard and then following the instructions.
+You can also import data from `cointracking.info <https://cointracking.info/>`_ into rotki by clicking on "Import Data" on the left sidebar and then following the instructions.
 
 rotki can import any trade CSV data exported from cointracking.info. But in general it's not recommended to utilize cointracking as their exported data are missing a lot of information.
 
@@ -549,10 +614,19 @@ rotki can import any trade CSV data exported from cointracking.info. But in gene
    :alt: Importing data from cointracking.info
    :align: center
 
+Binance.com
+=============
+
+You can import data from `binance.com <https://binance.com/>`_ into rotki by clicking on "Import Data" on the left sidebar and then following the instructions.
+
+rotki can import a CSV data file exported from Binance. But due to Binance's csv format some data may be not importable. You will see warnings if this happens.
+
+By importing a csv file you are able to import more than with the API. Particularly: Trades, Deposits and Withdrawals, Small assets exchange BNB, ETH 2.0 Staking and ETH 2.0 Staking Rewards, Launchpool Interests, POS savings interest, POS savings purchase, POS savings redemption.
+
 ShapeShift.com
 ====================
 
-You can import trade CSV data exported from shapeshift.com.  Transactions will come from adding your Blockchain Accounts used with ShapeShift to rotki.
+You can import trade CSV data file exported from shapeshift.com.  Transactions will come from adding your Blockchain Accounts used with ShapeShift to rotki.
 
 Import data in the same section as the image above in the prior heading.  When exporting trades from ShapeShift, the selected wallet may show DEX trades in the user interface.  If it is not the Native wallet, DEX trades may not show up in the user interface, but they still export to CSV.  This importer ignores DEX trades, as they are covered by premium support for Uniswap and SushiSwap.
 
@@ -564,7 +638,7 @@ You can import transaction history CSV data exported from the uphold.com activit
 Loopring balances
 ===================
 
-To have your loopring balances detected you will need an API Key from loopring. To get one visit `https://exchange.loopring.io/ <https://exchange.loopring.io/>`_ and unlock your account. In the right panel you need to click in **Export Account**
+To have your loopring balances detected you will need an API Key from loopring. To get one visit `https://loopring.io/#/layer2/security <https://loopring.io/#/layer2/security>`_ and unlock your account. In the list of options you need to click in **Export Account**
 
 .. image:: images/get_loopring_keys.png
    :alt: Get loopring keys
@@ -591,7 +665,7 @@ The loopring account balances are also visible in the blockchain accounts view.
 Moving data to another system
 =====================================
 
-If you want to move your data to another system then you will need to do some manual steps. First identify the :ref:`rotki_data_directory` in both the source and the destination system. Then move the entire data directory from the source system to the destination system and make sure that the same rotki version is used in both syste
+If you want to move your data to another system then you will need to do some manual steps. First identify the :ref:`rotki_data_directory` in both the source and the destination system. Then move the entire data directory from the source system to the destination system and make sure that the same rotki version is used in both systems.
 
 .. _track_balances:
 
@@ -648,6 +722,65 @@ An xpub does not allow spending your coins but provides information about your w
    :align: center
 
 
+ENS names resolution
+=====================
+
+rotki automatically resolves ens name for each of your ethereum accounts. If there is a primary ens name specified for an account, this name will be shown instead of raw blockchain address across the app. You can find the blockchain address by hovering the mouse over the ens name.
+
+.. image:: images/ens_resolution.png
+   :alt: Example of resolving an ens name
+   :align: center
+
+
+Ethereum Transactions
+=====================
+
+rotki is capable of getting and decoding (understand what is happening) your ethereum transactions. When you visit the ``Ethereum Transactions`` section the process to obtain all the information will start. You will be able to check the status in a informative breakdown per address.
+
+.. image:: images/eth_tx_query_process.png
+   :alt: Ethereum transactions query status breakdown
+   :align: center
+
+It is possible that you need to redecode some transactions if the set of decoding rules is modified. To redecode a transaction you have two possibilities. The first of them is to click on the three dots to display the options for an ethereum transaction and click on ``Redecode events``. This will start the process to read the transaction's events again and try to understand what happened in them.
+
+.. image:: images/redecode_events.png
+   :alt: Menu to redecode events for an ethereum transaction
+   :align: center
+
+The second option is to redecode all the transactions in one page or all the transactions that have been queried. To do so you need to click on ``REDECODE EVENTS`` at the top of the page. This will allow to select between ``Only this page`` and ``All events``.
+
+.. image:: images/redecode_all_events.png
+   :alt: Menu to redecode all events in one page
+   :align: center
+
+Events in a transaction might need to be edited if they were not properly decoded or if they have a special meaning to you (like OTC trades, transfers between accounts...). To edit one event click on the pencil icon and a menu will appear.
+
+.. image:: images/edit_eth_event.png
+   :alt: Menu to edit ethereum events
+   :align: center
+
+Here the non obvious fields are:
+
+- ``Event Type``: We have created a categorization of all the actions in a set of major event types. This field will describe the action category.
+- ``Event Subtype``: Inside an event type you can perform different actions. This subtype will let you describe exactly what is happening in the event.
+- ``Sequence Index``: Is an internal index that sets the order in which events happened in the transactions. This allows knowing how events are sorted and should be taken into account. By default it corresponds to the event log index in the ethereum blockchain with a few exceptions.
+- ``Location Label``: This is the address related to the event, for example if you are receiving one asset in a transfer or calling a contract will match with your address.
+- ``Counterparty``: This is the other part of the transaction, the address you are interacting with. Can be a protocol identifier if the transaction is decoded as part of a protocol.
+
+Events that have been modified will appear marked in the UI.
+
+.. image:: images/customized_events.png
+   :alt: Customized events in the UI
+   :align: center
+
+
+Ethereum transactions can be filtered by account and by:
+
+- Time range
+- Asset involved in the transaction
+- Protocol that interacted in the transaction
+
+
 Checking Exchange Balances
 ===========================
 
@@ -681,6 +814,16 @@ You can filter the tables by a combination of tags.
 
 Simply add the tags you wish to filter by in the filter textbox above the tables.
 
+
+Loopring balances
+=================
+
+From the balances section you can quickly get an overview of the accounts having balances in Loopring and what assets this accounts hold.
+
+.. image:: images/loopring_balances_detailed.png
+   :alt: Loopring balances detailed per address
+   :align: center
+
 NFTs
 =====================
 Rotki provides an NFT gallery where you can view the NFTs owned by your accounts.
@@ -706,6 +849,22 @@ If a price cannot be found for an NFT asset or if you want to change the calcula
 ETH2 Staking
 =====================
 
+There are two ways to track ETH2 Staking. The first is by adding tracking the account of an ETH account that deposited
+the ETH for the validator. This will auto-detect any associated validators with the ETH1 address and it will start
+tracking them. The second way is by adding a validator using the add ``(+)`` button in the ``Blockchain Balances`` tab
+under ``Accounts & Balances``. It can be added using its public key, its index or both of them for a faster query. Finally it
+is also possible to customize the proportion of the validator owned for users who share one validator with more people.
+
+.. image:: images/rotki_eth2_add_validator.png
+   :alt: Track an ETH2 validator
+   :align: center
+
+After adding a new validator you should be able to see the list of balances for each these validators.
+
+.. image:: images/rotki_eth2_balances.png
+   :alt: ETH2 validator balances
+   :align: center
+
 If you are an ETH2 staker you can see the total value earned both in the current ETH price (2) but also counting the price of the daily payouts of ETH2 staking (3).
 
 .. image:: images/rotki_eth2_staking.png
@@ -730,7 +889,16 @@ Liquity Staking
 If you stake LQTY in the protocol you can see the amount staked and the changes in the staked amount.
 
 .. image:: images/sc_staking_liquity.png
-   :alt: See ETH2 value earned
+   :alt: See your Liquity staking gains
+   :align: center
+
+Kraken Staking
+===============
+
+If you stake on Kraken you can see your gains, and events in the various staked assets.
+
+.. image:: images/sc_staking_kraken.png
+   :alt: See your Kraken staking gains
    :align: center
 
 
@@ -753,6 +921,9 @@ The list of currently supported airdrops is:
 - Furocombo
 - Lido
 - Curve
+- ENS
+- ParaSwap
+- Saddle finance
 
 Snapshots
 =========
@@ -766,6 +937,21 @@ You can force a snapshot taking by clicking in the floppy disk icon at the top b
 
 Snapshots won't be saved if there is any error querying information for external sources. If you want to force the snapshot to be saved when an external source is reporting an error you can select the option `Ignore Errors`.
 
+It is possible to remove balance snapshots from the history in case the information is not correct or needs to be modified. To do so click on a snapshot's point at the dashboard's net value graph and this will open a menu.
+
+.. image:: images/delete_snapshot_menu.png
+   :alt: Delete snapshot
+   :align: center
+
+Clicking on delete will remove the saved information for that snapshot. The same menu allows exporting the information of the balance snapshot to an external file. Four files are then generated, two meant to be used if you want to import information about snapshots later and the other 2 have the same information in a human readable format to be used in accounting. ``balances_snapshot``  contains information about the balances at the snapshot time for all the different assets rotki knew you had and ``location_data_snapshot`` has the value per location for the same assets.
+
+Finally information about snapshots can be imported back into the app using the files you exported with the suffix ``_import```. To import them use the import functionality by clicking on the save disk icon at the top bar.
+
+.. image:: images/import_snapshot.png
+   :alt: Import snapshots information
+   :align: center
+
+
 Historical events
 ************************
 
@@ -776,7 +962,7 @@ Adding manual trades
 
 rotki will pull all your trade history from the exchanges whenever it needs it. But most of us have probably also done some OTC trades or taxable events at some point. Such events could even just be mining tokens, depending on your jurisdiction, participating in an ICO or getting paid in crypto.
 
-On the left sidebar click on History and then the Trade button from the dropdown menu. This will take you to the Trades page. Clicking on the ``+`` symbol will open a menu like the following.
+On the left sidebar click on History and then the Trades button from the dropdown menu. This will take you to the Trades page. Clicking on the ``+`` button will open a menu like the following.
 
 .. image:: images/external_trade.png
    :alt: Add an external trade
@@ -796,6 +982,7 @@ Adding ledger actions
 =====================
 
 With ledger actions you can add events that represent incomes, losses, expenses, etc. On the left sidebar click on History and then the Ledger Actions button from the dropdown menu.
+To add a ledger action click on the ``+`` button.
 You can provide a location, for example an exchange, a bank, a blockchain or others. For the action type you can select from:
 
 * Income
@@ -842,7 +1029,7 @@ When selecting a filter, by clicking or typing the filter you will get some sugg
 
 .. note::
 
-    At the moment it is not possible to navigate select the available filters using the keyboard arrows or tab.
+    At the moment it is not possible to select the available filters using the keyboard arrows or tab.
     This is a feature that will become available in the future.
 
 When a suggestion appears you can navigate to the next available suggestion using the tab button or you can also change
@@ -857,7 +1044,7 @@ After adding your filters you can press enter to close the menu.
 Filtering deposits & withdrawals
 ================================
 
-You can filter your deposits and withdrawals int he same say you can filter your trades.
+You can filter your deposits and withdrawals in the same way you can filter your trades.
 
 .. image:: images/sc_history_deposits_filter.png
    :alt: Deposit filters
@@ -947,6 +1134,19 @@ When both the source identifier and target asset are selected you can press the 
 
 On a successful merge you will be notified to to either re-login or refresh the balances manually to see the changes
 on the frontend.
+
+Special assets
+==============
+
+rotki allows you to track special assets like:
+
+1. *Uniswap/Sushiswap LP tokens*: You can track LP tokens by adding them and using `UNI-V2` as protocol. This will make the app query balances and prices. As for now historical prices are not queried so you will need to add missing prices manually.
+2. *Yearn vaults*: To add a yearn vault you need to add a new ethereum token and use `yearn_vaults_v2` as protocol. In addition you need to specify the underlying token that the vault uses with a 100% weight.
+
+Ignoring assets
+===============
+
+Clicking on an asset's name or icon from the assets list, takes you to its detail's page from which you can ignore it by pressing the ``Ignore Asset`` switch.
 
 Adding missing prices
 **********************
@@ -1116,18 +1316,27 @@ How to run the PnL report
 
 To create a PnL report click on the "Profit and Loss Report" button from the left menu. Choose a period for the report (or click on Custom to set a custom time range) and press on "Generate" to start the report.
 
-.. image:: images/sc_pnl_report1.png
-   :alt: Overview of the profit/loss report
+.. image:: images/sc_pnl_report.png
+   :alt: View profit/loss report list
    :align: center
 
 The calculation may take some time. You can also see a summary of the accounting setting the report is running with in the "Accounting settings" section.
 
 If you encounter any problems during the profit/loss report check out the :ref:`troubleshooting-pnl-report` section.
 
+In the report screen you can also see any previously generated profit and loss reports, and manage them. Free users
+are limited to 20 stored reports in total.
+
 Results of the PnL report
 =========================
 
 Once done you have an overview of the profit/loss for the given period, how much of that is taxable, and how much each taxable event category contributes to the total.
+
+
+.. image:: images/sc_pnl_report1.png
+   :alt: Overview of the profit/loss report
+   :align: center
+
 
 Additionally below the overview you get a table containing all of the events that were taken into account in the calculation along with how much of the ``profit_currency`` you lost or gained through that event.
 
@@ -1136,25 +1345,32 @@ Additionally below the overview you get a table containing all of the events tha
    :align: center
 
 
-Finally you can get a CSV export by pressing the "Export CSV" button. This export is meant to be imported into Google Sheets. Press the button and then choose a directory to write the CSV files to. Once done you can import the CSV files into Google Sheets via its import menu. Following are definitions for the all_event document's columns
+Finally you can get a CSV export by pressing the "Export CSV" button. This export is meant to be imported into
+Google Sheets. Press the button and then choose a directory to write the CSV files to. Once done you can import the CSV
+files into Google Sheets via its import menu. CSV export only works for the latest report generated in the active session.
+
+Following are definitions for the all_event document's columns
 
 - ``type`` is a string describing the type of event a user engaged in, e.g. in "I buy ETH for EUR", buy is the ``type``.
 - ``location`` is a string describing the location the event occured at. For example "kraken" for kraken trades.
-- ``paid_asset`` is a string identifying the asset an event was paid in, e.g. in "I bought 1 ETH for 100 EUR", EUR is the  ``paid_asset``.
-- ``paid_in_asset`` is a number specifying the amount of ``paid_asset`` involved in an event, e.g. in "I bought 1 ETH for 100 EUR", 100 is the ``paid_in_asset``.
-- ``taxable_amount``: is a number specifying the amount of ``paid_asset`` needed to be taken into consideration for tax purposes according to the accounting settings, e.g. "I sold 1 ETH for 120 EUR", 1 ETH is the ``taxable_amount``.
-- ``received_asset`` is a string identifying the asset of an event's yield, e.g. in "I bought 1 ETH for 100 EUR", ETH is the ``received_asset``.
-- ``received_in_asset`` is a number specifying the amount of ``received_asset`` involved in an event, e.g. in "I bought 1 ETH for 100 EUR", 1 is the ``received_in_asset``.
-- ``net_profit_or_loss`` is a number specifying the amount of profit or loss an event accounts for given the selected accounting strategy. Note that its value is based on a spreadsheet formula.
-- ``time`` is a string containing the date and time an event was executed.
-- ``is_virtual`` is a boolean describing if an event is a virtually generated event. Only appears if the crypto to crypto setting is set. In many jurisdictions, crypto to crypto trades are taxable at the rate of the equivalent fiat currency. So an additional virtual buy is always generated for a crypto to crypto sell and the opposite for a crypto to crypto buy. So for example selling BSV for BTC would also make the user buy BTC with EUR as a virtual event, assuming EUR is the set profit currency.
-- ``paid_in_XXX``, where XXX is the user's customized ``profit_currency`` is a number describing the amount of ``paid_in_asset`` converted to the user`s ``profit_currency``.
-- ``taxable_received_in_XXX`` where XXX is the user's customized ``profit_currency`` is a number describing the amount of ``received_in_asset`` converted to the user's ``profit_currency``. Note that rotki additionally subtracts an exchange's trading fees from this number.
-- ``taxable_bought_cost_in_XXX`` where XXX is the user's customized ``profit_currency`` is a float simulating the total amount of ``paid_in_asset`` given the user's customized accounting strategy in the user's ``profit_currency``.
+- ``asset`` is a string identifying the asset an event was paid in, e.g. in "I bought 1 ETH for 100 EUR", EUR is the  ``asset``.
+- ``free_amount``: is a number specifying the amount of ``asset`` that won't be taken into consideration for tax purposes.
+- ``taxable_amount``: is a number specifying the amount of ``asset`` needed to be taken into consideration for tax purposes according to the accounting settings, e.g. "I sold 1 ETH for 120 EUR", 1 ETH is the ``taxable_amount``.
+- ``timestamp`` is a string containing the date and time an event was executed.
+- ``price`` is ``asset`` price in ``profit_currency`` at the time the event was executed.
+- ``pnl_free`` is a number describing the amount of ``asset`` converted to the user's ``profit_currency`` that won't be taken into consideration for tax purposes.
+- ``pnl_taxable`` is a number describing the amount of ``asset`` converted to the user's ``profit_currency``. Note that rotki additionally subtracts an exchange's trading fees from this number.
 - ``cost_basis`` If this is a spending event, this field contains information about where the amount that is spent came from according to the user's setting. Which buys contributed to this spend. If not enough information is known then this is also stated.
+- ``notes`` Information about the event.
 
 .. note::
    To learn more about `profit_currency` or to adjust it, see the section :ref:`change_profit_currency`
+
+Results from past profit and loss reports are saved so the user can later review them without the need to run a new execution.
+
+.. image:: images/sc_pnl_saved_reports.png
+   :alt: Profit and loss reports from past executions
+   :align: center
 
 
 Cost basis
@@ -1174,16 +1390,15 @@ For all those trades you can see the cost basis when you create a profit loss re
 
 1. Either navigating to the trade in the generated table after the PnL report and pressing the arrow to show more details.
 
-.. image:: images/sc_costbasis_pnltable.png
+.. image:: images/sc_pnl_reports_costbasis.png
    :alt: Cost basis in PnL report table
    :align: center
 
 2. Export the report to CSV and import it in a spreadsheet tool. We have tested it works with google spreadsheets and libreoffice. The cost basis column contains the info you seek.
 
-.. image:: images/sc_costbasis_spreadsheet.png
+.. image:: images/sc_pnl_reports_costbasis_spreadsheet.png
    :alt: Cost basis in PnL report spreadsheet
    :align: center
-
 
 
 .. _troubleshooting-pnl-report:
@@ -1196,10 +1411,8 @@ No documented acquisition found
 
 It's possible that rotki is not able to find an acquisition event for a sale. In which case it will warn you and ask you to fix it.
 
-Example warning:
-
-.. image:: images/sc_acquisition_notfound.png
-   :alt: No documented acquisition found for asset
+.. image:: images/sc_pnl_missing_acquisitions.png
+   :alt: Missing acquisitions found for asset
    :align: center
 
 This can happen for many reasons. The asset may have been acquired in a non-supported exchange/protocol, some event not detected etc.
@@ -1211,18 +1424,22 @@ The way to fix it is to add either a :ref:`manual trade<adding-manual-trade>` or
 Timeout or price not found for timestamp
 -------------------------------------------------
 
-Figure out which asset caused the price not found. Then check the historical price caches and make sure you have the historical price cache for that asset pair created. For example if you are creating a GBP profit/loss report and the asset is GNO then make sure to create the GNO -> GBP historical price cache. See :ref:`manage-historical-price-cache` on how to do it.
+.. image:: images/sc_pnl_missing_prices.png
+   :alt: Missing prices asset
+   :align: center
+
+It's possible that rotki is not able to find the price of assets. You have to input the price manually, otherwise the event will be skipped from pnl reports. For example if you are creating a GBP profit/loss report and the asset is GNO then make sure to create the GNO -> GBP historical price cache. You can add the prices on the spot, or open :ref:`manage-historical-price-cache`.
 
 
-Analytics
+Statistics
 **********
 
-If you have a premium subscription you can get analytics on all your assets and trades.
+If you have a premium subscription you can get statistics on all your assets and trades.
 
 .. note::
-    The starting point of the for these analytics will be when you started using the application as rotki takes balance snapshots daily. We also plan to provide analytics on data before that in a best effort basis as detailed in `this <https://github.com/rotki/rotki/issues/1379>`_ issue.
+    The starting point of these statistics will be when you started using the application as rotki takes balance snapshots daily. We also plan to provide analytics on data before that in a best effort basis as detailed in `this <https://github.com/rotki/rotki/issues/1379>`_ issue.
 
-Click on the analytics page on the left sidebar to go to your analytics page.
+Click on the statistics page on the left sidebar to go to your statistics page.
 
 Since rotki is tracking all your assets over time the first thing you can see is a value/time graph of your entire net value.
 
@@ -1248,37 +1465,27 @@ Furthermore you can see a piechart of the distribution of your netvalue across d
    :alt: Distribution of networth by location
    :align: center
 
-Finally you can see a piechart of the distribution of your netvalue across all of the assets you own. This is an important analytics tool as it can help you determine your exposure on each asset and if some rebalancing of your portfolio is in order.
+Moreover you can see a piechart of the distribution of your netvalue across all of the assets you own. This is an important analytics tool as it can help you determine your exposure on each asset and if some rebalancing of your portfolio is in order.
 
 .. image:: images/sc_stats_distribution_asset.png
    :alt: Distribution of networth by asset
    :align: center
 
 
-Gitcoin Grants
-***************
+Global search
+*****************************
 
-As a premium user you can also keep track of your Gitcoin grants and generate reports for them.
+You can use global search provided to speed up your actions by clicking icon on top bar, or using shortcut :kbd:`Control-/` (:kbd:`Command-/` if you are using Mac).
 
-.. image:: images/gitcoin_grants.png
-   :alt: Gitcoin grant events
+Some actions provided by this global search:
+- Navigate to any page in rotki
+- Some basic actions such as adding a new trade, or new ledger action.
+- Go to certain owned asset overview page.
+- Go to certain location overview page.
+
+.. image:: images/global_searchbox.gif
+   :alt: Global Search
    :align: center
-
-You need to first find the id ofthe grant you are interested in. When you visit the grant, the id is what comes after the ``grants/`` part of the url. For example for rotki (https://gitcoin.co/grants/149/rotki) the id is ``149``.
-
-You type the grant id, select a period you are interested in and press the fetch button to retrieve the events for this
-period. After the the retrieval completes you should be able to see the list of the events for this Grant.
-
-.. image:: images/gitcoin_grants_report.png
-   :alt: Gitcoin grant events
-   :align: center
-
-With the events retrieved you can also generate reports for specific periods. In these reports you can see a breakdown
-of the assets received for the specified grant over the selected period.
-
-.. warning::
-    The report depends on the already fetched events. If any events are missing during the selected report period
-    then they will not be included in the generated report.
 
 .. _set-the-backend-s-arguments:
 
@@ -1324,6 +1531,19 @@ rotki saves user data by default in a different directory per OS. For each OS da
 Before v1.6.0 rotki was saving data in ``$USER/.rotkehlchen``. From v1.6.0 that directory got migrated to the OS equivalent standard directory and it should be safe for the users to delete the old directory as long as the new directory contains the migrated DB.
 
 A very good idea about the rotki data directory would be to be making frequent backups of it as it contains all of the data of all of your rotki accounts and cache data for historical price queries.
+
+Manually accessing the database
+*******************************
+
+It is possible that to detect potential problems with data or modify the state of the database the user needs to manually access it. To do so we recommend the usage of `DB Browser for SQLite <https://sqlitebrowser.org/dl/>`_.
+DB Browser for SQLite is an open source software that provides an accessible UI and brings two programs, one with the normal browser and another with the functionalities to access encrypted databases. You can download it
+for Windows, MacOS and Linux at the previous link.
+
+Once installed you have to start the program with the sqlcipher functionality and after that you need to select the rotki database. This database can be found in the :ref:`rotki data directory<rotki_data_directory>`. Once you open it, the program will
+ask for the password of the database. The password used for the database is the same as the one you use to unlock your rotki account.
+
+Once the database is unlocked you can browse the information in the ``Browse Data`` tab or execute custom SQL commands. Please be aware that manually modifying the information of the database can lead to inconsistent state.
+So only run commands that you have double checked with our team there. Or use it without supervision only if you really know what you are doing. And always take backups of the database before you modify it.
 
 Troubleshooting
 *****************

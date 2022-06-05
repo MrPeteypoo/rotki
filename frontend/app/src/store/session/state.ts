@@ -3,7 +3,8 @@ import {
   defaultAccountingSettings,
   defaultGeneralSettings
 } from '@/data/factories';
-import { SessionState } from '@/store/session/types';
+import { PrivacyMode, SessionState } from '@/store/session/types';
+import { isAnimationsEnabled } from '@/store/utils';
 
 export const defaultState: () => SessionState = () => ({
   newAccount: false,
@@ -12,7 +13,7 @@ export const defaultState: () => SessionState = () => ({
   username: '',
   generalSettings: defaultGeneralSettings(),
   accountingSettings: defaultAccountingSettings(),
-  privacyMode: false,
+  privacyMode: PrivacyMode.NORMAL,
   scrambleData: false,
   premium: false,
   premiumSync: false,
@@ -24,10 +25,11 @@ export const defaultState: () => SessionState = () => ({
   tags: {},
   watchers: [],
   queriedAddresses: {},
-  ignoredAssets: [],
   lastBalanceSave: 0,
   lastDataUpload: 0,
-  timeframe: TimeFramePeriod.ALL
+  timeframe: TimeFramePeriod.ALL,
+  showUpdatePopup: false,
+  animationsEnabled: isAnimationsEnabled?.() ?? false
 });
 
 export const state: SessionState = defaultState();

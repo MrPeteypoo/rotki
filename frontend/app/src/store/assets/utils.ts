@@ -1,3 +1,11 @@
-import { AssetState } from '@/store/assets/types';
+import { SupportedAsset } from '@rotki/common/lib/data';
+import { SupportedAssets } from '@/services/types-api';
 
-export const defaultState = (): AssetState => ({});
+export function convertSupportedAssets(
+  supportedAssets: SupportedAssets
+): SupportedAsset[] {
+  return Object.keys(supportedAssets).map(identifier => ({
+    identifier,
+    ...supportedAssets[identifier]
+  }));
+}

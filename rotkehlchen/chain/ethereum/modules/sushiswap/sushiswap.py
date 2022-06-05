@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, List, Optional
 
 from rotkehlchen.chain.ethereum.graph import Graph
 from rotkehlchen.chain.ethereum.interfaces.ammswap.ammswap import AMMSwapPlatform
-from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
+from rotkehlchen.chain.ethereum.interfaces.ammswap.types import (
     AddressEvents,
     AddressEventsBalances,
     AddressToLPBalances,
@@ -15,15 +15,15 @@ from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
 )
 from rotkehlchen.chain.ethereum.interfaces.ammswap.utils import SUBGRAPH_REMOTE_ERROR_MSG
 from rotkehlchen.chain.ethereum.trades import AMMTrade
-from rotkehlchen.errors import ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.misc import ModuleInitializationFailure, RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import ChecksumEthAddress, Location, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Location, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 
 if TYPE_CHECKING:
-    from rotkehlchen.accounting.structures import AssetBalance
+    from rotkehlchen.accounting.structures.balance import AssetBalance
     from rotkehlchen.chain.ethereum.manager import EthereumManager
     from rotkehlchen.db.dbhandler import DBHandler
 
@@ -140,7 +140,7 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
 
         # Insert requested events in DB
         all_events = []
-        for address in filter(lambda address: address in address_events, addresses):
+        for address in filter(lambda x: x in address_events, addresses):
             all_events.extend(address_events[address])
         self.database.add_amm_events(all_events)
 
@@ -252,9 +252,6 @@ class Sushiswap(AMMSwapPlatform, EthereumModule):
     def deactivate(self) -> None:
         self.database.delete_sushiswap_trades_data()
         self.database.delete_sushiswap_events_data()
-
-    def on_startup(self) -> None:
-        pass
 
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List['AssetBalance']]:
         pass

@@ -2,14 +2,16 @@
   <div>
     <v-menu
       id="user-dropdown"
+      content-class="user-dropdown__menu"
       transition="slide-y-transition"
-      max-width="250px"
+      max-width="180px"
+      min-width="180px"
       offset-y
     >
       <template #activator="{ on }">
         <menu-tooltip-button
           tooltip="Account"
-          class-name="user-dropdown secondary--text text--lighten-2"
+          class-name="user-dropdown secondary--text text--lighten-4"
           :on-menu="on"
         >
           <v-icon>mdi-account-circle</v-icon>
@@ -34,19 +36,7 @@
             {{ $t('user_dropdown.settings') }}
           </v-list-item-title>
         </v-list-item>
-        <v-list-item
-          key="privacy-mode"
-          class="user-dropdown__privacy-mode"
-          @click="togglePrivacyMode()"
-        >
-          <v-list-item-avatar>
-            <v-icon v-if="privacyMode" color="primary">mdi-eye-off</v-icon>
-            <v-icon v-else color="primary">mdi-eye</v-icon>
-          </v-list-item-avatar>
-          <v-list-item-title>
-            {{ $t('user_dropdown.toggle_privacy') }}
-          </v-list-item-title>
-        </v-list-item>
+
         <v-divider class="mx-4" />
         <v-list-item
           key="logout"
@@ -64,47 +54,54 @@
     </v-menu>
     <confirm-dialog
       :display="confirmLogout"
-      :title="$t('user_dropdown.confirmation.title')"
-      :message="$t('user_dropdown.confirmation.message')"
-      @confirm="logout()"
+      :title="$tc('user_dropdown.confirmation.title')"
+      :message="$tc('user_dropdown.confirmation.message')"
+      @confirm="logoutHandler()"
       @cancel="confirmLogout = false"
     />
   </div>
 </template>
 
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
-import { mapState } from 'vuex';
+import { defineComponent, ref } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
 import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
 
-@Component({
+import { useRoute, useRouter } from '@/composables/common';
+import { setupSession } from '@/composables/session';
+import { interop } from '@/electron-interop';
+
+export default defineComponent({
+  name: 'UserDropdown',
   components: {
     ConfirmDialog,
     MenuTooltipButton
   },
-  computed: {
-    ...mapState('session', ['privacyMode', 'username'])
-  }
-})
-export default class UserDropdown extends Vue {
-  privacyMode!: boolean;
-  confirmLogout: boolean = false;
+  setup() {
+    const { username, logout } = setupSession();
+    const confirmLogout = ref<boolean>(false);
+    const router = useRouter();
+    const route = useRoute();
 
-  togglePrivacyMode() {
-    this.$store.commit('session/privacyMode', !this.privacyMode);
-  }
+    const logoutHandler = async () => {
+      if (interop.isPackaged) {
+        await interop.clearPassword();
+      }
 
-  async logout() {
-    this.confirmLogout = false;
-    const { dispatch } = this.$store;
+      set(confirmLogout, false);
+      await logout();
 
-    await dispatch('session/logout');
-    if (this.$route.path !== '/') {
-      await this.$router.replace('/');
-    }
+      if (get(route).path !== '/') {
+        router.replace('/');
+      }
+    };
+
+    return {
+      confirmLogout,
+      username,
+      logoutHandler
+    };
   }
-}
+});
 </script>
-
-<style scoped></style>

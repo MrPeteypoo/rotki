@@ -10,12 +10,13 @@ from rotkehlchen.constants.resolver import (
     ethaddress_to_identifier,
     strethaddress_to_identifier,
 )
-from rotkehlchen.errors import DeserializationError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 
-from .typing import AssetType
+from .types import AssetType
 
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
@@ -96,11 +97,22 @@ WORLD_TO_BITTREX = {
     strethaddress_to_identifier('0x13339fD07934CD674269726EdF3B5ccEE9DD93de'): 'CURIO',
     'YCE': 'MYCE',
     strethaddress_to_identifier('0xF56b164efd3CFc02BA739b719B6526A6FA1cA32a'): 'CGT',
+    strethaddress_to_identifier('0x9b5161a41B58498Eb9c5FEBf89d60714089d2253'): 'MF1',
+    strethaddress_to_identifier('0x765f0C16D1Ddc279295c1a7C24B0883F62d33F75'): 'DTX',
+    strethaddress_to_identifier('0xfa5B75a9e13Df9775cf5b996A049D9cc07c15731'): 'VCK',
+    strethaddress_to_identifier('0x653430560bE843C4a3D143d0110e896c2Ab8ac0D'): '_MOF',
+    strethaddress_to_identifier('0x909E34d3f6124C324ac83DccA84b74398a6fa173'): 'ZKP',
+    strethaddress_to_identifier('0xa3EE21C306A700E682AbCdfe9BaA6A08F3820419'): 'CTC',
 }
 
 WORLD_TO_BITSTAMP = {
     strethaddress_to_identifier('0x50D1c9771902476076eCFc8B2A83Ad6b9355a4c9'): 'FTT',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
+    strethaddress_to_identifier('0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85'): 'FET',
+    strethaddress_to_identifier('0xCC8Fa225D80b9c7D42F96e9570156c65D6cAAa25'): 'SLP',
+    strethaddress_to_identifier('0xC581b735A1688071A1746c968e0798D642EDE491'): 'EURT',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0xa117000000f279D81A1D3cc75430fAA017FA5A2e'): 'ANT',
 }
 
 WORLD_TO_FTX = {
@@ -112,6 +124,15 @@ WORLD_TO_FTX = {
     strethaddress_to_identifier('0xCC8Fa225D80b9c7D42F96e9570156c65D6cAAa25'): 'SLP',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
     'MER-2': 'MER',
+    strethaddress_to_identifier('0x476c5E26a75bd202a9683ffD34359C0CC15be0fF'): 'SRM',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    'GENE': 'GENE',
+    strethaddress_to_identifier('0xC581b735A1688071A1746c968e0798D642EDE491'): 'EURT',
+    'LUNA-2': 'LUNA',
+    strethaddress_to_identifier('0x3392D8A60B77F8d3eAa4FB58F09d835bD31ADD29'): 'INDI',
+    strethaddress_to_identifier('0xAf5191B0De278C7286d6C7CC6ab6BB8A73bA2Cd6'): 'STG',
+    strethaddress_to_identifier('0x5c147e74D63B1D31AA3Fd78Eb229B65161983B2b'): 'WFLOW',
+    strethaddress_to_identifier('0x27702a26126e0B3702af63Ee09aC4d1A084EF628'): 'ALEPH',
 }
 
 WORLD_TO_POLONIEX = {
@@ -161,6 +182,14 @@ WORLD_TO_POLONIEX = {
     strethaddress_to_identifier('0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F'): 'GTC',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
     strethaddress_to_identifier('0xfB7B4564402E5500dB5bB6d63Ae671302777C75a'): 'DEXT',
+    strethaddress_to_identifier('0xCC8Fa225D80b9c7D42F96e9570156c65D6cAAa25'): 'SLP',
+    'SOL-2': 'SOL',
+    strethaddress_to_identifier('0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85'): 'FET',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0xba5BDe662c17e2aDFF1075610382B9B691296350'): 'RARE',
+    strethaddress_to_identifier('0x9E46A38F5DaaBe8683E10793b06749EEF7D733d1'): 'NCT',
+    strethaddress_to_identifier('0xa3EE21C306A700E682AbCdfe9BaA6A08F3820419'): 'CTC',
+    strethaddress_to_identifier('0xd2877702675e6cEb975b4A1dFf9fb7BAF4C91ea9'): 'WLUNA',
 }
 
 WORLD_TO_KRAKEN = {
@@ -193,7 +222,7 @@ WORLD_TO_KRAKEN = {
     # REP V2
     strethaddress_to_identifier('0x221657776846890989a759BA2973e427DfF5C9bB'): 'REPV2',
     'DAO': 'XDAO',
-    'MLN': 'XMLN',
+    strethaddress_to_identifier('0xec67005c4E498Ec7f55E092bd1d35cbC47C91892'): 'XMLN',
     'ICN': 'XICN',
     'GNO': 'GNO',
     'BCH': 'BCH',
@@ -273,6 +302,79 @@ WORLD_TO_KRAKEN = {
     'OXY': 'OXY',
     'RAY': 'RAY',
     strethaddress_to_identifier('0x6c5bA91642F10282b576d91922Ae6448C9d52f4E'): 'PHA',
+    'BNC': 'BNC',
+    strethaddress_to_identifier('0xd2877702675e6cEb975b4A1dFf9fb7BAF4C91ea9'): 'LUNA',
+    strethaddress_to_identifier('0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE'): 'SHIB',
+    'AVAX': 'AVAX',
+    'KILT': 'KILT',
+    'STEP': 'STEP',
+    'UST': 'UST',
+    'MNGO': 'MNGO',
+    'ORCA': 'ORCA',
+    'KINT': 'KINT',
+    'GLMR': 'GLMR',
+    'ATLAS': 'ATLAS',
+    'ACA': 'ACA',
+    'AIR': 'AIR',
+    'POLIS': 'POLIS',
+    'KIN': 'KIN',
+    'FIDA': 'FIDA',
+    'ASTR': 'ASTR',
+    'AKT': 'AKT',
+    'SGB': 'SGB',
+    'SBR': 'SBR',
+    strethaddress_to_identifier('0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0'): 'FXS',
+    strethaddress_to_identifier('0xc7283b66Eb1EB5FB86327f08e1B5816b0720212B'): 'TRIBE',
+    strethaddress_to_identifier('0x090185f2135308BaD17527004364eBcC2D37e5F6'): 'SPELL',
+    strethaddress_to_identifier('0x4e3FBD56CD56c3e72c1403e103b45Db9da5B9D2B'): 'CVX',
+    strethaddress_to_identifier('0xdBdb4d16EdA451D0503b854CF79D55697F90c8DF'): 'ALCX',
+    strethaddress_to_identifier('0xC18360217D8F7Ab5e7c516566761Ea12Ce7F9D72'): 'ENS',
+    strethaddress_to_identifier('0x1cEB5cB57C4D4E2b2433641b95Dd330A33185A44'): 'KP3R',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0x25f8087EAD173b73D6e8B84329989A8eEA16CF73'): 'YGG',
+    strethaddress_to_identifier('0xba5BDe662c17e2aDFF1075610382B9B691296350'): 'RARE',
+    'ICP': 'ICP',
+    strethaddress_to_identifier('0x0391D2021f89DC339F60Fff84546EA23E337750f'): 'BOND',
+    strethaddress_to_identifier('0xAC51066d7bEC65Dc4589368da368b212745d63E8'): 'ALICE',
+    strethaddress_to_identifier('0x7dE91B204C1C737bcEe6F000AAA6569Cf7061cb7'): 'XRT',
+    strethaddress_to_identifier('0x18aAA7115705e8be94bfFEBDE57Af9BFc265B998'): 'AUDIO',
+    strethaddress_to_identifier('0x4691937a7508860F876c9c0a2a617E7d9E945D4B'): 'WOO',
+    strethaddress_to_identifier('0x7420B4b9a0110cdC71fB720908340C03F9Bc03EC'): 'JASMY',
+    strethaddress_to_identifier('0x0996bFb5D057faa237640E2506BE7B4f9C46de0B'): 'RNDR',
+    strethaddress_to_identifier('0x4a220E6096B25EADb88358cb44068A3248254675'): 'QNT',
+    strethaddress_to_identifier('0x15D4c048F83bd7e37d49eA4C83a07267Ec4203dA'): 'GALA',
+    strethaddress_to_identifier('0xfB5c6815cA3AC72Ce9F5006869AE67f18bF77006'): 'PSTAKE',
+    strethaddress_to_identifier('0x4d224452801ACEd8B2F0aebE155379bb5D594381'): 'APE',
+    strethaddress_to_identifier('0x69af81e73A73B40adF4f3d4223Cd9b1ECE623074'): 'MASK',
+    strethaddress_to_identifier('0x595832F8FC6BF59c85C527fEC3740A1b7a361269'): 'POWR',
+    'SCRT': 'SCRT',
+    strethaddress_to_identifier('0x04Fa0d235C4abf4BcF4787aF4CF447DE572eF828'): 'UMA',
+    strethaddress_to_identifier('0x2e9d63788249371f1DFC918a52f8d799F4a38C94'): 'TOKE',
+    strethaddress_to_identifier('0x65Ef703f5594D2573eb71Aaf55BC0CB548492df4'): 'MULTI',
+    strethaddress_to_identifier('0xA4EED63db85311E22dF4473f87CcfC3DaDCFA3E3'): 'RBC',
+    strethaddress_to_identifier('0x3a4f40631a4f906c2BaD353Ed06De7A5D3fCb430'): 'PLA',
+    strethaddress_to_identifier('0xF17e65822b568B3903685a7c9F496CF7656Cc6C2'): 'BICO',
+    strethaddress_to_identifier('0x949D48EcA67b17269629c7194F4b727d4Ef9E5d6'): 'MC',
+    'MSOL': 'MSOL',
+    'SAMO': 'SAMO',
+    'GARI': 'GARI',
+    'GST-2': 'GST',
+    'GMT': 'GMT',
+    'CFG': 'CFG',
+    strethaddress_to_identifier('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'): 'WETH',
+    strethaddress_to_identifier('0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32'): 'LDO',
+    strethaddress_to_identifier('0x0b38210ea11411557c13457D4dA7dC6ea731B88a'): 'API3',
+    'RUNE': 'RUNE',
+    strethaddress_to_identifier('0x607F4C5BB672230e8672085532f7e901544a7375'): 'RLC',
+    strethaddress_to_identifier('0xCdF7028ceAB81fA0C6971208e83fa7872994beE5'): 'T',
+    strethaddress_to_identifier('0x32353A6C91143bfd6C7d363B546e62a9A2489A20'): 'AGLD',
+    strethaddress_to_identifier('0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85'): 'FET',
+    strethaddress_to_identifier('0x525A8F6F3Ba4752868cde25164382BfbaE3990e1'): 'NYM',
+    strethaddress_to_identifier('0x1776e1F26f98b1A5dF9cD347953a26dd3Cb46671'): 'NMR',
+    strethaddress_to_identifier('0xfA5047c9c78B8877af97BDcb85Db743fD7313d4a'): 'ROOK',
+    strethaddress_to_identifier('0x41e5560054824eA6B0732E656E3Ad64E20e94E45'): 'CVC',
+    strethaddress_to_identifier('0xe53EC727dbDEB9E2d5456c3be40cFF031AB40A55'): 'SUPER',
+    strethaddress_to_identifier('0x31c8EAcBFFdD875c74b94b077895Bd78CF1E64A3'): 'RAD',
 }
 
 WORLD_TO_BINANCE = {
@@ -321,6 +423,9 @@ WORLD_TO_BINANCE = {
     strethaddress_to_identifier('0x8f693ca8D21b157107184d29D398A8D082b38b76'): 'DATA',
     strethaddress_to_identifier('0x4824A7b64E3966B0133f4f4FFB1b9D6bEb75FFF7'): 'TCT',
     strethaddress_to_identifier('0xba5BDe662c17e2aDFF1075610382B9B691296350'): 'RARE',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0x27702a26126e0B3702af63Ee09aC4d1A084EF628'): 'ALEPH',
+    strethaddress_to_identifier('0xdAC17F958D2ee523a2206206994597C13D831ec7'): 'USDT',
 }
 
 WORLD_TO_BITFINEX = {
@@ -354,6 +459,10 @@ WORLD_TO_BITFINEX = {
     strethaddress_to_identifier('0x8f693ca8D21b157107184d29D398A8D082b38b76'): 'DAT',
     'XEC': 'BCHABC',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
+    # Spankchain is SPK in bitfinex
+    strethaddress_to_identifier('0x42d6622deCe394b54999Fbd73D108123806f6a18'): 'SPK',
+    strethaddress_to_identifier('0xC581b735A1688071A1746c968e0798D642EDE491'): 'EUT',
+    strethaddress_to_identifier('0xC4f6E93AEDdc11dc22268488465bAbcAF09399aC'): 'HIX',
 }
 
 WORLD_TO_KUCOIN = {
@@ -391,6 +500,18 @@ WORLD_TO_KUCOIN = {
     strethaddress_to_identifier('0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F'): 'GTC',
     strethaddress_to_identifier('0x50D1c9771902476076eCFc8B2A83Ad6b9355a4c9'): 'FTT',
     'EDG-2': 'EDG',
+    strethaddress_to_identifier('0x8f693ca8D21b157107184d29D398A8D082b38b76'): 'DATA',
+    strethaddress_to_identifier('0xAA2ce7Ae64066175E0B90497CE7d9c190c315DB4'): 'SUTER',
+    'RMRK': 'RMRK',
+    strethaddress_to_identifier('0xa117000000f279D81A1D3cc75430fAA017FA5A2e'): 'ANT',
+    strethaddress_to_identifier('0xADE00C28244d5CE17D72E40330B1c318cD12B7c3'): 'ADX',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0x3106a0a076BeDAE847652F42ef07FD58589E001f'): 'ADS',
+    strethaddress_to_identifier('0xa3EE21C306A700E682AbCdfe9BaA6A08F3820419'): 'CTC',
+    strethaddress_to_identifier('0x27702a26126e0B3702af63Ee09aC4d1A084EF628'): 'ALEPH',
+    strethaddress_to_identifier('0xDaF88906aC1DE12bA2b1D2f7bfC94E9638Ac40c4'): 'EPK',
+    'ARN': 'ARNM',
+    strethaddress_to_identifier('0xC775C0C30840Cb9F51e21061B054ebf1A00aCC29'): 'PSL',
 }
 
 WORLD_TO_ICONOMI = {
@@ -418,6 +539,7 @@ WORLD_TO_ICONOMI = {
     strethaddress_to_identifier('0xF970b8E36e23F7fC3FD752EeA86f8Be8D83375A6'): 'RCN',
     'ONE-2': 'ONE',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
+    strethaddress_to_identifier('0x3432B6A60D23Ca0dFCa7761B7ab56459D9C964D0'): 'FXS',
 }
 
 WORLD_TO_COINBASE_PRO = {
@@ -428,6 +550,14 @@ WORLD_TO_COINBASE_PRO = {
     strethaddress_to_identifier('0xd2877702675e6cEb975b4A1dFf9fb7BAF4C91ea9'): 'WLUNA',
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
     strethaddress_to_identifier('0x0391D2021f89DC339F60Fff84546EA23E337750f'): 'BOND',
+    strethaddress_to_identifier('0x2565ae0385659badCada1031DB704442E1b69982'): 'ASM',
+    strethaddress_to_identifier('0xF57e7e7C23978C3cAEC3C3548E3D615c346e79fF'): 'IMX',
+    strethaddress_to_identifier('0x4C19596f5aAfF459fA38B0f7eD92F11AE6543784'): 'TRU',
+    strethaddress_to_identifier('0xa0246c9032bC3A600820415aE600c6388619A14D'): 'FARM',
+    'STX-2': 'STX',
+    strethaddress_to_identifier('0x9E46A38F5DaaBe8683E10793b06749EEF7D733d1'): 'NCT',
+    strethaddress_to_identifier('0xec67005c4E498Ec7f55E092bd1d35cbC47C91892'): 'MLN',
+    strethaddress_to_identifier('0x221657776846890989a759BA2973e427DfF5C9bB'): 'REP',
 }
 
 WORLD_TO_COINBASE = {
@@ -435,6 +565,12 @@ WORLD_TO_COINBASE = {
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
     strethaddress_to_identifier('0x32353A6C91143bfd6C7d363B546e62a9A2489A20'): 'AGLD',
     strethaddress_to_identifier('0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85'): 'FET',
+    strethaddress_to_identifier('0xDe30da39c46104798bB5aA3fe8B9e0e1F348163F'): 'GTC',
+    strethaddress_to_identifier('0x4C19596f5aAfF459fA38B0f7eD92F11AE6543784'): 'TRU',
+    strethaddress_to_identifier('0xa0246c9032bC3A600820415aE600c6388619A14D'): 'FARM',
+    'STX-2': 'STX',
+    strethaddress_to_identifier('0xec67005c4E498Ec7f55E092bd1d35cbC47C91892'): 'MLN',
+    strethaddress_to_identifier('0x221657776846890989a759BA2973e427DfF5C9bB'): 'REP',
 }
 
 WORLD_TO_UPHOLD = {
@@ -492,12 +628,32 @@ WORLD_TO_UPHOLD = {
 WORLD_TO_GEMINI = {
     strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
     strethaddress_to_identifier('0xCC8Fa225D80b9c7D42F96e9570156c65D6cAAa25'): 'SLP',
+    strethaddress_to_identifier('0xba5BDe662c17e2aDFF1075610382B9B691296350'): 'RARE',
+    strethaddress_to_identifier('0x18aAA7115705e8be94bfFEBDE57Af9BFc265B998'): 'AUDIO',
+    strethaddress_to_identifier('0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85'): 'FET',
+    strethaddress_to_identifier('0xd2877702675e6cEb975b4A1dFf9fb7BAF4C91ea9'): 'LUNA',
+    'SOL-2': 'SOL',
+    strethaddress_to_identifier('0x9E32b13ce7f2E80A01932B42553652E053D6ed8e'): 'METI',
 }
 
 WORLD_TO_NEXO = {
     strethaddress_to_identifier('0xB62132e35a6c13ee1EE0f84dC5d40bad8d815206'): 'NEXONEXO',
     'GBP': 'GBPX',
     strethaddress_to_identifier('0xdAC17F958D2ee523a2206206994597C13D831ec7'): 'USDTERC',
+}
+
+WORLD_TO_BITPANDA = {
+    'IOTA': 'MIOTA',
+    strethaddress_to_identifier('0x536381a8628dBcC8C70aC9A30A7258442eAb4c92'): 'PAN',  # Pantos
+    strethaddress_to_identifier('0xa117000000f279D81A1D3cc75430fAA017FA5A2e'): 'ANT',  # ANT v2
+    strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',  # AXS v2
+    'SOL-2': 'SOL',  # Solana
+    'LUNA-2': 'LUNA',  # Luna Terra
+}
+
+WORLD_TO_CRYPTOCOM = {
+    strethaddress_to_identifier('0xBB0E17EF65F82Ab018d8EDd776e8DD940327B28b'): 'AXS',
+    'LUNA-2': 'LUNA',
 }
 
 # Create a generic variable that can be 'Asset', or any subclass.
@@ -513,7 +669,7 @@ class Asset():
     name: str = field(init=False)
     symbol: str = field(init=False)
     asset_type: AssetType = field(init=False)
-    started: Timestamp = field(init=False)
+    started: Optional[Timestamp] = field(init=False)
     forked: Optional['Asset'] = field(init=False)
     swapped_for: Optional['Asset'] = field(init=False)
     # None means no special mapping. '' means not supported
@@ -675,6 +831,42 @@ class Asset():
             return self.identifier < other
         # else
         raise ValueError(f'Invalid comparison of asset with {type(other)}')
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns an exportable json representation for an asset"""
+        forked, swapped_for = None, None
+        if self.forked is not None:
+            forked = self.forked.identifier
+        if self.swapped_for is not None:
+            swapped_for = self.swapped_for.identifier
+
+        asset_dict: Dict[str, Any] = {
+            'identifier': self.identifier,
+            'name': self.name,
+            'symbol': self.symbol,
+            'asset_type': str(self.asset_type),
+            'started': self.started,
+            'forked': forked,
+            'swapped_for': swapped_for,
+            'cryptocompare': self.cryptocompare,
+            'coingecko': self.coingecko,
+        }
+
+        if self.is_eth_token():
+            asset_as_token = EthereumToken.from_asset(self)
+            if asset_as_token is None:
+                return asset_dict
+            underlying = None
+            if asset_as_token.underlying_tokens is not None:
+                underlying = [token.serialize() for token in asset_as_token.underlying_tokens]
+            asset_dict |= {
+                'ethereum_address': asset_as_token.ethereum_address,
+                'decimals': asset_as_token.decimals,
+                'protocol': asset_as_token.protocol,
+                'underlying_tokens': underlying,
+            }
+
+        return asset_dict
 
     @classmethod
     def initialize(

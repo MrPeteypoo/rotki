@@ -1,6 +1,6 @@
 ﻿<template>
-  <div class="explorers">
-    <div class="text-h6 mt-4">
+  <div class="explorers mt-8">
+    <div class="text-h6">
       {{ $t('explorers.title') }}
     </div>
     <div class="text-subtitle-1">
@@ -74,7 +74,7 @@ import { Component, Mixins } from 'vue-property-decorator';
 import { mapState } from 'vuex';
 import { explorerUrls } from '@/components/helper/asset-urls';
 import SettingsMixin from '@/mixins/settings-mixin';
-import { ExplorersSettings } from '@/store/settings/types';
+import { ExplorersSettings } from '@/types/frontend-settings';
 
 const ETC = 'ETC' as const;
 

@@ -1,52 +1,86 @@
 <template>
-  <v-row align="center" no-gutters class="flex-nowrap">
-    <v-col cols="auto">
-      <v-avatar left size="28px">
-        <asset-icon size="24px" :identifier="account.chain" />
-      </v-avatar>
-    </v-col>
+  <v-tooltip top open-delay="400">
+    <template #activator="{ on }">
+      <v-row align="center" no-gutters class="flex-nowrap" v-on="on">
+        <v-col cols="auto">
+          <v-avatar left size="28px">
+            <asset-icon size="24px" :identifier="account.chain" />
+          </v-avatar>
+        </v-col>
 
-    <v-col class="font-weight-bold mr-1 account-display__label text-no-wrap">
-      <span class="text-truncate">
-        {{ account.label }}
-      </span>
-    </v-col>
-    <v-col
-      cols="auto"
-      :class="privacyMode ? 'blur-content' : ''"
-      class="text-no-wrap"
-    >
-      ({{ truncateAddress(address) }})
-    </v-col>
-  </v-row>
+        <v-col
+          class="font-weight-bold mr-1 account-display__label text-no-wrap"
+        >
+          <span class="text-truncate">
+            {{ account.label }}
+          </span>
+        </v-col>
+        <v-col
+          cols="auto"
+          :class="{ 'blur-content': !shouldShowAmount }"
+          class="text-no-wrap"
+        >
+          <div v-if="ensName">{{ ensName }}</div>
+          <div v-else>({{ truncateAddress(address, 6) }})</div>
+        </v-col>
+      </v-row>
+    </template>
+    <div>
+      {{ account.address }}
+    </div>
+  </v-tooltip>
 </template>
 
 <script lang="ts">
 import { GeneralAccount } from '@rotki/common/lib/account';
-import { Component, Mixins, Prop } from 'vue-property-decorator';
-import { mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import AssetIcon from '@/components/helper/display/icons/AssetIcon.vue';
+import { setupDisplayData } from '@/composables/session';
 import { truncateAddress } from '@/filters';
-import ScrambleMixin from '@/mixins/scramble-mixin';
-import { randomHex } from '@/typing/utils';
+import { useEnsNamesStore } from '@/store/balances';
+import { randomHex } from '@/utils/data';
 
-@Component({
+export default defineComponent({
+  name: 'AccountDisplay',
   components: { AssetIcon },
-  computed: { ...mapState('session', ['privacyMode']) }
-})
-export default class AccountDisplay extends Mixins(ScrambleMixin) {
-  @Prop({ required: true })
-  account!: GeneralAccount;
-  privacyMode!: boolean;
-  readonly truncateAddress = truncateAddress;
+  props: {
+    account: { required: true, type: Object as PropType<GeneralAccount> }
+  },
+  setup(props) {
+    const { account } = toRefs(props);
+    const { scrambleData, shouldShowAmount } = setupDisplayData();
 
-  get address(): string {
-    if (!this.scrambleData) {
-      return this.account.address;
-    }
-    return randomHex();
+    const { ensNameSelector } = useEnsNamesStore();
+
+    const address = computed<string>(() => {
+      if (!get(scrambleData)) {
+        return get(account).address;
+      }
+      return randomHex();
+    });
+
+    const ensName = computed<string | null>(() => {
+      if (!get(scrambleData)) {
+        return get(ensNameSelector(get(account).address));
+      }
+
+      return null;
+    });
+
+    return {
+      ensName,
+      address,
+      truncateAddress,
+      shouldShowAmount
+    };
   }
-}
+});
 </script>
 
 <style scoped lang="scss">

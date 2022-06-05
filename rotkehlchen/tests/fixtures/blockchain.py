@@ -3,10 +3,12 @@ from typing import List, Optional, Sequence
 import pytest
 
 from rotkehlchen.chain.avalanche.manager import AvalancheManager
+from rotkehlchen.chain.ethereum.decoding import EVMTransactionDecoder
 from rotkehlchen.chain.ethereum.manager import EthereumManager, NodeName
+from rotkehlchen.chain.ethereum.transactions import EthTransactions
 from rotkehlchen.chain.manager import ChainManager
 from rotkehlchen.chain.substrate.manager import SubstrateChainProperties, SubstrateManager
-from rotkehlchen.chain.substrate.typing import KusamaAddress, PolkadotAddress, SubstrateChain
+from rotkehlchen.chain.substrate.types import KusamaAddress, PolkadotAddress, SubstrateChain
 from rotkehlchen.constants.assets import A_DOT
 from rotkehlchen.db.settings import DEFAULT_BTC_DERIVATION_GAP_LIMIT
 from rotkehlchen.db.utils import BlockchainAccounts
@@ -24,7 +26,7 @@ from rotkehlchen.tests.utils.substrate import (
     POLKADOT_SS58_FORMAT,
     wait_until_all_substrate_nodes_connected,
 )
-from rotkehlchen.typing import BTCAddress, ChecksumEthAddress
+from rotkehlchen.types import BTCAddress, ChecksumEthAddress
 
 
 @pytest.fixture(name='number_of_eth_accounts')
@@ -130,6 +132,32 @@ def fixture_ethereum_manager(
     )
 
     return manager
+
+
+@pytest.fixture(name='evm_transaction_decoder')
+def fixture_evm_transaction_decoder(
+        database,
+        ethereum_manager,
+        eth_transactions,
+        function_scope_messages_aggregator,
+):
+    return EVMTransactionDecoder(
+        database=database,
+        ethereum_manager=ethereum_manager,
+        eth_transactions=eth_transactions,
+        msg_aggregator=function_scope_messages_aggregator,
+    )
+
+
+@pytest.fixture(name='eth_transactions')
+def fixture_eth_transactions(
+        database,
+        ethereum_manager,
+):  # noqa: E501
+    return EthTransactions(
+        ethereum=ethereum_manager,
+        database=database,
+    )
 
 
 @pytest.fixture(name='ksm_rpc_endpoint')

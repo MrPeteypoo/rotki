@@ -1,6 +1,25 @@
 import Vue from 'vue';
+import {
+  VAlert,
+  VBtn,
+  VBtnToggle,
+  VCol,
+  VColorPicker,
+  VContainer,
+  VDataTableHeader,
+  VDialog,
+  VDivider,
+  VForm,
+  VIcon,
+  VRow,
+  VSimpleTable,
+  VSpacer,
+  VTextField,
+  VTooltip
+} from 'vuetify/lib/components';
 import AssetLink from '@/components/assets/AssetLink.vue';
 import PaginatedCards from '@/components/common/PaginatedCards.vue';
+import ExportSnapshotDialog from '@/components/dashboard/ExportSnapshotDialog.vue';
 import DefiProtocolIcon from '@/components/defi/display/DefiProtocolIcon.vue';
 import UniswapPoolDetails from '@/components/defi/uniswap/UniswapPoolDetails.vue';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
@@ -23,11 +42,36 @@ import HashLink from '@/components/helper/HashLink.vue';
 import LiquidityPoolSelector from '@/components/helper/LiquidityPoolSelector.vue';
 import RefreshHeader from '@/components/helper/RefreshHeader.vue';
 import TableExpandContainer from '@/components/helper/table/TableExpandContainer.vue';
+import TableFilter from '@/components/history/filtering/TableFilter.vue';
 import LocationDisplay from '@/components/history/LocationDisplay.vue';
 import TradeLocationSelector from '@/components/history/TradeLocationSelector.vue';
+import AmountInput from '@/components/inputs/AmountInput.vue';
 import AssetSelect from '@/components/inputs/AssetSelect.vue';
 import StatisticsGraphSettings from '@/components/settings/StatisticsGraphSettings.vue';
 import CardTitle from '@/components/typography/CardTitle.vue';
+
+/**
+ * Vuetify components that are used in the premium components
+ */
+const vuetifyRegister = () => {
+  // version 17 - 1.24
+  Vue.component('VCol', VCol);
+  Vue.component('VRow', VRow);
+  Vue.component('VTooltip', VTooltip);
+  Vue.component('VTextField', VTextField);
+  Vue.component('VIcon', VIcon);
+  Vue.component('VBtn', VBtn);
+  Vue.component('VBtnToggle', VBtnToggle);
+  Vue.component('VAlert', VAlert);
+  Vue.component('VContainer', VContainer);
+  Vue.component('VSimpleTable', VSimpleTable);
+  Vue.component('VDialog', VDialog);
+  Vue.component('VDivider', VDivider);
+  Vue.component('VForm', VForm);
+  Vue.component('VSpacer', VSpacer);
+  Vue.component('VColorPicker', VColorPicker);
+  Vue.component('VDataTableHeader', VDataTableHeader);
+};
 
 export function registerComponents() {
   // Globally registered components are also provided to the premium components.
@@ -60,6 +104,7 @@ export function registerComponents() {
   Vue.component('LiquidityPoolSelector', LiquidityPoolSelector);
   Vue.component('BalancerPoolAsset', BalancerPoolAsset);
   Vue.component('TradeLocationSelector', TradeLocationSelector);
+  Vue.component('TableFilter', TableFilter);
   // version 10
   Vue.component('DataTable', DataTable);
   Vue.component('TableExpandContainer', TableExpandContainer);
@@ -75,4 +120,9 @@ export function registerComponents() {
   Vue.component('AssetLink', AssetLink);
   // Version 15 - 1.21.2
   Vue.component('StatisticsGraphSettings', StatisticsGraphSettings);
+  // Version 16 - 1.23
+  Vue.component('AmountInput', AmountInput);
+  // Version 17 - 1.24
+  Vue.component('ExportSnapshotDialog', ExportSnapshotDialog);
+  vuetifyRegister();
 }

@@ -2,18 +2,18 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.exchanges.data_structures import Trade, deserialize_trade, trades_from_dictlist
 from rotkehlchen.fval import FVal
-from rotkehlchen.typing import Location, Timestamp, TradeType
+from rotkehlchen.types import Location, Timestamp, TradeType
 from rotkehlchen.utils.serialization import rlk_jsondumps
 
 
 def test_trade_type_to_string():
     assert str(TradeType.BUY) == 'buy'
     assert str(TradeType.SELL) == 'sell'
-    assert str(TradeType.SETTLEMENT_BUY) == 'settlement_buy'
-    assert str(TradeType.SETTLEMENT_SELL) == 'settlement_sell'
+    assert str(TradeType.SETTLEMENT_BUY) == 'settlement buy'
+    assert str(TradeType.SETTLEMENT_SELL) == 'settlement sell'
 
 
 raw_trade1 = {
@@ -121,7 +121,7 @@ def test_serialize_deserialize_trade():
         link='a link can be here',
         notes='notes can be here',
     )
-    serialized_trade = rlk_jsondumps(trade._asdict())
+    serialized_trade = rlk_jsondumps(trade.serialize())
     assert serialized_trade == rlk_jsondumps(raw_trade2)
     deserialized_trade = deserialize_trade(raw_trade2)
     assert deserialized_trade == trade

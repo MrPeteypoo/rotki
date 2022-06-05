@@ -11,7 +11,7 @@ rotkehlchen_py_dist/
 rotkehlchen.egg-info/
 rotkehlchen-linux-x64
 .DS_Store
-rotkehlchen.log
+*rotkehlchen.log
 tools/data_faker/data_faker.log
 .pytest_cache
 ui/.ignore
@@ -25,3 +25,6 @@ chromedriverlog.txt
 .vscode/settings.json
 sqlcipher.dll
 libcrypto-1_1-x64.dll
+/.run/
+frontend/logs
+.venv

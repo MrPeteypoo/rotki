@@ -12,6 +12,24 @@
         single-line
         hide-details
       />
+      <v-menu
+        id="dashboard-asset-table__column-filter"
+        transition="slide-y-transition"
+        max-width="250px"
+        nudge-bottom="20"
+        offset-y
+      >
+        <template #activator="{ on }">
+          <menu-tooltip-button
+            :tooltip="$t('dashboard_asset_table.select_visible_columns')"
+            class-name="ml-4 dashboard-asset-table__column-filter__button"
+            :on-menu="on"
+          >
+            <v-icon>mdi-dots-vertical</v-icon>
+          </menu-tooltip-button>
+        </template>
+        <visible-columns-selector :group="tableType" :group-label="title" />
+      </v-menu>
     </template>
     <data-table
       class="dashboard-asset-table__balances"
@@ -23,24 +41,6 @@
       :custom-sort="sortItems"
       :custom-filter="assetFilter"
     >
-      <template #header.usdValue>
-        <div class="text-no-wrap">
-          {{
-            $t('dashboard_asset_table.headers.value', {
-              symbol: currencySymbol
-            })
-          }}
-        </div>
-      </template>
-      <template #header.usdPrice>
-        <div class="text-no-wrap">
-          {{
-            $t('dashboard_asset_table.headers.price', {
-              symbol: currencySymbol
-            })
-          }}
-        </div>
-      </template>
       <template #item.asset="{ item }">
         <asset-details opens-details :asset="item.asset" />
       </template>
@@ -66,8 +66,11 @@
         />
         <span v-else>-</span>
       </template>
-      <template #item.percentage="{ item }">
-        <percentage-display :value="percentage(item.usdValue)" />
+      <template #item.percentageOfTotalNetValue="{ item }">
+        <percentage-display :value="percentageOfTotalNetValue(item.usdValue)" />
+      </template>
+      <template #item.percentageOfTotalCurrentGroup="{ item }">
+        <percentage-display :value="percentageOfCurrentGroup(item.usdValue)" />
       </template>
       <template #no-results>
         <span class="grey--text text--darken-2">
@@ -78,37 +81,22 @@
           }}
         </span>
       </template>
-      <template v-if="balances.length > 0 && search.length < 1" #body.append>
-        <tr
-          v-if="$vuetify.breakpoint.smAndUp"
-          class="dashboard-asset-table__balances__total font-weight-medium"
+      <template
+        v-if="balances.length > 0 && search.length < 1"
+        #body.append="{ isMobile }"
+      >
+        <row-append
+          label-colspan="3"
+          :label="$t('dashboard_asset_table.total')"
+          :right-patch-colspan="tableHeaders.length - 4"
+          :is-mobile="isMobile"
         >
-          <td colspan="3">{{ $t('dashboard_asset_table.total') }}</td>
-          <td class="text-end">
-            <amount-display
-              :fiat-currency="currencySymbol"
-              :value="total"
-              show-currency="symbol"
-            />
-          </td>
-          <td />
-        </tr>
-        <tr v-else>
-          <td>
-            <v-row class="justify-space-between">
-              <v-col cols="auto" class="font-weight-medium">
-                {{ $t('dashboard_asset_table.total') }}
-              </v-col>
-              <v-col cols="auto">
-                <amount-display
-                  :fiat-currency="currencySymbol"
-                  :value="total"
-                  show-currency="symbol"
-                />
-              </v-col>
-            </v-row>
-          </td>
-        </tr>
+          <amount-display
+            :fiat-currency="currencySymbol"
+            :value="total"
+            show-currency="symbol"
+          />
+        </row-append>
       </template>
     </data-table>
   </card>
@@ -120,80 +108,143 @@ import {
   computed,
   defineComponent,
   PropType,
+  Ref,
   ref,
   toRefs
 } from '@vue/composition-api';
-import {
-  setupAssetInfoRetrieval,
-  setupExchangeRateGetter
-} from '@/composables/balances';
-import { currency, floatingPrecision } from '@/composables/session';
+import { get } from '@vueuse/core';
+import { DataTableHeader } from 'vuetify';
+import VisibleColumnsSelector from '@/components/dashboard/VisibleColumnsSelector.vue';
+import MenuTooltipButton from '@/components/helper/MenuTooltipButton.vue';
+import RowAppend from '@/components/helper/RowAppend.vue';
+import { setupExchangeRateGetter } from '@/composables/balances';
+import { setupGeneralSettings } from '@/composables/session';
+import { setupSettings } from '@/composables/settings';
 import { totalNetWorthUsd } from '@/composables/statistics';
+import { CURRENCY_USD } from '@/data/currencies';
 import { aggregateTotal } from '@/filters';
 import i18n from '@/i18n';
+import { useAssetInfoRetrieval } from '@/store/assets';
 import { Nullable } from '@/types';
+import {
+  DashboardTablesVisibleColumns,
+  DashboardTableType
+} from '@/types/frontend-settings';
+import { TableColumn } from '@/types/table-column';
 import { getSortItems } from '@/utils/assets';
 
-const tableHeaders = [
-  {
-    text: i18n.t('dashboard_asset_table.headers.asset').toString(),
-    value: 'asset',
-    cellClass: 'asset-info'
-  },
-  {
-    text: i18n.t('dashboard_asset_table.headers.price').toString(),
-    value: 'usdPrice',
-    align: 'end'
-  },
-  {
-    text: i18n.t('dashboard_asset_table.headers.amount'),
-    value: 'amount',
-    align: 'end',
-    cellClass: 'asset-divider'
-  },
-  {
-    text: i18n.t('dashboard_asset_table.headers.value').toString(),
-    value: 'usdValue',
-    align: 'end',
-    class: 'text-no-wrap'
-  },
-  {
-    text: i18n.t('dashboard_asset_table.headers.percentage').toString(),
-    value: 'percentage',
-    align: 'end',
-    cellClass: 'asset-percentage',
-    class: 'text-no-wrap',
-    sortable: false
-  }
-];
+const tableHeaders = (
+  totalNetWorthUsd: Ref<BigNumber>,
+  currencySymbol: Ref<string>,
+  title: Ref<string>,
+  dashboardTablesVisibleColumns: Ref<DashboardTablesVisibleColumns>,
+  tableType: Ref<DashboardTableType>
+) =>
+  computed<DataTableHeader[]>(() => {
+    const visibleColumns = get(dashboardTablesVisibleColumns)[get(tableType)];
+
+    const headers: DataTableHeader[] = [
+      {
+        text: i18n.t('dashboard_asset_table.headers.asset').toString(),
+        value: 'asset',
+        class: 'text-no-wrap'
+      },
+      {
+        text: i18n
+          .t('dashboard_asset_table.headers.price', {
+            symbol: get(currencySymbol)
+          })
+          .toString(),
+        value: 'usdPrice',
+        align: 'end',
+        class: 'text-no-wrap'
+      },
+      {
+        text: i18n.t('dashboard_asset_table.headers.amount').toString(),
+        value: 'amount',
+        align: 'end',
+        width: '99%'
+      },
+      {
+        text: i18n
+          .t('dashboard_asset_table.headers.value', {
+            symbol: get(currencySymbol)
+          })
+          .toString(),
+        value: 'usdValue',
+        align: 'end',
+        class: 'text-no-wrap'
+      }
+    ];
+
+    if (visibleColumns.includes(TableColumn.PERCENTAGE_OF_TOTAL_NET_VALUE)) {
+      headers.push({
+        text: get(totalNetWorthUsd).gt(0)
+          ? i18n
+              .t('dashboard_asset_table.headers.percentage_of_total_net_value')
+              .toString()
+          : i18n.t('dashboard_asset_table.headers.percentage_total').toString(),
+        value: 'percentageOfTotalNetValue',
+        align: 'end',
+        cellClass: 'asset-percentage',
+        class: 'text-no-wrap',
+        sortable: false
+      });
+    }
+
+    if (
+      visibleColumns.includes(TableColumn.PERCENTAGE_OF_TOTAL_CURRENT_GROUP)
+    ) {
+      headers.push({
+        text: i18n
+          .t(
+            'dashboard_asset_table.headers.percentage_of_total_current_group',
+            {
+              group: get(title)
+            }
+          )
+          .toString(),
+        value: 'percentageOfTotalCurrentGroup',
+        align: 'end',
+        cellClass: 'asset-percentage',
+        class: 'text-no-wrap',
+        sortable: false
+      });
+    }
+
+    return headers;
+  });
 
 const DashboardAssetTable = defineComponent({
   name: 'DashboardAssetTable',
+  components: { RowAppend, VisibleColumnsSelector, MenuTooltipButton },
   props: {
     loading: { required: false, type: Boolean, default: false },
     title: { required: true, type: String },
     balances: {
       required: true,
       type: Array as PropType<AssetBalanceWithPrice[]>
-    }
+    },
+    tableType: { required: true, type: String as PropType<DashboardTableType> }
   },
   setup(props) {
-    const { balances } = toRefs(props);
+    const { balances, title, tableType } = toRefs(props);
     const search = ref('');
 
-    const currencySymbol = currency;
+    const { currencySymbol } = setupGeneralSettings();
+
     const exchangeRate = setupExchangeRateGetter();
+    const totalInUsd = computed(() => {
+      return aggregateTotal(get(balances), CURRENCY_USD, new BigNumber(1));
+    });
     const total = computed(() => {
-      const mainCurrency = currencySymbol.value;
-      return aggregateTotal(
-        balances.value,
-        mainCurrency,
-        exchangeRate(mainCurrency) ?? new BigNumber(1),
-        floatingPrecision.value
+      const mainCurrency = get(currencySymbol);
+      return get(totalInUsd).multipliedBy(
+        exchangeRate(mainCurrency) ?? new BigNumber(1)
       );
     });
 
-    const { getAssetSymbol, getAssetName } = setupAssetInfoRetrieval();
+    const { getAssetSymbol, getAssetName } = useAssetInfoRetrieval();
 
     const assetFilter = (
       _value: Nullable<string>,
@@ -209,20 +260,42 @@ const DashboardAssetTable = defineComponent({
       return symbol.indexOf(keyword) >= 0 || name.indexOf(keyword) >= 0;
     };
 
-    const percentage = (value: BigNumber) => {
-      return value.div(totalNetWorthUsd.value).multipliedBy(100).toFixed(2);
+    const calculatePercentage = (value: BigNumber, divider: BigNumber) => {
+      const percentage = divider.isZero()
+        ? 0
+        : value.div(divider).multipliedBy(100);
+      return percentage.toFixed(2);
     };
 
-    const { getAssetInfo } = setupAssetInfoRetrieval();
+    const percentageOfTotalNetValue = (value: BigNumber) => {
+      const netWorth = get(totalNetWorthUsd);
+      const total = netWorth.lt(0) ? get(totalInUsd) : netWorth;
+      return calculatePercentage(value, total);
+    };
+
+    const percentageOfCurrentGroup = (value: BigNumber) => {
+      return calculatePercentage(value, get(totalInUsd));
+    };
+
+    const { getAssetInfo } = useAssetInfoRetrieval();
+
+    const { dashboardTablesVisibleColumns } = setupSettings();
+
     return {
       search,
       total,
-      tableHeaders,
+      tableHeaders: tableHeaders(
+        totalNetWorthUsd,
+        currencySymbol,
+        title,
+        dashboardTablesVisibleColumns,
+        tableType
+      ),
       currencySymbol,
-      floatingPrecision,
       sortItems: getSortItems(getAssetInfo),
       assetFilter,
-      percentage
+      percentageOfTotalNetValue,
+      percentageOfCurrentGroup
     };
   }
 });
@@ -231,41 +304,9 @@ export default DashboardAssetTable;
 </script>
 
 <style scoped lang="scss">
-::v-deep {
-  .asset-divider {
-    width: 100%;
-
-    @media (min-width: 2000px) {
-      width: 50%;
-    }
-  }
-
-  .asset-info {
-    @media (min-width: 2000px) {
-      width: 300px;
-    }
-  }
-
-  .asset-percentage {
-    width: 120px;
-
-    @media (min-width: 2000px) {
-      width: 200px;
-    }
-  }
-}
-
 .dashboard-asset-table {
   &__search {
     max-width: 450px;
-  }
-
-  &__balances {
-    &__total {
-      &:hover {
-        background-color: transparent !important;
-      }
-    }
   }
 }
 </style>

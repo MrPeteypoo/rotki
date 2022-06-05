@@ -1,13 +1,13 @@
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Union, cast, overload
 
 import requests
 from eth_typing import ChecksumAddress
-from typing_extensions import Literal
 from web3 import Web3
 
-from rotkehlchen.accounting.structures import AssetBalance, Balance, DefiEvent, DefiEventType
+from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
+from rotkehlchen.accounting.structures.defi import DefiEvent, DefiEventType
 from rotkehlchen.chain.ethereum.graph import (
     GRAPH_QUERY_LIMIT,
     SUBGRAPH_REMOTE_ERROR_MSG,
@@ -22,7 +22,8 @@ from rotkehlchen.chain.ethereum.utils import (
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_ADX, A_DAI, A_USD
 from rotkehlchen.constants.ethereum import EthereumConstants
-from rotkehlchen.errors import DeserializationError, ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.misc import ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.inquirer import Inquirer
@@ -32,13 +33,13 @@ from rotkehlchen.serialization.deserialize import (
     deserialize_ethereum_address,
     deserialize_timestamp,
 )
-from rotkehlchen.typing import ChecksumEthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.misc import ts_now
 
 from .graph import BONDS_QUERY, CHANNEL_WITHDRAWS_QUERY, UNBOND_REQUESTS_QUERY, UNBONDS_QUERY
-from .typing import (
+from .types import (
     TOM_POOL_ID,
     AdexEvent,
     AdexEventType,
@@ -249,7 +250,6 @@ class Adex(EthereumModule):
             ) from e
 
         try:
-            # tx_hash:identity_address:log_index
             tx_hash, tx_address, tx_log_index = event_id.split(':')
             log_index = int(tx_log_index)
         except (AttributeError, ValueError) as e:
@@ -350,7 +350,6 @@ class Adex(EthereumModule):
             if case == 'bond':
                 tx_hash = event_id
             elif case in ('unbond', 'unbond_request'):
-                # tx_hash:address
                 tx_hash, tx_address = event_id.split(':')
             else:
                 raise AssertionError(f'Unexpected deserialization case: {case}.')
@@ -764,7 +763,7 @@ class Adex(EthereumModule):
         return generate_address_via_create2(
             address=IDENTITY_FACTORY_ADDR,
             salt=CREATE2_SALT,
-            init_code=IDENTITY_PROXY_INIT_CODE.format(signer_address=address),
+            init_code=IDENTITY_PROXY_INIT_CODE.format(signer_address=address.removeprefix('0x')),
         )
 
     def _update_events_value(
@@ -953,9 +952,6 @@ class Adex(EthereumModule):
         return events
 
     # -- Methods following the EthereumModule interface -- #
-    def on_startup(self) -> None:
-        pass
-
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List[AssetBalance]]:
         """When an account is added for adex check its balances"""
         balance = self.staking_pool.call(self.ethereum, 'balanceOf', arguments=[address])

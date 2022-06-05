@@ -8,14 +8,7 @@
   >
     <div v-if="summary.liabilities">
       <span
-        class="
-          text-subtitle-1
-          font-weight-bold
-          pb-2
-          d-flex
-          flex-row
-          justify-space-between
-        "
+        class="text-subtitle-1 font-weight-bold pb-2 d-flex flex-row justify-space-between"
       >
         {{ $t('overview.stat_card.headers.borrowing') }}
         <v-btn :to="summary.liabilitiesUrl" icon small color="primary">
@@ -36,14 +29,7 @@
     </div>
     <div v-if="summary.deposits">
       <div
-        class="
-          pb-2
-          d-flex
-          flex-row
-          justify-space-between
-          text-subtitle-1
-          font-weight-medium
-        "
+        class="pb-2 d-flex flex-row justify-space-between text-subtitle-1 font-weight-medium"
       >
         {{ $t('overview.stat_card.headers.lending') }}
         <v-btn
@@ -121,6 +107,7 @@ import {
   ref,
   toRefs
 } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import DefiAsset from '@/components/defi/DefiAsset.vue';
 import InfoRow from '@/components/defi/display/InfoRow.vue';
 import StatCard from '@/components/display/StatCard.vue';
@@ -139,15 +126,15 @@ export default defineComponent({
     const details = ref(false);
     const { summary } = toRefs(props);
     const icon = computed(() => {
-      const { protocol } = summary.value;
+      const { protocol } = get(summary);
       if (!protocol.icon) {
         return '';
       }
-      return require(`@/assets/images/defi/${protocol.icon}`);
+      return `/assets/images/defi/${protocol.icon}`;
     });
 
     const assets = computed(() => {
-      const { assets } = summary.value;
+      const { assets } = get(summary);
       return assets.sort(
         (
           { balance: { usdValue } },
@@ -171,8 +158,6 @@ export default defineComponent({
 </script>
 
 <style module lang="scss">
-@import '~@/scss/scroll';
-
 .overview {
   min-height: 250px !important;
   min-width: 300px;
@@ -180,7 +165,5 @@ export default defineComponent({
 
 .details {
   height: 300px;
-
-  @extend .themed-scrollbar;
 }
 </style>

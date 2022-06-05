@@ -5,6 +5,8 @@
       <v-chip-group
         :value="year"
         mandatory
+        column
+        class="mx-n2"
         @change="onChange({ year: $event })"
       >
         <v-chip
@@ -34,10 +36,11 @@
       <v-chip-group
         :value="quarter"
         mandatory
+        class="mx-n2"
         @change="onChange({ quarter: $event })"
       >
         <v-chip
-          v-for="subPeriod in subPeriod"
+          v-for="subPeriod in subPeriods"
           :key="subPeriod.id"
           :color="quarter === subPeriod.id ? 'primary' : null"
           :value="subPeriod.id"
@@ -54,10 +57,17 @@
 </template>
 
 <script lang="ts">
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  PropType,
+  toRefs,
+  watch
+} from '@vue/composition-api';
 import dayjs from 'dayjs';
-import { Component, Emit, Prop, Vue, Watch } from 'vue-property-decorator';
-import { ALL, Q1, Q2, Q3, Q4, QUARTERS } from '@/store/settings/consts';
-import { Quarter } from '@/store/settings/types';
+import i18n from '@/i18n';
+import { Quarter } from '@/types/frontend-settings';
 
 export type PeriodChangedEvent = {
   start: string;
@@ -70,129 +80,127 @@ export type SelectionChangedEvent = {
 };
 
 const QUARTER_STARTS: { [quarter in Quarter]: string } = {
-  [ALL]: '01/01',
-  [Q1]: '01/01',
-  [Q2]: '01/04',
-  [Q3]: '01/07',
-  [Q4]: '01/10'
+  [Quarter.ALL]: '01/01',
+  [Quarter.Q1]: '01/01',
+  [Quarter.Q2]: '01/04',
+  [Quarter.Q3]: '01/07',
+  [Quarter.Q4]: '01/10'
 };
 
 const QUARTER_ENDS: { [quarter in Quarter]: string } = {
-  [Q1]: '31/03',
-  [Q2]: '30/06',
-  [Q3]: '30/09',
-  [Q4]: '31/12',
-  [ALL]: '31/12'
+  [Quarter.Q1]: '31/03',
+  [Quarter.Q2]: '30/06',
+  [Quarter.Q3]: '30/09',
+  [Quarter.Q4]: '31/12',
+  [Quarter.ALL]: '31/12'
 };
 
-@Component({})
-export default class ReportPeriodSelector extends Vue {
-  @Prop({
-    required: true,
-    type: String,
-    default: () => new Date().getFullYear().toString()
-  })
-  year!: string | 'custom';
-  @Prop({
-    required: true,
-    type: String,
-    default: ALL,
-    validator: value => QUARTERS.includes(value)
-  })
-  quarter!: Quarter;
-
-  isStartAfterNow(selection: Quarter) {
-    const start = this.startDateTime(selection);
-    return dayjs(start, 'DD/MM/YYYY HH:mm').isAfter(dayjs());
+const getSubPeriods = () => [
+  {
+    id: Quarter.ALL,
+    name: i18n.t('generate.sub_period.all').toString()
+  },
+  {
+    id: Quarter.Q1,
+    name: 'Q1'
+  },
+  {
+    id: Quarter.Q2,
+    name: 'Q2'
+  },
+  {
+    id: Quarter.Q3,
+    name: 'Q3'
+  },
+  {
+    id: Quarter.Q4,
+    name: 'Q4'
   }
+];
 
-  startDateTime(selection: Quarter): string {
-    const startDate = QUARTER_STARTS[selection];
-    return `${startDate}/${this.year} 00:00`;
-  }
+export default defineComponent({
+  name: 'ReportPeriodSelector',
+  props: {
+    year: {
+      type: String as PropType<string | 'custom'>,
+      default: () => new Date().getFullYear().toString()
+    },
+    quarter: {
+      required: true,
+      type: String as PropType<Quarter>,
+      default: Quarter.ALL,
+      validator: (value: any) => Object.values(Quarter).includes(value)
+    }
+  },
+  emits: ['update:period', 'update:selection', 'changed'],
+  setup(props, { emit }) {
+    const { quarter, year } = toRefs(props);
 
-  onChange(change: { year?: string; quarter?: Quarter }) {
-    const year = change?.year ?? this.year;
-    const quarter = change?.quarter ?? this.quarter;
+    const updatePeriod = (period: PeriodChangedEvent | null) => {
+      emit('update:period', period);
+    };
 
-    this.changed({ year, quarter });
-    this.periodUpdate(year !== 'custom' ? this.periodEventPayload : null);
-  }
+    const updateSelection = (change: SelectionChangedEvent) => {
+      emit('update:selection', change);
+    };
 
-  get start(): string {
-    return this.startDateTime(this.quarter);
-  }
+    const startDateTime = (selection: Quarter): string => {
+      const startDate = QUARTER_STARTS[selection];
+      return `${startDate}/${year.value} 00:00`;
+    };
 
-  mounted() {
-    this.periodUpdate(this.year !== 'custom' ? this.periodEventPayload : null);
-  }
+    const isStartAfterNow = (selection: Quarter) => {
+      const start = startDateTime(selection);
+      return dayjs(start, 'DD/MM/YYYY HH:mm').isAfter(dayjs());
+    };
 
-  get end(): string {
-    const endDate = QUARTER_ENDS[this.quarter];
-    return `${endDate}/${this.year} 23:59:59`;
-  }
+    const onChange = (change: { year?: string; quarter?: Quarter }) => {
+      updateSelection({
+        year: change?.year ?? year.value,
+        quarter: change?.quarter ?? quarter.value
+      });
+      updatePeriod(year.value !== 'custom' ? periodEventPayload.value : null);
+    };
 
-  get periodEventPayload(): PeriodChangedEvent {
+    const start = computed(() => startDateTime(quarter.value));
+    const isCustom = computed(() => year.value === 'custom');
+    const end = computed(() => {
+      const endDate = QUARTER_ENDS[quarter.value];
+      return `${endDate}/${year.value} 23:59:59`;
+    });
+
+    const periodEventPayload = computed<PeriodChangedEvent>(() => {
+      return {
+        start: start.value,
+        end: end.value
+      };
+    });
+
+    onMounted(() => {
+      updatePeriod(year.value !== 'custom' ? periodEventPayload.value : null);
+    });
+
+    watch([year, quarter], () => {
+      updatePeriod(isCustom.value ? null : periodEventPayload.value);
+    });
+
+    const periods = computed(() => {
+      const periods: string[] = [];
+      const fullYear = new Date().getFullYear();
+      for (let year = fullYear; year > fullYear - 5; year--) {
+        periods.push(year.toString());
+      }
+      return periods;
+    });
+
     return {
-      start: this.start,
-      end: this.end
+      start,
+      periods,
+      isCustom,
+      subPeriods: getSubPeriods(),
+      onChange,
+      isStartAfterNow
     };
   }
-
-  private get isCustom(): boolean {
-    return this.year === 'custom';
-  }
-
-  @Watch('quarter')
-  onQuarterChange() {
-    this.periodUpdate(this.isCustom ? null : this.periodEventPayload);
-  }
-
-  @Watch('year')
-  onYearChange() {
-    this.periodUpdate(this.isCustom ? null : this.periodEventPayload);
-  }
-
-  @Emit()
-  periodUpdate(_event: PeriodChangedEvent | null) {}
-
-  @Emit()
-  changed(_value: SelectionChangedEvent) {}
-
-  get periods(): string[] {
-    const periods: string[] = [];
-    const fullYear = new Date().getFullYear();
-    for (let year = fullYear; year > fullYear - 5; year--) {
-      periods.push(year.toString());
-    }
-    return periods;
-  }
-
-  get subPeriod() {
-    return [
-      {
-        id: ALL,
-        name: this.$t('generate.sub_period.all').toString()
-      },
-      {
-        id: Q1,
-        name: 'Q1'
-      },
-      {
-        id: Q2,
-        name: 'Q2'
-      },
-      {
-        id: Q3,
-        name: 'Q3'
-      },
-      {
-        id: Q4,
-        name: 'Q4'
-      }
-    ];
-  }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

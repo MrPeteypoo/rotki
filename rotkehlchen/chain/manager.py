@@ -13,6 +13,7 @@ from typing import (
     Dict,
     Iterator,
     List,
+    Literal,
     Optional,
     Tuple,
     TypeVar,
@@ -21,16 +22,9 @@ from typing import (
 )
 
 from gevent.lock import Semaphore
-from typing_extensions import Literal
 from web3.exceptions import BadFunctionCallOutput
 
-from rotkehlchen.accounting.structures import (
-    AssetBalance,
-    Balance,
-    BalanceSheet,
-    DefiEvent,
-    DefiEventType,
-)
+from rotkehlchen.accounting.structures.balance import Balance, BalanceSheet
 from rotkehlchen.assets.asset import Asset, EthereumToken
 from rotkehlchen.chain.bitcoin import get_bitcoin_addresses_balances
 from rotkehlchen.chain.ethereum.defi.chad import DefiChad
@@ -51,10 +45,11 @@ from rotkehlchen.chain.ethereum.modules import (
     YearnVaults,
     YearnVaultsV2,
 )
+from rotkehlchen.chain.ethereum.modules.eth2.structures import Eth2Validator
 from rotkehlchen.chain.ethereum.tokens import EthTokens
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.types import string_to_ethereum_address
 from rotkehlchen.chain.substrate.manager import wait_until_a_node_is_available
-from rotkehlchen.chain.substrate.typing import KusamaAddress, PolkadotAddress
+from rotkehlchen.chain.substrate.types import KusamaAddress, PolkadotAddress
 from rotkehlchen.chain.substrate.utils import (
     KUSAMA_NODE_CONNECTION_TIMEOUT,
     POLKADOT_NODE_CONNECTION_TIMEOUT,
@@ -70,25 +65,27 @@ from rotkehlchen.constants.assets import (
     A_KSM,
     A_LQTY,
 )
-from rotkehlchen.constants.misc import ZERO
+from rotkehlchen.constants.misc import ONE, ZERO
+from rotkehlchen.db.eth2 import DBEth2
+from rotkehlchen.db.filtering import Eth2DailyStatsFilterQuery
 from rotkehlchen.db.queried_addresses import QueriedAddresses
 from rotkehlchen.db.utils import BlockchainAccounts
-from rotkehlchen.errors import (
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import (
     EthSyncError,
     InputError,
     ModuleInactive,
     ModuleInitializationFailure,
-    RemoteError,
-    UnknownAsset,
 )
 from rotkehlchen.fval import FVal
 from rotkehlchen.greenlets import GreenletManager
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     BTCAddress,
     ChecksumEthAddress,
+    Eth2PubKey,
     ListOfBlockchainAddresses,
     ModuleName,
     Price,
@@ -104,8 +101,12 @@ from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_l
 if TYPE_CHECKING:
     from rotkehlchen.chain.avalanche.manager import AvalancheManager
     from rotkehlchen.chain.ethereum.manager import EthereumManager
+    from rotkehlchen.chain.ethereum.modules.eth2.structures import (
+        Eth2Deposit,
+        ValidatorDailyStats,
+        ValidatorDetails,
+    )
     from rotkehlchen.chain.ethereum.modules.nfts import Nfts
-    from rotkehlchen.chain.ethereum.typing import Eth2Deposit, ValidatorDetails
     from rotkehlchen.chain.substrate.manager import SubstrateManager
     from rotkehlchen.db.dbhandler import DBHandler
     from rotkehlchen.externalapis.beaconchain import BeaconChain
@@ -175,6 +176,7 @@ class AccountAction(Enum):
 class BlockchainBalances:
     db: 'DBHandler'  # Need this to serialize BTC accounts with xpub mappings
     eth: DefaultDict[ChecksumEthAddress, BalanceSheet] = field(init=False)
+    eth2: DefaultDict[Eth2PubKey, BalanceSheet] = field(init=False)
     btc: Dict[BTCAddress, Balance] = field(init=False)
     ksm: Dict[KusamaAddress, BalanceSheet] = field(init=False)
     dot: Dict[PolkadotAddress, BalanceSheet] = field(init=False)
@@ -183,6 +185,7 @@ class BlockchainBalances:
     def copy(self) -> 'BlockchainBalances':
         balances = BlockchainBalances(db=self.db)
         balances.eth = self.eth.copy()
+        balances.eth2 = self.eth2.copy()
         balances.btc = self.btc.copy()
         balances.ksm = self.ksm.copy()
         balances.dot = self.dot.copy()
@@ -191,6 +194,7 @@ class BlockchainBalances:
 
     def __post_init__(self) -> None:
         self.eth = defaultdict(BalanceSheet)
+        self.eth2 = defaultdict(BalanceSheet)
         self.btc = defaultdict(Balance)
         self.ksm = defaultdict(BalanceSheet)
         self.dot = defaultdict(BalanceSheet)
@@ -198,6 +202,7 @@ class BlockchainBalances:
 
     def serialize(self) -> Dict[str, Dict]:
         eth_balances = {k: v.serialize() for k, v in self.eth.items()}
+        eth2_balances = {k: v.serialize() for k, v in self.eth2.items()}
         btc_balances: Dict[str, Any] = {}
         ksm_balances = {k: v.serialize() for k, v in self.ksm.items()}
         dot_balances = {k: v.serialize() for k, v in self.dot.items()}
@@ -239,6 +244,8 @@ class BlockchainBalances:
         blockchain_balances: Dict[str, Dict] = {}
         if eth_balances != {}:
             blockchain_balances['ETH'] = eth_balances
+        if eth2_balances != {}:
+            blockchain_balances['ETH2'] = eth2_balances
         if btc_balances != {}:
             blockchain_balances['BTC'] = btc_balances
         if ksm_balances != {}:
@@ -253,6 +260,8 @@ class BlockchainBalances:
     def is_queried(self, blockchain: SupportedBlockchain) -> bool:
         if blockchain == SupportedBlockchain.ETHEREUM:
             return self.eth != {}
+        if blockchain == SupportedBlockchain.ETHEREUM_BEACONCHAIN:
+            return self.eth2 != {}
         if blockchain == SupportedBlockchain.BITCOIN:
             return self.btc != {}
         if blockchain == SupportedBlockchain.KUSAMA:
@@ -268,10 +277,18 @@ class BlockchainBalances:
     def account_exists(
             self,
             blockchain: SupportedBlockchain,
-            account: Union[BTCAddress, ChecksumEthAddress, KusamaAddress, PolkadotAddress],
+            account: Union[
+                BTCAddress,
+                ChecksumEthAddress,
+                KusamaAddress,
+                PolkadotAddress,
+                Eth2PubKey,
+            ],
     ) -> bool:
         if blockchain == SupportedBlockchain.ETHEREUM:
             return account in self.eth
+        if blockchain == SupportedBlockchain.ETHEREUM_BEACONCHAIN:
+            return account in self.eth2
         if blockchain == SupportedBlockchain.BITCOIN:
             return account in self.btc
         if blockchain == SupportedBlockchain.KUSAMA:
@@ -312,7 +329,7 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
             data_directory: Path,
             beaconchain: 'BeaconChain',
             btc_derivation_gap_limit: int,
-            eth_modules: Optional[List[ModuleName]] = None,
+            eth_modules: List[ModuleName],
     ):
         log.debug('Initializing ChainManager')
         super().__init__()
@@ -344,11 +361,9 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         self.totals: BalanceSheet = BalanceSheet()
         self.premium = premium
         self.greenlet_manager = greenlet_manager
-        # TODO: Turn this mapping into a typed dict once we upgrade to python 3.8
-        self.eth_modules: Dict[ModuleName, Union[EthereumModule]] = {}
-        if eth_modules:
-            for given_module in eth_modules:
-                self.activate_module(given_module)
+        self.eth_modules: Dict[ModuleName, EthereumModule] = {}
+        for given_module in eth_modules:
+            self.activate_module(given_module)
 
         self.defichad = DefiChad(
             ethereum_manager=self.ethereum,
@@ -429,13 +444,13 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
             return None
 
         self.eth_modules[module_name] = instance
-        # also run any startup initialization actions for the module
-        self.greenlet_manager.spawn_and_track(
-            after_seconds=None,
-            task_name=f'startup of {module_name}',
-            exception_is_error=True,
-            method=instance.on_startup,
-        )
+        if instance.on_startup is not None:  # run startup initialization actions for the module
+            self.greenlet_manager.spawn_and_track(
+                after_seconds=None,
+                task_name=f'startup of {module_name}',
+                exception_is_error=True,
+                method=instance.on_startup,
+            )
         return instance
 
     def deactivate_module(self, module_name: ModuleName) -> None:
@@ -557,6 +572,7 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         client and the chain is not synced
         """
         should_query_eth = not blockchain or blockchain == SupportedBlockchain.ETHEREUM
+        should_query_eth2 = not blockchain or blockchain == SupportedBlockchain.ETHEREUM_BEACONCHAIN  # noqa: E501
         should_query_btc = not blockchain or blockchain == SupportedBlockchain.BITCOIN
         should_query_ksm = not blockchain or blockchain == SupportedBlockchain.KUSAMA
         should_query_dot = not blockchain or blockchain == SupportedBlockchain.POLKADOT
@@ -565,6 +581,11 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         if should_query_eth:
             self.query_ethereum_balances(
                 force_token_detection=force_token_detection,
+                ignore_cache=ignore_cache,
+            )
+        if should_query_eth2:
+            self.query_ethereum_beaconchain_balances(
+                fetch_validators_for_eth1=force_token_detection,  # document this better
                 ignore_cache=ignore_cache,
             )
         if should_query_btc:
@@ -1029,6 +1050,7 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         """Removes blockchain accounts and requeries all balances after the removal.
 
         The accounts are removed from the blockchain object and not from the database.
+        Database removal happens afterwards at the caller.
         Returns the new total balances, the actually removes accounts (some
         accounts may have been invalid) and also any errors that occured
         during the removal.
@@ -1215,6 +1237,40 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
 
         return self.get_balances_update()
 
+    @protect_with_lock()
+    @cache_response_timewise()
+    def query_ethereum_beaconchain_balances(
+            self,  # pylint: disable=unused-argument
+            fetch_validators_for_eth1: bool,
+            # Kwargs here is so linters don't complain when the "magic" ignore_cache kwarg is given
+            **kwargs: Any,
+    ) -> None:
+        """Queries ethereum beacon chain balances
+
+        May raise:
+        - RemoteError if an external service such as beaconchain
+        is queried and there is a problem with its query.
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            return  # no eth2 module active -- do nothing
+
+        # Before querying the new balances, delete the ones in memory if any
+        self.totals.assets.pop(A_ETH2, None)
+        self.balances.eth2.clear()
+        balance_mapping = eth2.get_balances(
+            addresses=self.queried_addresses_for_module('eth2'),
+            fetch_validators_for_eth1=fetch_validators_for_eth1,
+        )
+        total = Balance()
+        for pubkey, balance in balance_mapping.items():
+            self.balances.eth2[pubkey] = BalanceSheet(
+                assets=defaultdict(Balance, {A_ETH2: balance}),
+            )
+            total += balance
+        if total.amount != ZERO:
+            self.totals.assets[A_ETH2] = total
+
     def _update_balances_after_token_query(
             self,
             action: AccountAction,
@@ -1226,10 +1282,6 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         eth_balances = self.balances.eth
         for account, token_balances in balance_result.items():
             for token, token_balance in token_balances.items():
-                if token_usd_price[token] == ZERO:
-                    # skip tokens that have no price
-                    continue
-
                 token_totals[token] += token_balance
                 balance = Balance(
                     amount=token_balance,
@@ -1397,7 +1449,7 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
                     eth_balances[address] += entry
                     self.totals += entry
 
-            proxy_mappings = vaults_module._get_accounts_having_maker_proxy()
+            proxy_mappings = vaults_module._get_accounts_having_proxy()
             proxy_to_address = {}
             proxy_addresses = []
             for user_address, proxy_address in proxy_mappings.items():
@@ -1456,7 +1508,7 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         if liquity_module is not None:
             # Get trove information
             liquity_balances = liquity_module.get_positions(
-                addresses=self.queried_addresses_for_module('liquity'),
+                addresses_list=self.queried_addresses_for_module('liquity'),
             )
             for address, deposits in liquity_balances.items():
                 collateral = deposits.collateral.balance
@@ -1471,8 +1523,6 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
                 eth_balances[address].assets[A_LQTY] += deposited_lqty
                 self.totals.assets[A_LQTY] += deposited_lqty
 
-        # Count ETH staked in Eth2 beacon chain
-        self.account_for_staked_eth2_balances(addresses=self.queried_addresses_for_module('eth2'))
         # Finally count the balances detected in various protocols in defi balances
         self.add_defi_balances_to_token_and_totals()
 
@@ -1544,32 +1594,6 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
                 balances=defi_balances,
             )
 
-    def account_for_staked_eth2_balances(
-            self,
-            addresses: List[ChecksumEthAddress],
-    ) -> None:
-        eth2 = self.get_module('eth2')
-        if eth2 is None:
-            return  # no eth2 module active -- do nothing
-
-        # Before querying the new balances, delete the ones in memory if any
-        self.totals.assets.pop(A_ETH2, None)
-        for _, entry in self.balances.eth.items():
-            if A_ETH2 in entry.assets:
-                del entry.assets[A_ETH2]
-
-        try:
-            mapping = eth2.get_balances(addresses)
-        except RemoteError as e:
-            self.msg_aggregator.add_error(
-                f'Did not manage to query beaconcha.in api for addresses due to {str(e)}.'
-                f' If you have Eth2 staked balances the final balance results may not be accurate',
-            )
-            mapping = {}
-        for address, balance in mapping.items():
-            self.balances.eth[address].assets[A_ETH2] = balance
-            self.totals.assets[A_ETH2] += balance
-
     @protect_with_lock()
     @cache_response_timewise()
     def get_eth2_staking_deposits(self) -> List['Eth2Deposit']:
@@ -1578,14 +1602,8 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
             raise ModuleInactive(
                 'Could not query eth2 staking deposits since eth2 module is not active',
             )
-        # Get the details first, to see which of the user's addresses have deposits
-        details = self.get_eth2_staking_details()
-        addresses = {x.eth1_depositor for x in details}
-        # now narrow down the deposits query to save time
         deposits = eth2.get_staking_deposits(
-            addresses=list(addresses),
-            msg_aggregator=self.msg_aggregator,
-            database=self.database,
+            addresses=self.queried_addresses_for_module('eth2'),
         )
         return deposits
 
@@ -1602,13 +1620,33 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
 
     @protect_with_lock()
     @cache_response_timewise()
+    def get_eth2_daily_stats(
+            self,
+            filter_query: Eth2DailyStatsFilterQuery,
+            only_cache: bool,
+    ) -> Tuple[List['ValidatorDailyStats'], int, FVal, FVal]:
+        """May raise:
+        - ModuleInactive if eth2 module is not activated
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            raise ModuleInactive('Cant query eth2 daily stats details since eth2 module is not active')  # noqa: E501
+        return eth2.get_validator_daily_stats(
+            filter_query=filter_query,
+            only_cache=only_cache,
+            msg_aggregator=self.msg_aggregator,
+        )
+
+    @protect_with_lock()
+    @cache_response_timewise()
     def get_eth2_history_events(
             self,
             from_timestamp: Timestamp,
             to_timestamp: Timestamp,
-    ) -> List[DefiEvent]:
+    ) -> List['ValidatorDailyStats']:
         """May raise:
         - ModuleInactive if eth2 module is not activated
+        - RemoteError if a remote query to beacon chain fails and is not caught in the method
         """
         eth2 = self.get_module('eth2')
         if eth2 is None:
@@ -1617,47 +1655,108 @@ class ChainManager(CacheableMixIn, LockableQueryMixIn):
         if to_timestamp < 1607212800:  # Dec 1st UTC
             return []  # no need to bother querying before beacon chain launch
 
-        defi_events = []
-        eth2_details = eth2.get_details(addresses=self.queried_addresses_for_module('eth2'))
-        for entry in eth2_details:
-            if entry.validator_index is None:
-                continue  # don't query stats for validators without an index yet
+        # Ask for details to detect any new validators
+        eth2.get_details(addresses=self.queried_addresses_for_module('eth2'))
+        # Create a mapping of validator index to ownership proportion
+        validators_ownership = {
+            validator.index: validator.ownership_proportion
+            for validator in self.get_eth2_validators()
+        }
+        # And now get all daily stats and create defi events for them
+        stats, _, _, _ = eth2.get_validator_daily_stats(
+            filter_query=Eth2DailyStatsFilterQuery.make(from_ts=from_timestamp, to_ts=to_timestamp),  # noqa: E501
+            only_cache=False,
+            msg_aggregator=self.msg_aggregator,
+        )
+        for stats_entry in stats:
+            if stats_entry.pnl_balance.amount == ZERO:
+                continue
 
-            stats = eth2.get_validator_daily_stats(
-                validator_index=entry.validator_index,
-                msg_aggregator=self.msg_aggregator,
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-            )
-            for stats_entry in stats:
-                got_asset = got_balance = spent_asset = spent_balance = None
-                if stats_entry.pnl_balance.amount == ZERO:
-                    continue
+            # Take into account the validator ownership proportion if is not 100%
+            validator_ownership = validators_ownership.get(stats_entry.validator_index, FVal(1))
+            if validator_ownership != ONE:
+                stats_entry.pnl = stats_entry.pnl * validator_ownership
+                stats_entry.ownership_percentage = validator_ownership
 
-                if stats_entry.pnl_balance.amount > ZERO:
-                    got_asset = A_ETH
-                    got_balance = stats_entry.pnl_balance
-                else:  # negative
-                    spent_asset = A_ETH
-                    spent_balance = -stats_entry.pnl_balance
+        return stats
 
-                defi_events.append(DefiEvent(
-                    timestamp=stats_entry.timestamp,
-                    wrapped_event=stats_entry,
-                    event_type=DefiEventType.ETH2_EVENT,
-                    got_asset=got_asset,
-                    got_balance=got_balance,
-                    spent_asset=spent_asset,
-                    spent_balance=spent_balance,
-                    pnl=[AssetBalance(asset=A_ETH, balance=stats_entry.pnl_balance)],
-                    count_spent_got_cost_basis=True,
-                ))
+    def get_eth2_validators(self) -> List[Eth2Validator]:
+        """May raise:
+        - ModuleInactive if eth2 module is not activated
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            raise ModuleInactive('Cant get eth2 validators since the eth2 module is not active')
+        return DBEth2(self.database).get_validators()
 
-        return defi_events
+    def edit_eth2_validator(self, validator_index: int, ownership_proportion: FVal) -> None:
+        """Edit a validator to modify its ownership proportion. May raise:
+        - ModuleInactive if eth2 module is not active
+        - InputError if no row was affected
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            raise ModuleInactive('Cant edit eth2 validators since the eth2 module is not active')
+        DBEth2(self.database).edit_validator(
+            validator_index=validator_index,
+            ownership_proportion=ownership_proportion,
+        )
+        self.flush_cache('get_eth2_daily_stats')
+        self.flush_cache('query_ethereum_beaconchain_balances')
+        self.flush_cache('query_balances')
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN)
+
+    def add_eth2_validator(
+            self,
+            validator_index: Optional[int],
+            public_key: Optional[Eth2PubKey],
+            ownership_proportion: FVal,
+    ) -> None:
+        """May raise:
+        - ModuleInactive if eth2 module is not activated
+        - RemoteError if there is a problem querying beaconcha.in
+        - PremiumPermissionError if adding the validator would go over free limit
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            raise ModuleInactive('Cant add eth2 validator since eth2 module is not active')
+        eth2.add_validator(
+            validator_index=validator_index,
+            public_key=public_key,
+            ownership_proportion=ownership_proportion,
+        )
+        self.flush_cache('get_eth2_staking_deposits')
+        self.flush_cache('get_eth2_staking_details')
+        self.flush_cache('get_eth2_history_events')
+        self.flush_cache('get_eth2_daily_stats')
+        self.flush_cache('query_ethereum_beaconchain_balances')
+        self.flush_cache('query_balances')
+        self.flush_cache('query_balances', blockchain=SupportedBlockchain.ETHEREUM_BEACONCHAIN)
+
+    def delete_eth2_validator(
+            self,
+            validator_index: Optional[int],
+            public_key: Optional[str],
+    ) -> None:
+        """May raise:
+        - ModuleInactive if eth2 module is not activated
+        - InputError if the validator is not found in the DB
+        """
+        eth2 = self.get_module('eth2')
+        if eth2 is None:
+            raise ModuleInactive('Cant delete eth2 validator since eth2 module is not active')
+        return DBEth2(self.database).delete_validator(
+            validator_index=validator_index,
+            public_key=public_key,
+        )
 
     @cache_response_timewise()
     def get_loopring_balances(self) -> Dict[Asset, Balance]:
-        """Query loopring balances if the module is activated"""
+        """Query loopring balances if the module is activated
+
+        May raise:
+        - RemoteError if there is problems querying loopring api
+        """
         # Check if the loopring module is activated
         loopring_module = self.get_module('loopring')
         if loopring_module is None:

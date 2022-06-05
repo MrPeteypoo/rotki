@@ -1,26 +1,26 @@
 <template>
-  <v-overlay opacity="1" color="grey lighten-4">
+  <v-overlay :dark="false" opacity="1" color="grey lighten-4">
     <div
+      class="animate"
       :class="{
-        'account-management__loading': !xsOnly
+        [$style.loading]: !xsOnly && !isTest,
+        [$style['loading--paused']]: !animationEnabled
       }"
+      data-cy="account-management__loading"
     />
-    <div v-if="!premiumVisible">
-      <v-card class="account-management__card pb-6" :width="width" light>
-        <div
-          class="
-            pt-6
-            pb-3
-            text-h2
-            font-weight-black
-            white--text
-            account-management__card__title
-          "
-        >
-          <span class="px-6">{{ $t('app.name') }}</span>
-          <span class="d-block mb-3 pl-6 text-caption">
+    <div v-if="!premiumVisible" :class="$style.wrapper">
+      <div />
+      <v-card
+        class="pb-4"
+        :class="$style.card"
+        light
+        data-cy="account-management"
+      >
+        <div class="pa-6 text-h2 font-weight-black white--text primary">
+          <div>{{ $t('app.name') }}</div>
+          <div class="text-caption">
             {{ $t('app.moto') }}
-          </span>
+          </div>
         </div>
         <connection-loading
           v-if="!connectionFailure"
@@ -34,7 +34,7 @@
             :sync-conflict="syncConflict"
             :errors="errors"
             @touched="errors = []"
-            @login="login($event)"
+            @login="userLogin($event)"
             @backend-changed="backendChanged($event)"
             @new-account="accountCreation = true"
           />
@@ -46,29 +46,57 @@
             :error="accountCreationError"
             @error:clear="accountCreationError = ''"
             @cancel="accountCreation = false"
-            @confirm="createAccount($event)"
+            @confirm="createNewAccount($event)"
           />
         </v-slide-y-transition>
       </v-card>
-      <privacy-notice />
-      <div v-if="$interop.isPackaged" class="account-management__log-level">
-        <backend-settings-button />
-      </div>
-      <div v-if="!$interop.isPackaged" class="account-management__about">
+      <div :class="`${$style.icon} ${$style['icon--left']}`">
         <v-tooltip open-delay="400" top>
           <template #activator="{ on, attrs }">
             <v-btn
-              icon
+              text
+              fab
+              depressed
               color="primary"
               v-bind="attrs"
-              @click="$emit('about')"
               v-on="on"
+              @click="toggleAnimationEnabled"
             >
-              <v-icon>mdi-information</v-icon>
+              <v-icon v-if="animationEnabled">mdi-pause</v-icon>
+              <v-icon v-else>mdi-play</v-icon>
             </v-btn>
           </template>
-          <span>{{ $t('account_management.about_tooltip') }}</span>
+          <span v-if="animationEnabled">
+            {{ $t('frontend_settings.animations.disable') }} ({{
+              $t('frontend_settings.animations.disable_hint')
+            }})
+          </span>
+          <span v-else>{{ $t('frontend_settings.animations.enable') }}</span>
         </v-tooltip>
+      </div>
+      <privacy-notice />
+      <div :class="`${$style.icon} ${$style['icon--right']}`">
+        <template v-if="isPackaged">
+          <backend-settings-button />
+        </template>
+        <template v-else>
+          <v-tooltip open-delay="400" top>
+            <template #activator="{ on, attrs }">
+              <v-btn
+                text
+                fab
+                depressed
+                color="primary"
+                v-bind="attrs"
+                @click="$emit('about')"
+                v-on="on"
+              >
+                <v-icon>mdi-information</v-icon>
+              </v-btn>
+            </template>
+            <span>{{ $t('account_management.about_tooltip') }}</span>
+          </v-tooltip>
+        </template>
       </div>
     </div>
 
@@ -81,8 +109,15 @@
 </template>
 
 <script lang="ts">
-import { Component, Emit, Mixins, Prop } from 'vue-property-decorator';
-import { mapActions, mapGetters, mapMutations, mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  ref,
+  toRefs,
+  watch
+} from '@vue/composition-api';
+import { get, set, useLocalStorage } from '@vueuse/core';
 import ConnectionFailure from '@/components/account-management/ConnectionFailure.vue';
 import ConnectionLoading from '@/components/account-management/ConnectionLoading.vue';
 import CreateAccount from '@/components/account-management/CreateAccount.vue';
@@ -91,17 +126,20 @@ import PremiumReminder from '@/components/account-management/PremiumReminder.vue
 import {
   deleteBackendUrl,
   getBackendUrl,
-  lastLogin,
   setLastLogin
 } from '@/components/account-management/utils';
 import BackendSettingsButton from '@/components/helper/BackendSettingsButton.vue';
 import PrivacyNotice from '@/components/PrivacyNotice.vue';
-import BackendMixin from '@/mixins/backend-mixin';
-import { SyncConflict } from '@/store/session/types';
-import { ActionStatus, Message } from '@/store/types';
-import { Credentials, UnlockPayload } from '@/typing/types';
+import { setupBackendManagement } from '@/composables/backend';
+import { setupThemeCheck } from '@/composables/common';
+import { getPremium, setupSession } from '@/composables/session';
+import { useInterop } from '@/electron-interop';
+import i18n from '@/i18n';
+import { useMainStore } from '@/store/store';
+import { CreateAccountPayload, LoginCredentials } from '@/types/login';
 
-@Component({
+export default defineComponent({
+  name: 'AccountManagement',
   components: {
     BackendSettingsButton,
     ConnectionFailure,
@@ -111,179 +149,195 @@ import { Credentials, UnlockPayload } from '@/typing/types';
     Login,
     CreateAccount
   },
-  computed: {
-    ...mapState(['connectionFailure']),
-    ...mapState('session', ['syncConflict', 'premium']),
-    ...mapState(['message', 'connected']),
-    ...mapGetters(['updateNeeded', 'message'])
+  props: {
+    logged: {
+      required: true,
+      type: Boolean
+    }
   },
-  methods: {
-    ...mapActions('session', ['unlock']),
-    ...mapMutations(['setMessage'])
-  }
-})
-export default class AccountManagement extends Mixins(BackendMixin) {
-  accountCreation: boolean = false;
-  premium!: boolean;
-  loading: boolean = false;
-  autolog: boolean = false;
-  message!: Message;
-  connected!: boolean;
-  syncConflict!: SyncConflict;
-  unlock!: (payload: UnlockPayload) => Promise<ActionStatus>;
-  setMessage!: (message: Message) => void;
-  errors: string[] = [];
-  accountCreationError: string = '';
+  emits: ['about', 'login-complete'],
+  setup(props, { emit }) {
+    const { logged } = toRefs(props);
+    const accountCreation = ref(false);
+    const loading = ref(false);
+    const autolog = ref(false);
+    const errors = ref<string[]>([]);
+    const accountCreationError = ref('');
+    const premiumVisible = ref(false);
 
-  premiumVisible = false;
+    const store = useMainStore();
+    const { connectionFailure, newUser, message, connected, updateNeeded } =
+      toRefs(store);
 
-  @Prop({ required: true, type: Boolean })
-  logged!: boolean;
-  connectionFailure!: boolean;
+    const animationEnabled = useLocalStorage(
+      'rotki.login_animation_enabled',
+      true
+    );
 
-  get xsOnly(): boolean {
-    return this.$vuetify.breakpoint.xsOnly;
-  }
+    const toggleAnimationEnabled = () => {
+      set(animationEnabled, !get(animationEnabled));
+    };
 
-  get width(): string {
-    return this.xsOnly ? '100%' : '500px';
-  }
+    watch(newUser, newUser => {
+      if (newUser) {
+        set(accountCreation, true);
+      }
+    });
 
-  get displayPremium(): boolean {
-    return !this.premium && !this.message.title && this.premiumVisible;
-  }
+    const { setConnected, connect } = store;
 
-  async created() {
-    if (this.connected) {
-      return;
-    }
+    const loginComplete = () => {
+      dismissPremiumModal();
+      emit('login-complete');
+    };
 
-    const { sessionOnly, url } = getBackendUrl();
-    if (!!url && !sessionOnly) {
-      await this.backendChanged(url);
-    } else {
-      await this.restartBackend();
-    }
-  }
+    const { currentBreakpoint } = setupThemeCheck();
+    const xsOnly = computed(() => get(currentBreakpoint).xsOnly);
+    const premium = getPremium();
 
-  async mounted() {
-    const { sessionOnly } = getBackendUrl();
-    if (sessionOnly) {
-      deleteBackendUrl();
-      await this.restartBackend();
-    }
+    const displayPremium = computed(
+      () => !get(premium) && !get(message).title && get(premiumVisible)
+    );
 
-    const lastLoggedUser = lastLogin();
+    const showPremiumDialog = () => {
+      if (get(premium)) {
+        loginComplete();
+        return;
+      }
+      set(premiumVisible, true);
+    };
 
-    try {
-      this.autolog = true;
-      const isLogged = await this.$api.checkIfLogged(lastLoggedUser);
-      if (isLogged) {
-        await this.unlock({
-          username: lastLoggedUser,
-          restore: true,
-          password: ''
-        });
-        if (this.logged) {
-          this.showPremiumDialog();
-          this.showGetPremiumButton();
+    const { syncConflict, login, createAccount } = setupSession();
+    const interop = useInterop();
+
+    const upgrade = () => {
+      interop.navigateToPremium();
+      loginComplete();
+    };
+
+    const showGetPremiumButton = () => {
+      interop.premiumUserLoggedIn(get(premium));
+    };
+
+    const { restartBackend } = setupBackendManagement();
+
+    onMounted(async () => {
+      const { sessionOnly } = getBackendUrl();
+      if (sessionOnly) {
+        deleteBackendUrl();
+        await restartBackend();
+      }
+
+      set(autolog, true);
+      await login({ username: '', password: '' });
+      if (get(logged)) {
+        showPremiumDialog();
+        showGetPremiumButton();
+      }
+      set(autolog, false);
+      if (get(newUser)) {
+        set(accountCreation, true);
+      }
+    });
+
+    const setupBackend = async () => {
+      if (get(connected)) {
+        return;
+      }
+
+      const { sessionOnly, url } = getBackendUrl();
+      if (!!url && !sessionOnly) {
+        await backendChanged(url);
+      } else {
+        await restartBackend();
+      }
+    };
+
+    const backendChanged = async (url: string | null) => {
+      setConnected(false);
+      if (!url) {
+        await restartBackend();
+      }
+      await connect(url);
+    };
+
+    setupBackend().then();
+
+    const createNewAccount = async (payload: CreateAccountPayload) => {
+      set(loading, true);
+      set(accountCreationError, '');
+      const result = await createAccount(payload);
+      set(loading, false);
+
+      if (result.success) {
+        set(accountCreation, false);
+
+        if (get(logged)) {
+          showGetPremiumButton();
+          loginComplete();
         }
+      } else {
+        set(
+          accountCreationError,
+          result.message ??
+            i18n.t('account_management.creation.error').toString()
+        );
       }
-      // eslint-disable-next-line no-empty
-    } catch (e: any) {
-    } finally {
-      this.autolog = false;
-    }
-  }
+    };
 
-  @Emit()
-  loginComplete() {
-    this.dismiss();
-  }
+    const userLogin = async (credentials: LoginCredentials) => {
+      const { username, password, syncApproval } = credentials;
+      set(loading, true);
+      const result = await login({
+        username,
+        password,
+        syncApproval
+      });
 
-  async backendChanged(url: string | null) {
-    await this.$store.commit('setConnected', false);
-    if (!url) {
-      await this.restartBackend();
-    }
-    await this.$store.dispatch('connect', url);
-  }
-
-  async login(credentials: Credentials) {
-    const { username, password, syncApproval } = credentials;
-    this.loading = true;
-    const { message } = await this.unlock({
-      username,
-      password,
-      syncApproval
-    });
-
-    if (message) {
-      this.errors = [message];
-    }
-    this.loading = false;
-    if (this.logged) {
-      setLastLogin(username);
-      this.showPremiumDialog();
-      this.showGetPremiumButton();
-    }
-  }
-
-  async createAccount(credentials: Credentials) {
-    const { username, password, apiKey, apiSecret, submitUsageAnalytics } =
-      credentials;
-    this.loading = true;
-    this.accountCreationError = '';
-    const { message, success } = await this.unlock({
-      username,
-      password,
-      create: true,
-      syncApproval: 'unknown',
-      apiKey,
-      apiSecret,
-      submitUsageAnalytics
-    });
-    this.loading = false;
-
-    if (success) {
-      this.accountCreation = false;
-
-      if (this.logged) {
-        this.showGetPremiumButton();
-        this.loginComplete();
+      if (!result.success) {
+        set(errors, [result.message]);
       }
-    } else {
-      this.accountCreationError =
-        message ?? this.$t('account_management.creation.error').toString();
-    }
-  }
+      set(loading, false);
+      if (get(logged)) {
+        setLastLogin(username);
+        showPremiumDialog();
+        showGetPremiumButton();
+      }
+    };
 
-  upgrade() {
-    this.$interop.navigateToPremium();
-    this.loginComplete();
-  }
+    const dismissPremiumModal = () => {
+      set(premiumVisible, false);
+    };
 
-  dismiss() {
-    this.premiumVisible = false;
+    return {
+      xsOnly,
+      updateNeeded,
+      autolog,
+      connected,
+      connectionFailure,
+      loading,
+      displayPremium,
+      premiumVisible,
+      accountCreation,
+      accountCreationError,
+      errors,
+      syncConflict,
+      isTest: !!import.meta.env.VITE_TEST,
+      isPackaged: computed(() => interop.isPackaged),
+      backendChanged,
+      dismissPremiumModal,
+      upgrade,
+      userLogin,
+      loginComplete,
+      createNewAccount,
+      animationEnabled,
+      toggleAnimationEnabled
+    };
   }
-
-  private showPremiumDialog() {
-    if (this.premium) {
-      this.loginComplete();
-      return;
-    }
-    this.premiumVisible = true;
-  }
-
-  private showGetPremiumButton() {
-    this.$interop.premiumUserLoggedIn(this.premium);
-  }
-}
+});
 </script>
 
-<style scoped lang="scss">
-@import '~@/scss/scroll';
-
+<style module lang="scss">
 @keyframes scrollLarge {
   0% {
     transform: rotate(-13deg) translateY(0px);
@@ -294,56 +348,69 @@ export default class AccountManagement extends Mixins(BackendMixin) {
   }
 }
 
-.account-management {
-  &__card {
-    z-index: 5;
-    max-height: 90vh;
-    overflow: auto;
+.loading {
+  position: absolute;
+  height: calc(100% + 1100px);
+  width: calc(100% + 900px);
+  left: -450px !important;
+  top: -250px !important;
+  opacity: 0.5;
+  background: url(/assets/images/rotkipattern2.svg) repeat;
+  background-size: 450px 150px;
+  filter: grayscale(0.5);
+  -webkit-animation-name: scrollLarge;
+  animation-name: scrollLarge;
+  -webkit-animation-duration: 35s;
+  animation-duration: 35s;
+  -webkit-animation-timing-function: linear;
+  animation-timing-function: linear;
+  -webkit-animation-iteration-count: infinite;
+  animation-iteration-count: infinite;
 
-    &__title {
-      background-color: var(--v-primary-base);
-    }
-
-    @extend .themed-scrollbar;
-  }
-
-  &__loading {
-    position: absolute;
-    height: calc(100% + 1100px);
-    width: calc(100% + 900px);
-    left: -450px !important;
-    top: -250px !important;
-    opacity: 0.5;
-    background: url(~@/assets/images/rotkipattern2.svg) repeat;
-    background-size: 450px 150px;
-    filter: grayscale(0.5);
-    -webkit-animation-name: scrollLarge;
-    animation-name: scrollLarge;
-    -webkit-animation-duration: 35s;
-    animation-duration: 35s;
-    -webkit-animation-timing-function: linear;
-    animation-timing-function: linear;
-    -webkit-animation-iteration-count: infinite;
-    animation-iteration-count: infinite;
-  }
-
-  &__log-level,
-  &__about {
-    position: absolute !important;
-    width: 56px !important;
-    right: 12px !important;
-
-    @media (min-width: 701px) {
-      bottom: 12px !important;
-    }
-
-    @media (max-width: 700px) {
-      top: 12px !important;
-    }
+  &--paused {
+    animation-play-state: paused;
   }
 }
 
-::v-deep {
+.wrapper {
+  width: 600px;
+  max-width: 100%;
+  padding: 32px 16px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100vh;
+
+  @media (max-height: 800px) {
+    padding-top: 0;
+  }
+}
+
+.card {
+  z-index: 5;
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+
+.icon {
+  position: absolute !important;
+  bottom: 12px;
+
+  &--left {
+    left: 12px;
+  }
+
+  &--right {
+    right: 12px;
+  }
+
+  @media (max-width: 700px) {
+    top: 12px;
+    bottom: auto;
+  }
+}
+
+:global {
   .v-overlay {
     &__content {
       display: flex;

@@ -6,10 +6,10 @@ from gevent.lock import Semaphore
 from rotkehlchen.chain.bitcoin import have_bitcoin_transactions
 from rotkehlchen.chain.bitcoin.hdkey import HDKey
 from rotkehlchen.db.utils import insert_tag_mappings
-from rotkehlchen.errors import RemoteError
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.fval import FVal
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import BlockchainAccountData, BTCAddress, SupportedBlockchain
+from rotkehlchen.types import BlockchainAccountData, BTCAddress, SupportedBlockchain
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.manager import BlockchainBalancesUpdate, ChainManager

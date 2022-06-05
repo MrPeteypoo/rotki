@@ -7,21 +7,21 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset, EthereumToken, UnderlyingToken
 from rotkehlchen.assets.resolver import AssetResolver
-from rotkehlchen.assets.typing import AssetData, AssetType
+from rotkehlchen.assets.types import AssetData, AssetType
 from rotkehlchen.assets.utils import symbol_to_asset_or_token
-from rotkehlchen.chain.ethereum.typing import string_to_ethereum_address
+from rotkehlchen.chain.ethereum.types import string_to_ethereum_address
 from rotkehlchen.constants.assets import A_BAT, A_CRV, A_DAI, A_PICKLE
 from rotkehlchen.constants.misc import NFT_DIRECTIVE
 from rotkehlchen.constants.resolver import ethaddress_to_identifier
-from rotkehlchen.errors import InputError
+from rotkehlchen.errors.misc import InputError
 from rotkehlchen.exchanges.data_structures import Trade
 from rotkehlchen.globaldb.handler import GLOBAL_DB_VERSION, GlobalDBHandler
-from rotkehlchen.history.typing import HistoricalPriceOracle
+from rotkehlchen.history.types import HistoricalPriceOracle
 from rotkehlchen.serialization.deserialize import deserialize_asset_amount
 from rotkehlchen.tests.fixtures.globaldb import create_globaldb
 from rotkehlchen.tests.utils.factories import make_ethereum_address
 from rotkehlchen.tests.utils.globaldb import INITIAL_TOKENS
-from rotkehlchen.typing import Location, Price, Timestamp, TradeType
+from rotkehlchen.types import Location, Price, Timestamp, TradeType
 
 selfkey_address = string_to_ethereum_address('0x4CC19356f2D37338b9802aa8E8fc58B0373296E7')
 selfkey_id = ethaddress_to_identifier(selfkey_address)
@@ -271,7 +271,7 @@ def test_enum_values_are_present_in_global_db(globaldb, enum_class, table_name):
     Check that all enum classes have the same number of possible values
     in the class definition as in the database
     """
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     query = f'SELECT COUNT(*) FROM {table_name} WHERE seq=?'
 
     for enum_class_entry in enum_class:
@@ -382,7 +382,7 @@ def test_globaldb_pragma_foreign_keys(globaldb):
     and PRAGMAs and to check that they hold for the versions we use. If this test
     fails we know that something has changed and we will need to adjust our strategy.
     """
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     cursor.execute('PRAGMA foreign_keys = OFF;')
     cursor.execute('PRAGMA foreign_keys')
     # Now restrictions should be disabled
@@ -416,7 +416,7 @@ def test_globaldb_pragma_foreign_keys(globaldb):
 
     # deactivate them
     cursor.execute('PRAGMA foreign_keys = OFF;')
-    globaldb._conn.commit()
+    globaldb.conn.commit()
     cursor.execute('PRAGMA foreign_keys')
     assert cursor.fetchone()[0] == 0
     cursor.execute('PRAGMA foreign_keys = ON;')
@@ -528,7 +528,7 @@ def test_global_db_restore(globaldb, database):
     database.delete_trade(trade.identifier)
     status, msg = GlobalDBHandler().hard_reset_assets_list(database, True)
     assert status, msg
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     query = f'SELECT COUNT(*) FROM ethereum_tokens where address == "{address_to_delete}";'
     r = cursor.execute(query)
     assert r.fetchone() == (0,), 'Ethereum token should have been deleted'
@@ -625,7 +625,7 @@ def test_global_db_reset(globaldb):
 
     status, _ = GlobalDBHandler().soft_reset_assets_list()
     assert status
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     query = f'SELECT COUNT(*) FROM ethereum_tokens where address == "{address_to_delete}";'
     r = cursor.execute(query)
     assert r.fetchone() == (1,), 'Custom ethereum tokens should not been deleted'
@@ -663,7 +663,7 @@ def test_add_user_owned_asset_nft(globaldb):
     Test that adding an NFT user owned asset does not make it into the global DB.
     Otherwise a foreign key error will occur.
     """
-    cursor = globaldb._conn.cursor()
+    cursor = globaldb.conn.cursor()
     result = cursor.execute('SELECT asset_id FROM user_owned_assets').fetchall()
     initial_assets = {x[0] for x in result}
 

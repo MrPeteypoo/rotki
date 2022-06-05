@@ -46,14 +46,16 @@
               </template>
               <template #item.source="{ item }">
                 <div class="d-flex flex-row align-center">
-                  <v-img
-                    width="24px"
-                    contain
-                    position="left"
-                    max-height="32px"
-                    max-width="32px"
-                    :src="getIcon(item.source)"
-                  />
+                  <adaptive-wrapper>
+                    <v-img
+                      width="24px"
+                      contain
+                      position="left"
+                      max-height="32px"
+                      max-width="32px"
+                      :src="getIcon(item.source)"
+                    />
+                  </adaptive-wrapper>
                   <span class="ms-2" v-text="getLabel(item.source)" />
                 </div>
               </template>
@@ -99,21 +101,28 @@ import { Blockchain } from '@rotki/common/lib/blockchain';
 import { Component, Mixins } from 'vue-property-decorator';
 import { DataTableHeader } from 'vuetify';
 import { mapActions, mapGetters } from 'vuex';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import DataTable from '@/components/helper/DataTable.vue';
 import ProgressScreen from '@/components/helper/ProgressScreen.vue';
 import RowExpander from '@/components/helper/RowExpander.vue';
 import StatusMixin from '@/mixins/status-mixin';
+import ThemeMixin from '@/mixins/theme-mixin';
 import { Section } from '@/store/const';
 import {
   AIRDROP_1INCH,
   AIRDROP_CONVEX,
   AIRDROP_CORNICHON,
+  AIRDROP_COW_GNOSIS,
+  AIRDROP_COW_MAINNET,
   AIRDROP_CURVE,
+  AIRDROP_ENS,
   AIRDROP_FOX,
   AIRDROP_FURUCOMBO,
   AIRDROP_GRAIN,
   AIRDROP_LIDO,
+  AIRDROP_PARASWAP,
   AIRDROP_POAP,
+  AIRDROP_SADDLE,
   AIRDROP_TORNADO,
   AIRDROP_UNISWAP
 } from '@/store/defi/const';
@@ -130,7 +139,13 @@ type AirdropSources = {
 };
 
 @Component({
-  components: { DataTable, PoapDeliveryAirdrops, RowExpander, ProgressScreen },
+  components: {
+    AdaptiveWrapper,
+    DataTable,
+    PoapDeliveryAirdrops,
+    RowExpander,
+    ProgressScreen
+  },
   computed: {
     ...mapGetters('defi', ['airdrops', 'airdropAddresses'])
   },
@@ -138,7 +153,7 @@ type AirdropSources = {
     ...mapActions('defi', ['fetchAirdrops'])
   }
 })
-export default class Airdrops extends Mixins(StatusMixin) {
+export default class Airdrops extends Mixins(StatusMixin, ThemeMixin) {
   readonly section = Section.DEFI_AIRDROPS;
   readonly ETH = Blockchain.ETH;
   readonly headers: DataTableHeader[] = [
@@ -191,48 +206,68 @@ export default class Airdrops extends Mixins(StatusMixin) {
 
   readonly sources: AirdropSources = {
     [AIRDROP_UNISWAP]: {
-      icon: require(`@/assets/images/defi/uniswap.svg`),
+      icon: '/assets/images/defi/uniswap.svg',
       name: 'Uniswap'
     },
     [AIRDROP_1INCH]: {
-      icon: require(`@/assets/images/1inch.svg`),
+      icon: '/assets/images/1inch.svg',
       name: '1inch'
     },
     [AIRDROP_TORNADO]: {
-      icon: require(`@/assets/images/tornado.svg`),
+      icon: '/assets/images/airdrops/tornado.svg',
       name: 'Tornado Cash'
     },
     [AIRDROP_CORNICHON]: {
-      icon: require(`@/assets/images/cornichon.svg`),
+      icon: '/assets/images/airdrops/cornichon.svg',
       name: 'Cornichon'
     },
     [AIRDROP_GRAIN]: {
-      icon: require(`@/assets/images/grain.png`),
+      icon: '/assets/images/airdrops/grain.png',
       name: 'Grain'
     },
     [AIRDROP_LIDO]: {
-      icon: require(`@/assets/images/airdrops/lido.svg`),
+      icon: '/assets/images/airdrops/lido.svg',
       name: 'Lido'
     },
     [AIRDROP_FURUCOMBO]: {
-      icon: require(`@/assets/images/airdrops/furucombo.png`),
+      icon: '/assets/images/airdrops/furucombo.png',
       name: 'Furucombo'
     },
     [AIRDROP_CURVE]: {
-      icon: require(`@/assets/images/defi/curve.svg`),
+      icon: '/assets/images/defi/curve.svg',
       name: 'Curve Finance'
     },
     [AIRDROP_POAP]: {
-      icon: require(`@/assets/images/airdrops/poap.svg`),
+      icon: '/assets/images/airdrops/poap.svg',
       name: 'POAP Delivery'
     },
     [AIRDROP_CONVEX]: {
-      icon: require('@/assets/images/airdrops/convex.jpeg'),
+      icon: '/assets/images/airdrops/convex.jpeg',
       name: 'Convex'
     },
     [AIRDROP_FOX]: {
-      icon: require('@/assets/images/airdrops/FOX_Icon_dark.svg'),
+      icon: '/assets/images/shapeshift.svg',
       name: 'ShapeShift'
+    },
+    [AIRDROP_ENS]: {
+      icon: '/assets/images/airdrops/ens.svg',
+      name: 'ENS'
+    },
+    [AIRDROP_PARASWAP]: {
+      icon: '/assets/images/airdrops/paraswap.svg',
+      name: 'ParaSwap'
+    },
+    [AIRDROP_SADDLE]: {
+      icon: '/assets/images/airdrops/saddle-finance.svg',
+      name: 'SaddleFinance'
+    },
+    [AIRDROP_COW_MAINNET]: {
+      icon: '/assets/images/airdrops/cow.svg',
+      name: 'COW (ethereum)'
+    },
+    [AIRDROP_COW_GNOSIS]: {
+      icon: '/assets/images/airdrops/cow.svg',
+      name: 'COW (gnosis chain)'
     }
   };
 

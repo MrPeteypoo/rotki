@@ -10,16 +10,15 @@ TODO: Make some mock tests at some point
 
 import warnings as test_warnings
 from enum import Enum
+from typing import Literal
 from unittest.mock import patch
 
-from typing_extensions import Literal
-
 from rotkehlchen.constants.assets import A_BAT, A_ETH
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.exchanges.coinbasepro import Coinbasepro, coinbasepro_to_worldpair
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import Location
+from rotkehlchen.types import Location
 
 PRODUCTS_RESPONSE = """[{
 "id": "BAT-ETH",
@@ -92,6 +91,7 @@ def create_coinbasepro_query_mock(
     def mock_coinbasepro_request(
             request_method: Literal['get', 'post'],  # pylint: disable=unused-argument
             url: str,
+            timeout: int,  # pylint: disable=unused-argument
             data: str = '',  # pylint: disable=unused-argument
             allow_redirects: bool = True,  # pylint: disable=unused-argument
     ) -> MockResponse:

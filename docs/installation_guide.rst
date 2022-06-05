@@ -74,6 +74,7 @@ If you get a problem when starting the application or during its usage please op
 
 OSX
 ========
+
 Homebrew
 --------
 
@@ -83,6 +84,9 @@ Manual installation
 -------------------
 
 Go to the `releases <https://github.com/rotki/rotki/releases>`_ page and download the darwin-x64 dmg package from the `latest release <https://github.com/rotki/rotki/releases/latest>`_.
+
+   .. note::
+      rotki's minimum supported macOS version is Mojave(10.14). If you can't upgrade to Mojave(hardware older than 2012) either buy new Mac hardware or switch to Linux or Windows. This does not depend on us. It's Apple's policy to force their users buy more hardware.
 
 Click on the dmg installer and when prompted drag the rotki logo to your Applications. This will install the application and once finished you can select rotki from your applications folder and launch it.
 
@@ -162,6 +166,54 @@ At this point the rotki docker container should be running and you
 should be able to access rotki frontend, open your browser and go to
 it at ``http://localhost:8084``. You should be able to see the rotki login screen.
 
+
+Configuring backend in docker
+-------------------------------
+It is possible to change the configuration of the backend in the docker container. You can do so
+using two different approaches.
+
+The first approach include mounting a config volume::
+
+   docker run -d --name rotki \
+       -p 8084:80 \
+       -v $HOME/.rotki/data:/data \
+       -v $HOME/.rotki/logs:/logs \
+       -v $HOME/.rotki/config:/config \
+       rotki/rotki:latest
+
+You need to create a ``rotki_config.json`` file and put it inside ``$HOME/.rotki/config`` directory.
+
+.. code-block:: javascript
+
+    {
+       "loglevel": "info",
+       "logfromothermodules": true,
+       "sleep-secs": 22,
+       "max_size_in_mb_all_logs": 550,
+       "max_logfiles_num": 3
+    }
+
+The list above contains all the supported configuration options, but you can also specify only the ones
+you would like to change. This approach allows you to modify the config and restart the container
+to apply them.
+
+The second approach is by using environment variables during the container creation::
+
+   docker run -d --name rotki \
+       -p 8084:80 \
+       -v $HOME/.rotki/data:/data \
+       -v $HOME/.rotki/logs:/logs \
+       -e LOGLEVEL=debug
+       rotki/rotki:latest
+
+The supported environment variables are ``LOGLEVEL``, ``LOGFROMOTHERMODDULES``, ``SLEEP_SECS``,
+``MAX_SIZE_IN_MB_ALL_LOGS`` and ``MAX_LOGFILES_NUM``. Since these variables are passed during
+the container creation to change them requires re-creating the container with the new parameters.
+
+.. warning::
+
+    When using both a config file and environment variables, the config file will take precedence.
+
 Time in Profit / Loss Report is in wrong.
 --------------------------------------------
 To set the timezone in the docker environment you can use the option ``-e TZ=Timezone`` when starting the container::
@@ -172,7 +224,7 @@ To set the timezone in the docker environment you can use the option ``-e TZ=Tim
         -v $HOME/.rotki/logs:/logs \
         -e TZ=America/New_York \
         rotki/rotki:latest
-       
+
 You can find all TimeZone Databases on Wikipedia:
 https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
 
@@ -225,7 +277,7 @@ Using Docker Defined Volume:
    version: '3.7'
    services:
      rotki:
-       environment: 
+       environment:
          - TZ=America/Chicago  # TimeZone Databases on Wikipedia: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
        image: rotki/rotki:latest
        ports:
@@ -233,12 +285,12 @@ Using Docker Defined Volume:
        networks:
          - rotki-net
        volumes:
-         - rotki-data:/data 
+         - rotki-data:/data
          - rotki-logs:/logs
    volumes:
      rotki-data:
      rotki-logs:
-   networks: 
+   networks:
      rotki-net:
 
 Using $home (or which ever path to your local data) Defined directed volume:
@@ -248,7 +300,7 @@ Using $home (or which ever path to your local data) Defined directed volume:
    version: '3.7'
    services:
      rotki:
-       environment: 
+       environment:
          - TZ=America/Chicago  # TimeZone Databases on Wikipedia: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
        image: rotki/rotki:latest
        ports:
@@ -256,9 +308,9 @@ Using $home (or which ever path to your local data) Defined directed volume:
        networks:
          - rotki-net
        volumes:
-         - $HOME/.rotki/data:/data 
+         - $HOME/.rotki/data:/data
          - $HOME/.rotki/logs:/logs
-   networks: 
+   networks:
      rotki-net:
 
 
@@ -302,28 +354,28 @@ Get `sqlcipher <https://www.zetetic.net/sqlcipher/>`_ version 4:
 
 - If you are running Archlinux you can install the `package <https://www.archlinux.org/packages/community/x86_64/sqlcipher/>`_ with ``pacman``.
 
-- If you are running Ubuntu, at the time of writing of this article Ubuntu is still using sqlcipher v3 which is not supported by rotki. So you should build sqlcipher v4 by hand. We have a script for that which is also used by our CI. Check it out `here <https://github.com/rotki/rotki/blob/7573bcbd9bfc83e0ef352701ae2772a040b4ab5b/install_deps.sh>`__. Install libssl-dev and tclsh by running ``sudo apt-get install libssl-dev tclsh`` if not already installed.
+- If you are running Ubuntu, at the time of writing of this article Ubuntu is still using sqlcipher v3 which is not supported by rotki. So you should build sqlcipher v4 by hand. We have a script for that `here <https://github.com/rotki/rotki/blob/7203c09e9fc89e38950f89a5f452f57bf3d2542a/sqlcipher_ubuntu.sh>`__. Run this script inside venv and then run ``export $(cat sqlcipher.env)``. Install libssl-dev and tclsh by running ``sudo apt-get install libssl-dev tclsh`` if not already installed.
 
 - If you are running openSUSE Tumbleweed, you can install sqlcipher v4 as follows::
 
     sudo zypper install sqlcipher sqlcipher-devel
 
-rotki uses npm v7. To check if you have version 7 of npm you can run::
+rotki uses npm v8. To check if you have version 8 of npm you can run::
 
     npm --version
 
 If you are on an older version of npm, you can install it by::
 
-    npm install -g npm@7
+    npm install -g npm@8
 
 Install electron and any other npm dependencies by::
 
     cd frontend
     npm ci
 
-Create a new `virtual environment <http://docs.python-guide.org/en/latest/dev/virtualenvs/>`_ with python 3.7 to install all the python dependencies. If you don't have ``mkvirtualenv`` then check how to get it depending on your distribution. `Here <http://exponential.io/blog/2015/02/10/install-virtualenv-and-virtualenvwrapper-on-ubuntu/>`__ is a guide for Ubuntu and `here <https://wiki.archlinux.org/index.php/Python/Virtual_environment>`__ is one for ArchLinux::
+Create a new `virtual environment <http://docs.python-guide.org/en/latest/dev/virtualenvs/>`_ with python 3.9 to install all the python dependencies. If you don't have ``mkvirtualenv`` then check how to get it depending on your distribution. `Here <http://exponential.io/blog/2015/02/10/install-virtualenv-and-virtualenvwrapper-on-ubuntu/>`__ is a guide for Ubuntu and `here <https://wiki.archlinux.org/index.php/Python/Virtual_environment>`__ is one for ArchLinux::
 
-    mkvirtualenv rotki -p /usr/bin/python3.7
+    mkvirtualenv rotki -p /usr/bin/python3.9
 
 Then install all the python requirements by doing::
 
@@ -341,16 +393,21 @@ Since the electron application is located in a different directory you also need
 Before starting the application you need to build the common package. To do this you can go to ``frontend`` and
 run ``npm run build -w @rotki/common``.
 
-After that you can start the application from the ``frontend`` directory and typing ``npm run electron:serve -w rotki``.
+After that you can start the application from the ``frontend`` directory by typing ``npm run dev``.
+
+If you don't want to do the development inside electron or you want to test any non-electron features in your browsers
+you can alternatively start ``npm run dev:web`` this will start everything except electron. After the vue development
+server was finished starting up you should be able to access the url from your browser. Keep in mind that this
+works only for localhost access and a proxy might be needed to access it from a different machine.
 
 OSX
 =====
 
 The tl;dr version is:
 - Install ``sqlcipher``
-- Use a virtual env with Python 3.7.x
+- Use a virtual env with Python 3.9.x
 - Confirm ``pip``(pip3) install correctly and up to date
-- Get your node under control with ``nvm``. It has been tested with v14.16.0
+- Get your node under control with ``nvm``. It has been tested with v16
 
 The following recipe has been tested using `Anaconda <https://conda.io>`_. `VirtualEnv <https://virtualenv.pypa.io>`_ works as well, refer to the documentations of those projects to install and use them.
 
@@ -359,7 +416,7 @@ rotki uses an encrypted database called `SQLCipher <https://www.zetetic.net/sqlc
 
     $ brew update
     $ cd "$(brew --repo homebrew/core)"
-    $ git checkout 31f4d9cef46b1c39cdbe2f72ab682b5d0b02cf67 Formula/sqlcipher.rb #This formula installs 4.4.3 of sqlcipher
+    $ git checkout 9ad779deb6076d0fc251fddc579ee2eb72acbb99 Formula/sqlcipher.rb #This formula installs 4.5.0 of sqlcipher
     $ brew install sqlcipher
 
 Also these are some dependencies that may or may not be properly installed in your system so make sure you have them. ::
@@ -373,7 +430,7 @@ If you wish to use Conda, use the following commands::
     $ echo "export PATH=$PATH:/usr/local/anaconda3/bin" >> ~/.bash_profile
     $ echo ". /usr/local/anaconda3/etc/profile.d/conda.sh" >> ~/.bash_profile
     $ source ~/.bash_profile
-    $ conda create python=3.7 --name rotki
+    $ conda create python=3.9 --name rotki
     $ conda activate rotki
 
 If you wish to use Virtualenvwrapper use the following::
@@ -386,14 +443,16 @@ And add the following to your shell startup file (e.g. .bashrc, .bash_profile, o
     #Virtualenvwrapper settings:
     export WORKON_HOME=$HOME/.virtualenvs
     export PROJECT_HOME=$HOME/rotki_dev
-    export VIRTUALENVWRAPPER_PYTHON=/Library/Frameworks/Python.framework/Versions/3.7/bin/python3
-    export VIRTUALENVWRAPPER_VIRTUALENV=/Library/Frameworks/Python.framework/Versions/3.7/bin/virtualenv
-    source /Library/Frameworks/Python.framework/Versions/3.7/bin/virtualenvwrapper.sh
-    
+    export VIRTUALENVWRAPPER_PYTHON=/Library/Frameworks/Python.framework/Versions/3.9/bin/python3
+    export VIRTUALENVWRAPPER_VIRTUALENV=/Library/Frameworks/Python.framework/Versions/3.9/bin/virtualenv
+    source /Library/Frameworks/Python.framework/Versions/3.9/bin/virtualenvwrapper.sh
+
 And reload shell startup file::
+
     $ source ~/.bash_profile
 
 And activate Python virtual environment::
+
     $ workon rotki
 
 Before using `pip3`, let´s ensure we have the latest version::
@@ -402,7 +461,7 @@ Before using `pip3`, let´s ensure we have the latest version::
 
 Install all the requirements::
 
-    $ sudo pip3 install -r requirements.txt
+    $ pip3 install -r requirements.txt
 
 If you want to also have the developer requirements in order to develop rotki
 then do::
@@ -410,8 +469,11 @@ then do::
     $ pip3 install -r requirements_dev.txt
 
 .. NOTE::
-   Make sure that pysqlcipher3 is properly installed. If ``$ pip3 freeze | grep pysqlcipher3`` returns nothing for you then it was not installed. Try to manually install only that dependency with the verbose option to see where it fails. ``$ pip3 install pysqlcipher3 -v``. If it fails at the stage of finding the library for ``-lsqlcipher`` then ``brew install sqlciper`` did not place the installed lib directory to the ``LIBRARY_PATH`` and you will have to do it manually. For example if ``sqlcipher`` was installed at ``/usr/local/Cellar/sqlcipher/4.4.0/`` then use pip3 install this way:
-     ``$ LIBRARY_PATH=/usr/local/Cellar/sqlcipher/4.4.0/lib pip3 install pysqlcipher3``.
+    Make sure that pysqlcipher3 is properly installed. If ``$ pip3 freeze | grep pysqlcipher3`` returns nothing for you then it was not installed. Try to manually install only that dependency with the verbose option to see where it fails. ``$ pip3 install pysqlcipher3 -v``. If it fails at the stage of finding the library for ``-lsqlcipher`` or ``sqlcipher/sqlite3.h file not found`` then ``brew install sqlciper`` did not place the installed lib directory to the ``LIBRARY_PATH`` and you will have to do it manually.
+    For example, if ``sqlcipher`` was installed using Homebrew, the library path resembles this ``/opt/homebrew/Cellar/sqlcipher/<version>/lib`` on Mac ARM based chips and ``/usr/local/Cellar/sqlcipher/<version>/lib`` on Mac Intel based chips by default.
+    Afterwards, install ``pysqlcipher3`` using the command below:
+    ``$ LIBRARY_PATH=/opt/homebrew/Cellar/sqlcipher/4.5.1/lib C_INCLUDE_PATH=/opt/homebrew/Cellar/sqlcipher/4.5.1/include pip3 install pysqlcipher3``.
+    Assuming ``version`` = 4.5.1.
 
 Since the electron application is located in a different directory you also need to do::
 
@@ -421,13 +483,13 @@ rotki uses `Electron <https://electronjs.org>`, we need to install it. To do so 
 
     $ brew install node
 
-rotki uses npm v7. To check if you have version 7 of npm you can run::
+rotki uses npm v8. To check if you have version 8 of npm you can run::
 
     npm --version
 
 If you are on an older version of npm, you can install it by::
 
-    npm install -g npm@7
+    npm install -g npm@8
 
 
 Almost there, we can now install all the Node.js dependencies of the frontend app. Using a recent Node.js version such as 14.16.0, it should be smooth. Also since ``npm`` uses ``gyp`` and that requires python 2.7 make sure to set it up appropriately before invoking ``npm``::
@@ -438,7 +500,7 @@ Almost there, we can now install all the Node.js dependencies of the frontend ap
 
 You can now start rotki, still from the ``frontend`` directory::
 
-    $ npm run electron:serve
+    $ npm run dev
 
 Windows
 ==========
@@ -455,7 +517,7 @@ Install `node (includes npm) <https://nodejs.org/en/download/>`_.
 Python
 ^^^^^^^^^^^^^^^^^^^^
 
-1. Get `python 3.7 <https://www.python.org/downloads/release/python-374/>`_ (3.7 is required due to some rotki dependencies). Make sure to download the 64-bit version of python if your version of Windows is 64-bit! If you're unsure of what Windows version you have, you can check in Control Panel -> System and Security -> System.
+1. Get `python 3.9 <https://www.python.org/downloads/release/python-3910/>`_ (3.9 is required due to some rotki dependencies). Make sure to download the 64-bit version of python if your version of Windows is 64-bit! If you're unsure of what Windows version you have, you can check in Control Panel -> System and Security -> System.
 2. For some reason python does not always install to the Path variable in Windows. To ensure you have the necessary python directories referenced, go to Control Panel -> System -> Advanced system settings -> Advanced (tab) -> Environment Variables... In the Environment Variables... dialog under "System Varaiables" open the "Path" variable and ensure that both the root python directory as well as the ``\Scripts\`` subdirectory are included. If they are not, add them one by one by clicking "New" and then "Browse" and locating the correct directories. NOTE: By default the Windows MSI installer place python in the ``C:\Users\<username>\AppData\Local\Programs\`` directory.
 3. To test if you have entered python correctly into the Path variable, open a command prompt and type in ``python`` then hit Enter. The python cli should run and you should see the python version you installed depicted above the prompt. Press CTRL+Z, then Enter to exit.
 
@@ -497,17 +559,6 @@ In order to build rotki on Windows, you will need to have installed and built py
 
 
 3. Once you have completed up to and including Step 6 in the sqlcipher build guide (you can ignore Step 7), you will have compiled sqlcipher and built the necessary headers and libraries that pysqlcipher3 depends on. In the directory you should now see ``sqlcipher.dll``, copy and paste this file to your ``<Windows>\System32`` directory. These files will be used later; you can now move on to setting up your rotki dev environment.
-
-Set up rotki dev environment
-----------------------------
-
-Docker
-=========
-
-To build Docker image from source using ``Dockerfile``::
-
-    $ docker build -t rotki .
-
 
 Downloading source and installing python dependencies
 ------------------------------------------------------
@@ -583,7 +634,7 @@ Installing Electron and Running rotki
 
     cd frontend
     npm ci
-    
+
 2. Next you should build the ``@rotki/common`` library::
 
     npm run build -w @rotki/common
@@ -647,3 +698,11 @@ Read the issue for a lot of details and also the ``appveyor.yml`` for what needs
        $ cp sqlcipher-amalgamation-3020001/OpenSSL-Win32/* /c/Users/lefteris/AppData/Local/Programs/Python/Python37-32/libs/
 
    Note it has to be the OpenSSL-Win32 part.
+
+
+Docker
+=========
+
+To build Docker image from source using ``Dockerfile``::
+
+    $ docker build -t rotki .

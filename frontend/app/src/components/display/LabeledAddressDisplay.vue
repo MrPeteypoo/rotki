@@ -1,17 +1,17 @@
 <template>
   <div class="d-flex flex-row labeled-address-display align-center">
-    <v-tooltip top open-delay="400" :disabled="!truncated">
+    <v-tooltip top open-delay="400" :disabled="!truncated && !ensName">
       <template #activator="{ on }">
         <span
+          data-cy="labeled-address-display"
           class="labeled-address-display__address"
-          :class="
-            $vuetify.breakpoint.xsOnly
-              ? 'labeled-address-display__address--mobile'
-              : null
-          "
+          :class="xsOnly ? 'labeled-address-display__address--mobile' : null"
           v-on="on"
         >
           <v-chip label outlined class="labeled-address-display__chip">
+            <v-avatar size="24" class="mr-2">
+              <v-img :src="makeBlockie(address)" />
+            </v-avatar>
             <span v-if="!!label" class="text-truncate">
               {{
                 $t('labeled_address_display.label', {
@@ -19,23 +19,23 @@
                 })
               }}
             </span>
-            <span
-              v-if="!!label && displayAddress && !$vuetify.breakpoint.smAndDown"
-              class="px-1"
-            >
+            <span v-if="!!label && displayAddress && !smAndDown" class="px-1">
               {{ $t('labeled_address_display.divider') }}
             </span>
             <span
-              v-if="!$vuetify.breakpoint.smAndDown || !label"
-              :class="privacyMode ? 'blur-content' : null"
+              v-if="!smAndDown || !label"
+              :class="{ 'blur-content': !shouldShowAmount }"
             >
               {{ displayAddress }}
             </span>
           </v-chip>
         </span>
       </template>
-      <span v-if="!!label"> {{ account.label }} <br /> </span>
-      <span> {{ address }} </span>
+      <div>
+        <span v-if="!!label"> {{ account.label }}</span>
+        <span v-if="smAndDown && ensName"> ({{ ensName }})</span>
+      </div>
+      <div>{{ address }}</div>
     </v-tooltip>
     <div class="labeled-address-display__actions">
       <hash-link :text="account.address" buttons small :chain="account.chain" />
@@ -45,77 +45,110 @@
 
 <script lang="ts">
 import { GeneralAccount } from '@rotki/common/lib/account';
-import { Component, Mixins, Prop } from 'vue-property-decorator';
-import { mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import makeBlockie from 'ethereum-blockies-base64';
+import { setupThemeCheck } from '@/composables/common';
+import { setupDisplayData } from '@/composables/session';
 import { truncateAddress, truncationPoints } from '@/filters';
-import ScrambleMixin from '@/mixins/scramble-mixin';
-import { randomHex } from '@/typing/utils';
+import { useEnsNamesStore } from '@/store/balances';
+import { randomHex } from '@/utils/data';
 
-@Component({
-  computed: { ...mapState('session', ['privacyMode']) }
-})
-export default class LabeledAddressDisplay extends Mixins(ScrambleMixin) {
-  privacyMode!: boolean;
+export default defineComponent({
+  name: 'LabeledAddressDisplay',
+  props: {
+    account: { required: true, type: Object as PropType<GeneralAccount> }
+  },
+  setup(props) {
+    const { account } = toRefs(props);
+    const { currentBreakpoint } = setupThemeCheck();
+    const { scrambleData, shouldShowAmount } = setupDisplayData();
 
-  @Prop({ required: true })
-  account!: GeneralAccount;
+    const { ensNameSelector } = useEnsNamesStore();
+    const ensName = computed<string | null>(() =>
+      get(ensNameSelector(get(account).address))
+    );
 
-  truncated: boolean = false;
+    const xsOnly = computed(() => get(currentBreakpoint).xsOnly);
+    const smAndDown = computed(() => get(currentBreakpoint).smAndDown);
 
-  get address(): string {
-    return this.scrambleData ? randomHex() : this.account.address;
+    const address = computed<string>(() => {
+      return get(scrambleData) ? randomHex() : get(account).address;
+    });
+
+    const breakpoint = computed<string>(() => {
+      return get(account).label.length > 0 && get(currentBreakpoint).mdAndDown
+        ? 'sm'
+        : get(currentBreakpoint).name;
+    });
+
+    const truncationLength = computed<number>(() => {
+      let truncationPoint = truncationPoints[get(breakpoint)];
+      if (truncationPoint && get(account).label) {
+        return 4;
+      }
+      return truncationPoint ?? 4;
+    });
+
+    const truncatedAddress = computed(() => {
+      return truncateAddress(get(address), get(truncationLength));
+    });
+
+    const displayAddress = computed<string>(() => {
+      if (get(ensName)) return get(ensName) as string;
+      if (get(truncatedAddress).length >= get(address).length) {
+        return get(address);
+      }
+      return get(truncatedAddress);
+    });
+
+    const truncated = computed<boolean>(() => {
+      if (get(truncatedAddress).length >= get(address).length) {
+        return false;
+      }
+      return get(truncatedAddress).includes('...');
+    });
+
+    const label = computed<string>(() => {
+      const bp = get(currentBreakpoint);
+      const label = get(account).label;
+      let length = -1;
+
+      if (bp.xlOnly && label.length > 50) {
+        length = 47;
+      } else if (bp.lgOnly && label.length > 38) {
+        length = 35;
+      } else if (bp.md && label.length > 27) {
+        length = 24;
+      } else if (bp.smOnly && label.length > 19) {
+        length = 16;
+      }
+
+      if (length > 0) {
+        return label.substr(0, length) + '...';
+      }
+
+      return label;
+    });
+
+    return {
+      ensName,
+      xsOnly,
+      smAndDown,
+      truncated,
+      label,
+      displayAddress,
+      shouldShowAmount,
+      address,
+      makeBlockie
+    };
   }
-
-  get breakpoint(): string {
-    return this.account.label.length > 0 && this.$vuetify.breakpoint.mdAndDown
-      ? 'sm'
-      : this.$vuetify.breakpoint.name;
-  }
-
-  get truncationLength(): number {
-    let truncationPoint = truncationPoints[this.breakpoint];
-    if (truncationPoint && this.account.label) {
-      return 4;
-    }
-    return truncationPoint ?? 4;
-  }
-
-  get displayAddress(): string {
-    const address = truncateAddress(this.address, this.truncationLength);
-    if (address.length >= this.address.length) {
-      this.truncated = false;
-      return this.address;
-    }
-    this.truncated = address.includes('...');
-    return address;
-  }
-
-  get label(): string {
-    const bp = this.$vuetify.breakpoint;
-    const label = this.account.label;
-    let length = -1;
-
-    if (bp.xlOnly && label.length > 50) {
-      length = 47;
-    } else if (bp.lgOnly && label.length > 38) {
-      length = 35;
-    } else if (bp.md && label.length > 27) {
-      length = 24;
-    } else if (bp.smOnly && label.length > 19) {
-      length = 16;
-    }
-
-    if (length > 0) {
-      return label.substr(0, length) + '...';
-    }
-
-    return label;
-  }
-
-  copy(address: string) {
-    navigator.clipboard.writeText(address);
-  }
-}
+});
 </script>
 
 <style scoped lang="scss">
@@ -147,8 +180,6 @@ export default class LabeledAddressDisplay extends Mixins(ScrambleMixin) {
 
   &__actions {
     height: 32px;
-    width: 70px;
-    max-width: 75px;
     background-color: var(--v-rotki-light-grey-base);
     border: 1px solid rgba(0, 0, 0, 0.12);
     border-left-width: 0;

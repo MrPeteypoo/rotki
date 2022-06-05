@@ -1,5 +1,4 @@
 import filecmp
-import os
 import shutil
 from http import HTTPStatus
 from pathlib import Path
@@ -13,8 +12,10 @@ from rotkehlchen.tests.utils.api import (
     api_url_for,
     assert_error_response,
     assert_proper_response_with_result,
+    assert_simple_ok_response,
 )
-from rotkehlchen.tests.utils.constants import A_GNO
+from rotkehlchen.tests.utils.constants import A_DOGE, A_GNO
+from rotkehlchen.utils.misc import ts_now
 
 
 @pytest.mark.parametrize('start_with_logged_in_user', [False])
@@ -23,8 +24,8 @@ from rotkehlchen.tests.utils.constants import A_GNO
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_upload_custom_icon(rotkehlchen_api_server, file_upload, data_dir):
     """Test that uploading custom icon works"""
-    root_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))  # noqa: E501
-    filepath = root_path / 'frontend' / 'app' / 'src' / 'assets' / 'images' / 'kraken.png'
+    root_path = Path(__file__).resolve().parent.parent.parent.parent
+    filepath = root_path / 'frontend' / 'app' / 'public' / 'assets' / 'images' / 'exchanges' / 'kraken.svg'  # noqa: E501
 
     if file_upload:
         files = {'file': open(filepath, 'rb')}
@@ -48,7 +49,7 @@ def test_upload_custom_icon(rotkehlchen_api_server, file_upload, data_dir):
 
     result = assert_proper_response_with_result(response)
     assert result == {'identifier': A_GNO.identifier}
-    uploaded_icon = data_dir / 'icons' / 'custom' / f'{A_GNO.identifier}.png'
+    uploaded_icon = data_dir / 'icons' / 'custom' / f'{A_GNO.identifier}.svg'
     assert uploaded_icon.is_file()
     assert filecmp.cmp(uploaded_icon, filepath)
 
@@ -59,8 +60,8 @@ def test_upload_custom_icon(rotkehlchen_api_server, file_upload, data_dir):
 @pytest.mark.parametrize('use_clean_caching_directory', [True])
 def test_upload_custom_icon_errors(rotkehlchen_api_server, file_upload):
     """Test that common error handling for uploading custom icons"""
-    root_path = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))  # noqa: E501
-    filepath = root_path / 'frontend' / 'app' / 'src' / 'assets' / 'images' / 'kraken.png'
+    root_path = Path(__file__).resolve().parent.parent.parent.parent
+    filepath = root_path / 'frontend' / 'app' / 'public' / 'assets' / 'images' / 'exchanges' / 'kraken.svg'  # noqa: E501
 
     # Let's also try to upload a file without the csv prefix
     with TemporaryDirectory() as temp_directory:
@@ -91,3 +92,25 @@ def test_upload_custom_icon_errors(rotkehlchen_api_server, file_upload):
         contained_in_msg=f'does not end in any of {",".join(ALLOWED_ICON_EXTENSIONS)}',
         status_code=HTTPStatus.BAD_REQUEST,
     )
+
+
+@pytest.mark.parametrize('use_clean_caching_directory', [True])
+def test_refresh_icon(rotkehlchen_api_server):
+    """Test that checks refreshing the icon of an asset works."""
+    # add icon for an asset
+    icon_manager = rotkehlchen_api_server.rest_api.rotkehlchen.icon_manager
+    root_path = Path(__file__).resolve().parent.parent.parent.parent
+    sample_filepath = root_path / 'frontend' / 'app' / 'public' / 'assets' / 'images' / 'exchanges' / 'kraken.svg'  # noqa: E501
+    icon_filepath = icon_manager.icons_dir / 'DOGE_small.png'
+    shutil.copyfile(sample_filepath, icon_filepath)
+
+    now = ts_now()
+    response = requests.patch(
+        api_url_for(
+            rotkehlchen_api_server,
+            'asseticonsresource',
+            asset=A_DOGE.identifier,
+        ),
+    )
+    assert_simple_ok_response(response)
+    assert icon_filepath.stat().st_ctime > now

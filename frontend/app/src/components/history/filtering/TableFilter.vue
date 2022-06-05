@@ -9,6 +9,7 @@
     deletable-chips
     multiple
     clearable
+    hide-details
     prepend-inner-icon="mdi-filter-variant"
     :search-input.sync="search"
     @input="onSelectionUpdate($event)"
@@ -44,6 +45,7 @@ import {
   toRefs,
   watch
 } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import NoFilterAvailable from '@/components/history/filtering/NoFilterAvailable.vue';
 import {
   MatchedKeyword,
@@ -76,62 +78,78 @@ export default defineComponent({
     const { matchers } = toRefs(props);
 
     const matcherForKey = (searchKey: string | undefined) => {
-      return matchers.value.find(({ key }) => key === searchKey);
+      return get(matchers).find(({ key }) => key === searchKey);
     };
 
     const suggestion = computed(() => {
-      const searchKey = splitSearch(search.value);
+      const searchKey = splitSearch(get(search));
       const key = validKeys.find(value => value.startsWith(searchKey[0]));
       return matcherForKey(key) ?? null;
     });
+
     const usedKeys = computed(() =>
-      selection.value.map(entry => splitSearch(entry)[0])
+      get(selection).map(entry => splitSearch(entry)[0])
     );
 
     const onSelectionUpdate = (pairs: string[]) => {
       updateMatches(pairs);
-      selection.value = pairs;
     };
 
     const appendToSearch = (key: string) => {
       const filter = `${key}:`;
-      if (search.value) {
+      if (get(search)) {
         search.value += ` ${filter}`;
       } else {
-        search.value = filter;
+        set(search, filter);
       }
-      input.value.focus();
+      get(input).focus();
     };
 
     function updateMatches(pairs: string[]) {
       const matched: Partial<MatchedKeyword<any>> = {};
+      const validPairs: string[] = [];
       for (const entry of pairs) {
         const [key, keyword] = splitSearch(entry);
         const matcher = matcherForKey(key);
         assert(matcher);
-        matched[matcher.key as string] = keyword;
+
+        if (matcher.validate(keyword)) {
+          validPairs.push(entry);
+          const valueKey = (matcher.keyValue || matcher.key) as string;
+          const transformedKeyword = matcher.transformer?.(keyword) || keyword;
+
+          if (matcher.multiple) {
+            if (!matched[valueKey]) {
+              matched[valueKey] = [];
+            }
+            (matched[valueKey] as string[]).push(transformedKeyword);
+          } else {
+            matched[valueKey] = transformedKeyword;
+          }
+        }
       }
 
+      set(selection, validPairs);
       emit('update:matches', matched);
     }
 
     const applyFilter = (filter: string) => {
-      const newSelection = [...selection.value];
-      const splitFilter = splitSearch(filter);
+      const newSelection = [...get(selection)];
+      const [key] = splitSearch(filter);
       const index = newSelection.findIndex(
-        value => splitSearch(value)[0] === splitFilter[0]
+        value => splitSearch(value)[0] === key
       );
+      const matcher = matcherForKey(key);
+      assert(matcher);
 
-      if (index >= 0) {
+      if (index >= 0 && !matcher.multiple) {
         newSelection[index] = filter;
       } else {
         newSelection.push(filter);
       }
 
-      selection.value = newSelection;
-
-      updateMatches(selection.value);
-      search.value = '';
+      updateMatches(newSelection);
+      set(search, '');
     };
 
     const selectedSuggestion = ref(0);
@@ -141,14 +159,14 @@ export default defineComponent({
       suggestion: ''
     });
     const applySuggestion = () => {
-      const filter = suggestedFilter.value;
+      const filter = get(suggestedFilter);
       const suggestion = filter.suggestion;
       if (suggestion.length > 0) {
         nextTick(() => {
           applyFilter(suggestion);
         });
       } else {
-        const [key, keyword] = splitSearch(search.value);
+        const [key, keyword] = splitSearch(get(search));
         const matcher = matcherForKey(key);
         if (matcher && matcher.suggestions().length === 0) {
           if (matcher.validate(keyword)) {
@@ -156,45 +174,45 @@ export default defineComponent({
           }
         }
         if (!key) {
-          input.value.blur();
+          get(input).blur();
         }
       }
-      selectedSuggestion.value = 0;
-      search.value = '';
+      set(selectedSuggestion, 0);
+      set(search, '');
     };
 
     onMounted(() => {
-      input.value.onTabDown = function (e: KeyboardEvent) {
+      get(input).onTabDown = function (e: KeyboardEvent) {
         e.preventDefault();
         e.stopPropagation();
-        if (selectedSuggestion.value < suggestedFilter.value.total - 1) {
+        if (get(selectedSuggestion) < get(suggestedFilter).total - 1) {
           selectedSuggestion.value += 1;
         } else {
-          selectedSuggestion.value = 0;
+          set(selectedSuggestion, 0);
         }
       };
-      input.value.onEnterDown = function (e: KeyboardEvent) {
+      get(input).onEnterDown = function (e: KeyboardEvent) {
         e.preventDefault();
         e.stopPropagation();
       };
     });
 
     watch(search, () => {
-      selectedSuggestion.value = 0;
+      set(selectedSuggestion, 0);
     });
 
     const moveSuggestion = (up: boolean) => {
-      let position = selectedSuggestion.value;
+      let position = get(selectedSuggestion);
       const move = up ? -1 : 1;
 
       position += move;
 
-      if (position >= suggestedFilter.value.total) {
-        selectedSuggestion.value = 0;
+      if (position >= get(suggestedFilter).total) {
+        set(selectedSuggestion, 0);
       } else if (position < 0) {
-        selectedSuggestion.value = suggestedFilter.value.total - 1;
+        set(selectedSuggestion, get(suggestedFilter).total - 1);
       } else {
-        selectedSuggestion.value = position;
+        set(selectedSuggestion, position);
       }
     };
 

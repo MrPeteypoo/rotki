@@ -1,23 +1,30 @@
 import { mount, Wrapper } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import Vue from 'vue';
 import Vuetify from 'vuetify';
 import AccountBalances from '@/components/accounts/AccountBalances.vue';
-import { createTask, Task, TaskMeta } from '@/model/task';
-import { TaskType } from '@/model/task-type';
 import { Section, Status } from '@/store/const';
-import store from '@/store/store';
+import store, { useMainStore } from '@/store/store';
+import { useTasks } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 import '../../i18n';
 
 Vue.use(Vuetify);
 
 describe('AccountBalances.vue', () => {
-  let wrapper: Wrapper<AccountBalances>;
+  let wrapper: Wrapper<any>;
 
   beforeEach(() => {
     const vuetify = new Vuetify();
+    const pinia = createPinia();
+    setActivePinia(pinia);
     wrapper = mount(AccountBalances, {
       store,
       vuetify,
+      pinia,
+      provide: {
+        'vuex-store': store
+      },
       propsData: {
         blockchain: 'ETH',
         balances: [],
@@ -31,19 +38,21 @@ describe('AccountBalances.vue', () => {
   });
 
   test('table enters into loading state when balances load', async () => {
-    const payload: Task<TaskMeta> = createTask(
-      1,
-      TaskType.QUERY_BLOCKCHAIN_BALANCES,
-      {
-        ignoreResult: false,
+    const { add, remove } = useTasks();
+    add({
+      id: 1,
+      type: TaskType.QUERY_BLOCKCHAIN_BALANCES,
+      meta: {
         title: 'test'
-      }
-    );
-    store.commit('tasks/add', payload);
-    store.commit('setStatus', {
+      },
+      time: 0
+    });
+
+    useMainStore().setStatus({
       section: Section.BLOCKCHAIN_ETH,
       status: Status.LOADING
     });
+
     await wrapper.vm.$nextTick();
 
     expect(
@@ -58,8 +67,8 @@ describe('AccountBalances.vue', () => {
       'account_balances.data_table.loading'
     );
 
-    store.commit('tasks/remove', 1);
-    store.commit('setStatus', {
+    remove(1);
+    useMainStore().setStatus({
       section: Section.BLOCKCHAIN_ETH,
       status: Status.LOADED
     });

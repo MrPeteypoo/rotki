@@ -1,29 +1,36 @@
 <template>
-  <v-row no-gutters align="center">
-    <v-col cols="auto" class="font-weight-medium">
-      {{ capitalize(event) }}
-    </v-col>
-  </v-row>
+  <badge-display>
+    {{ event }}
+  </badge-display>
 </template>
 
 <script lang="ts">
-import { Component, Prop, Vue } from 'vue-property-decorator';
-import { capitalize } from '@/filters';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import BadgeDisplay from '@/components/history/BadgeDisplay.vue';
 import { EventType } from '@/services/defi/types';
 
-@Component({})
-export default class EventTypeDisplay extends Vue {
-  @Prop({ required: true })
-  eventType!: EventType;
-  readonly capitalize = capitalize;
+export default defineComponent({
+  name: 'EventTypeDisplay',
+  components: { BadgeDisplay },
+  props: {
+    eventType: { required: true, type: String as PropType<EventType> }
+  },
+  setup(props) {
+    const { eventType } = toRefs(props);
 
-  get event(): string {
-    if (this.eventType === 'comp') {
-      return `comp claimed`;
-    }
-    return this.eventType;
+    const event = computed<string>(() => {
+      return get(eventType) === 'comp' ? 'comp claimed' : get(eventType);
+    });
+
+    return {
+      event
+    };
   }
-}
+});
 </script>
-
-<style scoped></style>

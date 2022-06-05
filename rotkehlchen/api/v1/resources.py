@@ -1,25 +1,32 @@
+from functools import wraps
+from http import HTTPStatus
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple
 
 from flask import Blueprint, Request, Response, request as flask_request
-from flask_restful import Resource
+from flask.views import MethodView
 from marshmallow import Schema
 from marshmallow.utils import missing
-from typing_extensions import Literal
 from webargs.flaskparser import parser, use_kwargs
 from webargs.multidictproxy import MultiDictProxy
 from werkzeug.datastructures import FileStorage
 
-from rotkehlchen.accounting.ledger_actions import LedgerAction, LedgerActionType
-from rotkehlchen.accounting.structures import ActionType
-from rotkehlchen.api.rest import RestAPI
-from rotkehlchen.api.v1.encoding import (
+from rotkehlchen.accounting.ledger_actions import LedgerAction
+from rotkehlchen.accounting.structures.base import ActionType, HistoryBaseEntry
+from rotkehlchen.api.rest import RestAPI, api_response, wrap_in_fail_result
+from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
+from rotkehlchen.api.v1.schemas import (
+    AccountingReportDataSchema,
+    AccountingReportsSchema,
     AllBalancesQuerySchema,
+    AppInfoSchema,
     AssetIconUploadSchema,
+    AssetMovementsQuerySchema,
     AssetResetRequestSchema,
     AssetSchema,
-    AssetSchemaWithIdentifier,
+    AssetsImportingFromFormSchema,
+    AssetsImportingSchema,
     AssetsReplaceSchema,
     AssetUpdatesRequestSchema,
     AsyncHistoricalQuerySchema,
@@ -28,6 +35,7 @@ from rotkehlchen.api.v1.encoding import (
     AsyncTasksQuerySchema,
     AvalancheTransactionQuerySchema,
     BaseXpubSchema,
+    BinanceMarketsSchema,
     BinanceMarketsUserSchema,
     BlockchainAccountsDeleteSchema,
     BlockchainAccountsGetSchema,
@@ -38,6 +46,11 @@ from rotkehlchen.api.v1.encoding import (
     DataImportSchema,
     EditSettingsSchema,
     ERC20InfoSchema,
+    Eth2DailyStatsSchema,
+    Eth2ValidatorDeleteSchema,
+    Eth2ValidatorPatchSchema,
+    Eth2ValidatorPutSchema,
+    EthereumTransactionDecodingSchema,
     EthereumTransactionQuerySchema,
     ExchangeBalanceQuerySchema,
     ExchangeRatesSchema,
@@ -47,25 +60,26 @@ from rotkehlchen.api.v1.encoding import (
     ExchangesResourceRemoveSchema,
     ExternalServicesResourceAddSchema,
     ExternalServicesResourceDeleteSchema,
-    GitcoinEventsDeleteSchema,
-    GitcoinEventsQuerySchema,
-    GitcoinReportSchema,
+    FileListSchema,
     HistoricalAssetsPriceSchema,
+    HistoryBaseEntrySchema,
     HistoryExportingSchema,
     HistoryProcessingSchema,
+    IdentifiersListSchema,
     IgnoredActionsGetSchema,
     IgnoredActionsModifySchema,
     IgnoredAssetsSchema,
     IntegerIdentifierSchema,
-    LedgerActionEditSchema,
     LedgerActionSchema,
-    LimitsCounterResetSchema,
+    LedgerActionsQuerySchema,
+    ManuallyTrackedBalancesAddSchema,
     ManuallyTrackedBalancesDeleteSchema,
-    ManuallyTrackedBalancesSchema,
+    ManuallyTrackedBalancesEditSchema,
     ManualPriceDeleteSchema,
     ManualPriceRegisteredSchema,
     ManualPriceSchema,
     ModifyEthereumTokenSchema,
+    NameDeleteSchema,
     NamedEthereumModuleDataSchema,
     NamedOracleCacheCreateSchema,
     NamedOracleCacheGetSchema,
@@ -74,18 +88,24 @@ from rotkehlchen.api.v1.encoding import (
     OptionalEthereumAddressSchema,
     QueriedAddressesSchema,
     RequiredEthereumAddressSchema,
+    ReverseEnsSchema,
     SingleAssetIdentifierSchema,
+    SingleFileSchema,
+    SnapshotExportingSchema,
+    SnapshotImportingSchema,
+    SnapshotTimestampQuerySchema,
+    StakingQuerySchema,
     StatisticsAssetBalanceSchema,
+    StatisticsNetValueSchema,
     StatisticsValueDistributionSchema,
     StringIdentifierSchema,
-    TagDeleteSchema,
-    TagEditSchema,
     TagSchema,
     TimedManualPriceSchema,
-    TimerangeLocationCacheQuerySchema,
     TradeDeleteSchema,
     TradePatchSchema,
     TradeSchema,
+    TradesQuerySchema,
+    UserActionLoginSchema,
     UserActionSchema,
     UserPasswordChangeSchema,
     UserPremiumSyncSchema,
@@ -95,21 +115,30 @@ from rotkehlchen.api.v1.encoding import (
     XpubAddSchema,
     XpubPatchSchema,
 )
-from rotkehlchen.api.v1.parser import ignore_kwarg_parser, resource_parser
 from rotkehlchen.assets.asset import Asset, EthereumToken
-from rotkehlchen.assets.typing import AssetType
+from rotkehlchen.assets.types import AssetType
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.chain.bitcoin.xpub import XpubData
-from rotkehlchen.db.filtering import ETHTransactionsFilterQuery
+from rotkehlchen.db.filtering import (
+    AssetMovementsFilterQuery,
+    Eth2DailyStatsFilterQuery,
+    ETHTransactionsFilterQuery,
+    LedgerActionsFilterQuery,
+    ReportDataFilterQuery,
+    TradesFilterQuery,
+)
 from rotkehlchen.db.settings import ModifiableDBSettings
-from rotkehlchen.history.typing import HistoricalPriceOracle
-from rotkehlchen.typing import (
+from rotkehlchen.fval import FVal
+from rotkehlchen.history.types import HistoricalPriceOracle
+from rotkehlchen.types import (
     IMPORTABLE_LOCATIONS,
     ApiKey,
     ApiSecret,
     AssetAmount,
     BlockchainAccountData,
     ChecksumEthAddress,
+    Eth2PubKey,
+    EVMTxHash,
     ExternalService,
     ExternalServiceApiCredentials,
     Fee,
@@ -125,6 +154,7 @@ from rotkehlchen.typing import (
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.bitcoin.hdkey import HDKey
+    from rotkehlchen.db.filtering import HistoryEventFilterQuery
     from rotkehlchen.exchanges.kraken import KrakenAccountType
 
 
@@ -144,7 +174,7 @@ def _combine_parser_data(
     return data_1
 
 
-@parser.location_loader('json_and_view_args')  # type: ignore
+@parser.location_loader('json_and_view_args')
 def load_json_viewargs_data(request: Request, schema: Schema) -> Dict[str, Any]:
     """Load data from a request accepting either json or view_args encoded data"""
     view_args = parser.load_view_args(request, schema)  # type: ignore
@@ -156,7 +186,7 @@ def load_json_viewargs_data(request: Request, schema: Schema) -> Dict[str, Any]:
     return data
 
 
-@parser.location_loader('json_and_query')  # type: ignore
+@parser.location_loader('json_and_query')
 def load_json_query_data(request: Request, schema: Schema) -> Dict[str, Any]:
     """Load data from a request accepting either json or query encoded data"""
     data = parser.load_json(request, schema)
@@ -165,7 +195,7 @@ def load_json_query_data(request: Request, schema: Schema) -> Dict[str, Any]:
     return parser.load_querystring(request, schema)  # type: ignore
 
 
-@parser.location_loader('json_and_query_and_view_args')  # type: ignore
+@parser.location_loader('json_and_query_and_view_args')
 def load_json_query_viewargs_data(request: Request, schema: Schema) -> Dict[str, Any]:
     """Load data from a request accepting either json or querystring or view_args encoded data"""
     view_args = parser.load_view_args(request, schema)  # type: ignore
@@ -181,7 +211,7 @@ def load_json_query_viewargs_data(request: Request, schema: Schema) -> Dict[str,
     return data
 
 
-@parser.location_loader('form_and_file')  # type: ignore
+@parser.location_loader('form_and_file')
 def load_form_file_data(request: Request, schema: Schema) -> MultiDictProxy:
     """Load data from a request accepting form and file encoded data"""
     form_data = parser.load_form(request, schema)  # type: ignore
@@ -190,7 +220,7 @@ def load_form_file_data(request: Request, schema: Schema) -> MultiDictProxy:
     return data
 
 
-@parser.location_loader('view_args_and_file')  # type: ignore
+@parser.location_loader('view_args_and_file')
 def load_view_args_file_data(request: Request, schema: Schema) -> MultiDictProxy:
     """Load data from a request accepting view_args and file encoded data"""
     view_args_data = parser.load_view_args(request, schema)  # type: ignore
@@ -199,23 +229,81 @@ def load_view_args_file_data(request: Request, schema: Schema) -> MultiDictProxy
     return data
 
 
-def create_blueprint() -> Blueprint:
+def require_loggedin_user() -> Callable:
+    """ This is a decorator for the RestAPI class's methods requiring a logged in user.
+    """
+    def _require_loggedin_user(f: Callable) -> Callable:
+        @wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # grab the `rest_api` attribute from the view class.
+            view_class = args[0]
+            rest_api = view_class.rest_api
+            if rest_api.rotkehlchen.user_is_logged_in is False:
+                result_dict = wrap_in_fail_result('No user is currently logged in')
+                return api_response(result_dict, status_code=HTTPStatus.CONFLICT)
+            return f(*args, **kwargs)
+
+        return wrapper
+    return _require_loggedin_user
+
+
+def require_premium_user(active_check: bool) -> Callable:
+    """
+    Decorator only for premium
+
+    This is a decorator for the RestAPI class's methods requiring a logged in
+    user to have premium subscription.
+
+    If active_check is true there is also an API call to the rotkehlchen server
+    to check that the saved key is also valid.
+    """
+    def _require_premium_user(f: Callable) -> Callable:
+        @wraps(f)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # grab the `rest_api` attribute from the view class.
+            view_class = args[0]
+            rest_api = view_class.rest_api
+            if rest_api.rotkehlchen.user_is_logged_in is False:
+                result_dict = wrap_in_fail_result('No user is currently logged in')
+                return api_response(result_dict, status_code=HTTPStatus.CONFLICT)
+
+            msg = (
+                f'Currently logged in user {rest_api.rotkehlchen.data.username} '
+                f'does not have a premium subscription'
+            )
+            if rest_api.rotkehlchen.premium is None:
+                result_dict = wrap_in_fail_result(msg)
+                return api_response(result_dict, status_code=HTTPStatus.CONFLICT)
+
+            if active_check:
+                if rest_api.rotkehlchen.premium.is_active() is False:
+                    result_dict = wrap_in_fail_result(msg)
+                    return api_response(result_dict, status_code=HTTPStatus.CONFLICT)
+
+            return f(*args, **kwargs)
+
+        return wrapper
+    return _require_premium_user
+
+
+def create_blueprint(url_prefix: str) -> Blueprint:
     # Take a look at this SO question on hints how to organize versioned
     # API with flask:
     # http://stackoverflow.com/questions/28795561/support-multiple-api-versions-in-flask#28797512
-    return Blueprint("v1_resources", __name__)
+    return Blueprint("v1_resources", __name__, url_prefix=url_prefix)
 
 
-class BaseResource(Resource):
+class BaseMethodView(MethodView):
     def __init__(self, rest_api_object: RestAPI, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.rest_api = rest_api_object
 
 
-class SettingsResource(BaseResource):
+class SettingsResource(BaseMethodView):
 
     put_schema = EditSettingsSchema()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -223,20 +311,22 @@ class SettingsResource(BaseResource):
     ) -> Response:
         return self.rest_api.set_settings(settings)
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_settings()
 
 
-class AsyncTasksResource(BaseResource):
+class AsyncTasksResource(BaseMethodView):
 
     get_schema = AsyncTasksQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='view_args')
     def get(self, task_id: Optional[int]) -> Response:
         return self.rest_api.query_tasks_outcome(task_id=task_id)
 
 
-class ExchangeRatesResource(BaseResource):
+class ExchangeRatesResource(BaseMethodView):
 
     get_schema = ExchangeRatesSchema()
 
@@ -246,15 +336,17 @@ class ExchangeRatesResource(BaseResource):
         return self.rest_api.get_exchange_rates(given_currencies=valid_currencies, async_query=async_query)  # noqa: E501
 
 
-class ExchangesResource(BaseResource):
+class ExchangesResource(BaseMethodView):
 
     put_schema = ExchangesResourceAddSchema()
     patch_schema = ExchangesResourceEditSchema()
     delete_schema = ExchangesResourceRemoveSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_exchanges()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -275,9 +367,10 @@ class ExchangesResource(BaseResource):
             passphrase=passphrase,
             kraken_account_type=kraken_account_type,
             binance_markets=binance_markets,
-            ftx_subaccount_name=ftx_subaccount,
+            ftx_subaccount=ftx_subaccount,
         )
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json')
     def patch(
             self,
@@ -300,60 +393,90 @@ class ExchangesResource(BaseResource):
             passphrase=passphrase,
             kraken_account_type=kraken_account_type,
             binance_markets=binance_markets,
-            ftx_subaccount_name=ftx_subaccount,
+            ftx_subaccount=ftx_subaccount,
         )
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, name: str, location: Location) -> Response:
         return self.rest_api.remove_exchange(name=name, location=location)
 
 
-class ExchangesDataResource(BaseResource):
+class ExchangesDataResource(BaseMethodView):
 
     delete_schema = ExchangesDataResourceSchema()
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='view_args')
     def delete(self, location: Optional[Location]) -> Response:
         return self.rest_api.purge_exchange_data(location=location)
 
 
-class EthereumTransactionsResource(BaseResource):
-    get_schema = EthereumTransactionQuerySchema()
+class AssociatedLocations(BaseMethodView):
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_associated_locations()
 
+
+class EthereumTransactionsResource(BaseMethodView):
+    get_schema = EthereumTransactionQuerySchema()
+    post_schema = EthereumTransactionDecodingSchema()
+
+    @require_loggedin_user()
     @ignore_kwarg_parser.use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(
             self,
             async_query: bool,
             only_cache: bool,
             filter_query: ETHTransactionsFilterQuery,
+            event_params: Dict[str, Any],
     ) -> Response:
         return self.rest_api.get_ethereum_transactions(
             async_query=async_query,
             only_cache=only_cache,
             filter_query=filter_query,
+            event_params=event_params,
         )
 
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json_and_query')
+    def post(
+            self,
+            async_query: bool,
+            ignore_cache: bool,
+            tx_hashes: Optional[List[EVMTxHash]],
+    ) -> Response:
+        return self.rest_api.decode_ethereum_transactions(
+            async_query=async_query,
+            ignore_cache=ignore_cache,
+            tx_hashes=tx_hashes,
+        )
+
+    @require_loggedin_user()
     def delete(self) -> Response:
         return self.rest_api.purge_ethereum_transaction_data()
 
 
-class EthereumAirdropsResource(BaseResource):
+class EthereumAirdropsResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_ethereum_airdrops(async_query)
 
 
-class ExternalServicesResource(BaseResource):
+class ExternalServicesResource(BaseMethodView):
 
     put_schema = ExternalServicesResourceAddSchema()
     delete_schema = ExternalServicesResourceDeleteSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_external_services()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -361,15 +484,17 @@ class ExternalServicesResource(BaseResource):
     ) -> Response:
         return self.rest_api.add_external_services(services=services)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, services: List[ExternalService]) -> Response:
         return self.rest_api.delete_external_services(services=services)
 
 
-class AllBalancesResource(BaseResource):
+class AllBalancesResource(BaseMethodView):
 
     get_schema = AllBalancesQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -386,10 +511,11 @@ class AllBalancesResource(BaseResource):
         )
 
 
-class ExchangeBalancesResource(BaseResource):
+class ExchangeBalancesResource(BaseMethodView):
 
     get_schema = ExchangeBalanceQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(self, location: Optional[Location], async_query: bool, ignore_cache: bool) -> Response:
         return self.rest_api.query_exchange_balances(
@@ -399,24 +525,53 @@ class ExchangeBalancesResource(BaseResource):
         )
 
 
-class OwnedAssetsResource(BaseResource):
+class OwnedAssetsResource(BaseMethodView):
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.query_owned_assets()
 
 
-class AllAssetsResource(BaseResource):
+class DatabaseInfoResource(BaseMethodView):
+
+    def get(self) -> Response:
+        return self.rest_api.get_database_info()
+
+
+class DatabaseBackupsResource(BaseMethodView):
+
+    delete_schema = FileListSchema()
+    get_schema = SingleFileSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, file: Path) -> Response:
+        return self.rest_api.download_database_backup(filepath=file)
+
+    @require_loggedin_user()
+    def put(self) -> Response:
+        return self.rest_api.create_database_backup()
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, files: List[Path]) -> Response:
+        return self.rest_api.delete_database_backups(files=files)
+
+
+class AllAssetsResource(BaseMethodView):
 
     delete_schema = StringIdentifierSchema()
 
     def make_add_schema(self) -> AssetSchema:
         return AssetSchema(
+            identifier_required=False,
             coingecko=self.rest_api.rotkehlchen.coingecko,
             cryptocompare=self.rest_api.rotkehlchen.cryptocompare,
         )
 
-    def make_edit_schema(self) -> AssetSchemaWithIdentifier:
-        return AssetSchemaWithIdentifier(
+    def make_edit_schema(self) -> AssetSchema:
+        return AssetSchema(
+            identifier_required=True,
             coingecko=self.rest_api.rotkehlchen.coingecko,
             cryptocompare=self.rest_api.rotkehlchen.cryptocompare,
         )
@@ -424,6 +579,7 @@ class AllAssetsResource(BaseResource):
     def get(self) -> Response:
         return self.rest_api.query_all_assets()
 
+    @require_loggedin_user()
     @resource_parser.use_kwargs(make_add_schema, location='json')
     def put(self, asset_type: AssetType, **kwargs: Any) -> Response:
         return self.rest_api.add_custom_asset(asset_type, **kwargs)
@@ -432,27 +588,29 @@ class AllAssetsResource(BaseResource):
     def patch(self, **kwargs: Any) -> Response:
         return self.rest_api.edit_custom_asset(kwargs)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, identifier: str) -> Response:
         return self.rest_api.delete_custom_asset(identifier)
 
 
-class AssetsTypesResource(BaseResource):
+class AssetsTypesResource(BaseMethodView):
 
     def get(self) -> Response:
         return self.rest_api.get_asset_types()
 
 
-class AssetsReplaceResource(BaseResource):
+class AssetsReplaceResource(BaseMethodView):
 
     put_schema = AssetsReplaceSchema()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(self, source_identifier: str, target_asset: Asset) -> Response:
         return self.rest_api.replace_asset(source_identifier, target_asset)
 
 
-class EthereumAssetsResource(BaseResource):
+class EthereumAssetsResource(BaseMethodView):
 
     get_schema = OptionalEthereumAddressSchema()
     delete_schema = RequiredEthereumAddressSchema()
@@ -467,6 +625,7 @@ class EthereumAssetsResource(BaseResource):
     def get(self, address: Optional[ChecksumEthAddress]) -> Response:
         return self.rest_api.get_custom_ethereum_tokens(address=address)
 
+    @require_loggedin_user()
     @resource_parser.use_kwargs(make_edit_schema, location='json')
     def put(self, token: EthereumToken) -> Response:
         return self.rest_api.add_custom_ethereum_token(token=token)
@@ -475,12 +634,13 @@ class EthereumAssetsResource(BaseResource):
     def patch(self, token: EthereumToken) -> Response:
         return self.rest_api.edit_custom_ethereum_token(token=token)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, address: ChecksumEthAddress) -> Response:
         return self.rest_api.delete_custom_ethereum_token(address)
 
 
-class AssetUpdatesResource(BaseResource):
+class AssetUpdatesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
     post_schema = AssetUpdatesRequestSchema()
@@ -490,6 +650,7 @@ class AssetUpdatesResource(BaseResource):
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_assets_updates(async_query)
 
+    @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
     def post(
             self,
@@ -499,15 +660,17 @@ class AssetUpdatesResource(BaseResource):
     ) -> Response:
         return self.rest_api.perform_assets_updates(async_query, up_to_version, conflicts)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json_and_query')
     def delete(self, reset: Literal['soft', 'hard'], ignore_warnings: bool) -> Response:
         return self.rest_api.rebuild_assets_information(reset, ignore_warnings)
 
 
-class BlockchainBalancesResource(BaseResource):
+class BlockchainBalancesResource(BaseMethodView):
 
     get_schema = BlockchainBalanceQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(
             self,
@@ -522,56 +685,59 @@ class BlockchainBalancesResource(BaseResource):
         )
 
 
-class ManuallyTrackedBalancesResource(BaseResource):
+class ManuallyTrackedBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
-    edit_schema = ManuallyTrackedBalancesSchema()
+    put_schema = ManuallyTrackedBalancesAddSchema()
+    patch_schema = ManuallyTrackedBalancesEditSchema()
     delete_schema = ManuallyTrackedBalancesDeleteSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_manually_tracked_balances(async_query)
 
-    @use_kwargs(edit_schema, location='json')
+    @require_loggedin_user()
+    @use_kwargs(put_schema, location='json')
     def put(self, async_query: bool, balances: List[ManuallyTrackedBalance]) -> Response:
         return self.rest_api.add_manually_tracked_balances(async_query=async_query, data=balances)
 
-    @use_kwargs(edit_schema, location='json')
+    @require_loggedin_user()
+    @use_kwargs(patch_schema, location='json')
     def patch(self, async_query: bool, balances: List[ManuallyTrackedBalance]) -> Response:
         return self.rest_api.edit_manually_tracked_balances(async_query=async_query, data=balances)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
-    def delete(self, async_query: bool, labels: List[str]) -> Response:
+    def delete(self, async_query: bool, ids: List[int]) -> Response:
         return self.rest_api.remove_manually_tracked_balances(
             async_query=async_query,
-            labels=labels,
+            ids=ids,
         )
 
 
-class TradesResource(BaseResource):
+class TradesResource(BaseMethodView):
 
-    get_schema = TimerangeLocationCacheQuerySchema()
+    get_schema = TradesQuerySchema()
     put_schema = TradeSchema()
     patch_schema = TradePatchSchema()
     delete_schema = TradeDeleteSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-            location: Optional[Location],
             async_query: bool,
             only_cache: bool,
+            filter_query: TradesFilterQuery,
     ) -> Response:
         return self.rest_api.get_trades(
-            from_ts=from_timestamp,
-            to_ts=to_timestamp,
-            location=location,
             async_query=async_query,
             only_cache=only_cache,
+            filter_query=filter_query,
         )
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -601,6 +767,7 @@ class TradesResource(BaseResource):
             notes=notes,
         )
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json')
     def patch(
             self,
@@ -632,42 +799,42 @@ class TradesResource(BaseResource):
             notes=notes,
         )
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, trade_id: str) -> Response:
         return self.rest_api.delete_trade(trade_id=trade_id)
 
 
-class AssetMovementsResource(BaseResource):
+class AssetMovementsResource(BaseMethodView):
 
-    get_schema = TimerangeLocationCacheQuerySchema()
+    get_schema = AssetMovementsQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-            location: Optional[Location],
+            filter_query: AssetMovementsFilterQuery,
             async_query: bool,
             only_cache: bool,
     ) -> Response:
         return self.rest_api.get_asset_movements(
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            location=location,
+            filter_query=filter_query,
             async_query=async_query,
             only_cache=only_cache,
         )
 
 
-class TagsResource(BaseResource):
+class TagsResource(BaseMethodView):
 
-    put_schema = TagSchema()
-    patch_schema = TagEditSchema()
-    delete_schema = TagDeleteSchema()
+    put_schema = TagSchema(color_required=True)
+    patch_schema = TagSchema(color_required=False)
+    delete_schema = NameDeleteSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_tags()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -683,6 +850,7 @@ class TagsResource(BaseResource):
             foreground_color=foreground_color,
         )
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json')
     def patch(
             self,
@@ -698,72 +866,75 @@ class TagsResource(BaseResource):
             foreground_color=foreground_color,
         )
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, name: str) -> Response:
         return self.rest_api.delete_tag(name=name)
 
 
-class LedgerActionsResource(BaseResource):
+class LedgerActionsResource(BaseMethodView):
 
-    get_schema = TimerangeLocationCacheQuerySchema()
-    put_schema = LedgerActionSchema()
-    patch_schema = LedgerActionEditSchema()
+    get_schema = LedgerActionsQuerySchema()
+    put_schema = LedgerActionSchema(identifier_required=False)
+    patch_schema = LedgerActionSchema(identifier_required=True)
     delete_schema = IntegerIdentifierSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-            location: Optional[Location],
+            filter_query: LedgerActionsFilterQuery,
             async_query: bool,
-            only_cache: Optional[bool],
+            only_cache: bool,
     ) -> Response:
         return self.rest_api.get_ledger_actions(
-            from_ts=from_timestamp,
-            to_ts=to_timestamp,
-            location=location,
+            filter_query=filter_query,
             async_query=async_query,
             only_cache=only_cache,
         )
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
-            timestamp: Timestamp,
-            action_type: LedgerActionType,
-            location: Location,
-            amount: AssetAmount,
-            asset: Asset,
-            rate: Optional[Price],
-            rate_asset: Optional[Asset],
-            link: Optional[str],
-            notes: Optional[str],
+            action: LedgerAction,
     ) -> Response:
-        action = LedgerAction(
-            identifier=0,  # whatever -- is not used at insertion
-            timestamp=timestamp,
-            action_type=action_type,
-            location=location,
-            amount=amount,
-            asset=asset,
-            rate=rate,
-            rate_asset=rate_asset,
-            link=link,
-            notes=notes,
-        )
         return self.rest_api.add_ledger_action(action)
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json')
     def patch(self, action: LedgerAction) -> Response:
         return self.rest_api.edit_ledger_action(action=action)
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, identifier: int) -> Response:
         return self.rest_api.delete_ledger_action(identifier=identifier)
 
 
-class UsersResource(BaseResource):
+class HistoryBaseEntryResource(BaseMethodView):
+
+    put_schema = HistoryBaseEntrySchema(identifier_required=False)
+    patch_schema = HistoryBaseEntrySchema(identifier_required=True)
+    delete_schema = IdentifiersListSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(put_schema, location='json')
+    def put(self, event: HistoryBaseEntry) -> Response:
+        return self.rest_api.add_history_event(event)
+
+    @require_loggedin_user()
+    @use_kwargs(patch_schema, location='json')
+    def patch(self, event: HistoryBaseEntry) -> Response:
+        return self.rest_api.edit_history_event(event=event)
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, identifiers: List[int]) -> Response:
+        return self.rest_api.delete_history_events(identifiers=identifiers)
+
+
+class UsersResource(BaseMethodView):
 
     put_schema = NewUserSchema()
 
@@ -777,6 +948,7 @@ class UsersResource(BaseResource):
             password: str,
             premium_api_key: str,
             premium_api_secret: str,
+            sync_database: bool,
             initial_settings: Optional[ModifiableDBSettings],
     ) -> Response:
         return self.rest_api.create_new_user(
@@ -784,45 +956,51 @@ class UsersResource(BaseResource):
             password=password,
             premium_api_key=premium_api_key,
             premium_api_secret=premium_api_secret,
+            sync_database=sync_database,
             initial_settings=initial_settings,
         )
 
 
-class UsersByNameResource(BaseResource):
+class UsersByNameResource(BaseMethodView):
     patch_schema = UserActionSchema()
+    post_schema = UserActionLoginSchema()
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json_and_view_args')
     def patch(
             self,
-            action: Optional[str],
             name: str,
-            password: Optional[str],
-            sync_approval: Literal['yes', 'no', 'unknown'],
+            action: Optional[str],
             premium_api_key: str,
             premium_api_secret: str,
     ) -> Response:
-        if action is None:
-            return self.rest_api.user_set_premium_credentials(
-                name=name,
-                api_key=premium_api_key,
-                api_secret=premium_api_secret,
-            )
+        if action == 'logout':
+            return self.rest_api.user_logout(name=name)
 
-        if action == 'login':
-            assert password is not None, 'Marshmallow validation should not let password=None here'
-            return self.rest_api.user_login(
-                name=name,
-                password=password,
-                sync_approval=sync_approval,
-            )
+        return self.rest_api.user_set_premium_credentials(
+            name=name,
+            api_key=premium_api_key,
+            api_secret=premium_api_secret,
+        )
 
-        # else can only be logout -- checked by marshmallow
-        return self.rest_api.user_logout(name=name)
+    @use_kwargs(post_schema, location='json_and_view_args')
+    def post(
+            self,
+            name: str,
+            password: str,
+            sync_approval: Literal['yes', 'no', 'unknown'],
+    ) -> Response:
+        return self.rest_api.user_login(
+            name=name,
+            password=password,
+            sync_approval=sync_approval,
+        )
 
 
-class UserPasswordChangeResource(BaseResource):
+class UserPasswordChangeResource(BaseMethodView):
     patch_schema = UserPasswordChangeSchema
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json')
     def patch(
             self,
@@ -837,13 +1015,14 @@ class UserPasswordChangeResource(BaseResource):
         )
 
 
-class UserPremiumKeyResource(BaseResource):
+class UserPremiumKeyResource(BaseMethodView):
 
+    @require_premium_user(active_check=False)
     def delete(self) -> Response:
         return self.rest_api.user_premium_key_remove()
 
 
-class UserPremiumSyncResource(BaseResource):
+class UserPremiumSyncResource(BaseMethodView):
     put_schema = UserPremiumSyncSchema()
 
     @use_kwargs(put_schema, location='json_and_view_args')
@@ -851,16 +1030,20 @@ class UserPremiumSyncResource(BaseResource):
         return self.rest_api.sync_data(async_query, action)
 
 
-class StatisticsNetvalueResource(BaseResource):
+class StatisticsNetvalueResource(BaseMethodView):
 
-    def get(self) -> Response:
-        return self.rest_api.query_netvalue_data()
+    get_schema = StatisticsNetValueSchema()
+
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, include_nfts: bool) -> Response:
+        return self.rest_api.query_netvalue_data(include_nfts)
 
 
-class StatisticsAssetBalanceResource(BaseResource):
+class StatisticsAssetBalanceResource(BaseMethodView):
 
     get_schema = StatisticsAssetBalanceSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(
             self,
@@ -875,10 +1058,11 @@ class StatisticsAssetBalanceResource(BaseResource):
         )
 
 
-class StatisticsValueDistributionResource(BaseResource):
+class StatisticsValueDistributionResource(BaseMethodView):
 
     get_schema = StatisticsValueDistributionSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, distribution_by: str) -> Response:
         return self.rest_api.query_value_distribution_data(
@@ -886,28 +1070,31 @@ class StatisticsValueDistributionResource(BaseResource):
         )
 
 
-class StatisticsRendererResource(BaseResource):
+class StatisticsRendererResource(BaseMethodView):
 
+    @require_premium_user(active_check=False)
     def get(self) -> Response:
         return self.rest_api.query_premium_components()
 
 
-class MessagesResource(BaseResource):
+class MessagesResource(BaseMethodView):
 
     def get(self) -> Response:
         return self.rest_api.get_messages()
 
 
-class HistoryStatusResource(BaseResource):
+class HistoryStatusResource(BaseMethodView):
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_history_status()
 
 
-class HistoryProcessingResource(BaseResource):
+class HistoryProcessingResource(BaseMethodView):
 
     get_schema = HistoryProcessingSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -922,28 +1109,63 @@ class HistoryProcessingResource(BaseResource):
         )
 
 
-class HistoryExportingResource(BaseResource):
+class HistoryActionableItemsResource(BaseMethodView):
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_history_actionable_items()
+
+
+class AccountingReportsResource(BaseMethodView):
+
+    get_schema = AccountingReportsSchema(required_report_id=False)
+    delete_schema = AccountingReportsSchema(required_report_id=True)
+
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='view_args')
+    def get(self, report_id: Optional[int]) -> Response:
+        return self.rest_api.get_pnl_reports(report_id=report_id)
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='view_args')
+    def delete(self, report_id: int) -> Response:
+        return self.rest_api.purge_pnl_report_data(report_id=report_id)
+
+
+class AccountingReportDataResource(BaseMethodView):
+
+    post_schema = AccountingReportDataSchema()
+
+    @require_loggedin_user()
+    @ignore_kwarg_parser.use_kwargs(post_schema, location='json_and_query_and_view_args')
+    def post(self, filter_query: ReportDataFilterQuery) -> Response:
+        return self.rest_api.get_report_data(filter_query=filter_query)
+
+
+class HistoryExportingResource(BaseMethodView):
 
     get_schema = HistoryExportingSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, directory_path: Path) -> Response:
         return self.rest_api.export_processed_history_csv(directory_path=directory_path)
 
 
-class HistoryDownloadingResource(BaseResource):
+class HistoryDownloadingResource(BaseMethodView):
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.download_processed_history_csv()
 
 
-class PeriodicDataResource(BaseResource):
+class PeriodicDataResource(BaseMethodView):
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.query_periodic_data()
 
 
-class BlockchainsAccountsResource(BaseResource):
+class BlockchainsAccountsResource(BaseMethodView):
 
     get_schema = BlockchainAccountsGetSchema()
 
@@ -962,10 +1184,12 @@ class BlockchainsAccountsResource(BaseResource):
             self.rest_api.rotkehlchen.chain_manager.ethereum,
         )
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='view_args')
     def get(self, blockchain: SupportedBlockchain) -> Response:
         return self.rest_api.get_blockchain_accounts(blockchain)
 
+    @require_loggedin_user()
     @resource_parser.use_kwargs(make_put_schema, location='json_and_view_args')
     def put(
             self,
@@ -986,6 +1210,7 @@ class BlockchainsAccountsResource(BaseResource):
             async_query=async_query,
         )
 
+    @require_loggedin_user()
     @resource_parser.use_kwargs(make_patch_schema, location='json_and_view_args')
     def patch(
             self,
@@ -1004,6 +1229,7 @@ class BlockchainsAccountsResource(BaseResource):
             account_data=account_data,
         )
 
+    @require_loggedin_user()
     @resource_parser.use_kwargs(make_delete_schema, location='json_and_view_args')
     def delete(
             self,
@@ -1018,12 +1244,13 @@ class BlockchainsAccountsResource(BaseResource):
         )
 
 
-class BTCXpubResource(BaseResource):
+class BTCXpubResource(BaseMethodView):
 
     put_schema = XpubAddSchema()
     delete_schema = BaseXpubSchema()
     patch_schema = XpubPatchSchema()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -1043,6 +1270,7 @@ class BTCXpubResource(BaseResource):
             async_query=async_query,
         )
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(
             self,
@@ -1060,6 +1288,7 @@ class BTCXpubResource(BaseResource):
             async_query=async_query,
         )
 
+    @require_loggedin_user()
     @use_kwargs(patch_schema, location='json_and_view_args')
     def patch(
             self,
@@ -1078,35 +1307,46 @@ class BTCXpubResource(BaseResource):
         )
 
 
-class IgnoredAssetsResource(BaseResource):
+class IgnoredAssetsResource(BaseMethodView):
 
     modify_schema = IgnoredAssetsSchema()
+    post_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_ignored_assets()
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def put(self, assets: List[Asset]) -> Response:
         return self.rest_api.add_ignored_assets(assets=assets)
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def delete(self, assets: List[Asset]) -> Response:
         return self.rest_api.remove_ignored_assets(assets=assets)
 
+    @use_kwargs(post_schema, location='json_and_query')
+    def post(self, async_query: bool) -> Response:
+        return self.rest_api.pull_spam_assets(async_query)
 
-class IgnoredActionsResource(BaseResource):
+
+class IgnoredActionsResource(BaseMethodView):
 
     get_schema = IgnoredActionsGetSchema()
     modify_schema = IgnoredActionsModifySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, action_type: Optional[ActionType]) -> Response:
         return self.rest_api.get_ignored_action_ids(action_type=action_type)
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def put(self, action_type: ActionType, action_ids: List[str]) -> Response:
         return self.rest_api.add_ignored_action_ids(action_type=action_type, action_ids=action_ids)
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def delete(self, action_type: ActionType, action_ids: List[str]) -> Response:
         return self.rest_api.remove_ignored_action_ids(
@@ -1115,157 +1355,241 @@ class IgnoredActionsResource(BaseResource):
         )
 
 
-class QueriedAddressesResource(BaseResource):
+class QueriedAddressesResource(BaseMethodView):
 
     modify_schema = QueriedAddressesSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_queried_addresses_per_module()
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def put(self, module: ModuleName, address: ChecksumEthAddress) -> Response:
         return self.rest_api.add_queried_address_per_module(module=module, address=address)
 
+    @require_loggedin_user()
     @use_kwargs(modify_schema, location='json')
     def delete(self, module: ModuleName, address: ChecksumEthAddress) -> Response:
         return self.rest_api.remove_queried_address_per_module(module=module, address=address)
 
 
-class InfoResource(BaseResource):
+class InfoResource(BaseMethodView):
 
-    def get(self) -> Response:
-        return self.rest_api.get_info()
+    get_schema = AppInfoSchema()
+
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, check_for_updates: bool) -> Response:
+        return self.rest_api.get_info(check_for_updates)
 
 
-class PingResource(BaseResource):
+class PingResource(BaseMethodView):
 
     def get(self) -> Response:
         return self.rest_api.ping()
 
 
-class DataImportResource(BaseResource):
+class DataImportResource(BaseMethodView):
 
     upload_schema = DataImportSchema()
 
+    @require_loggedin_user()
     @use_kwargs(upload_schema, location='json')
     def put(
-        self,
-        source: IMPORTABLE_LOCATIONS,
-        file: Path,
+            self,
+            async_query: bool,
+            source: IMPORTABLE_LOCATIONS,
+            file: Path,
+            timestamp_format: Optional[str],
     ) -> Response:
-        return self.rest_api.import_data(source=source, filepath=file)
+        return self.rest_api.import_data(
+            source=source,
+            filepath=file,
+            timestamp_format=timestamp_format,
+            async_query=async_query,
+        )
 
+    @require_loggedin_user()
     @use_kwargs(upload_schema, location='form_and_file')
     def post(
             self,
+            async_query: bool,
             source: IMPORTABLE_LOCATIONS,
             file: FileStorage,
+            timestamp_format: Optional[str],
     ) -> Response:
-        with TemporaryDirectory() as temp_directory:
-            filename = file.filename if file.filename else f'{source}.csv'
-            filepath = Path(temp_directory) / filename
-            file.save(str(filepath))
-            response = self.rest_api.import_data(source=source, filepath=filepath)
+        return self.rest_api.import_data(
+            source=source,
+            filepath=file,
+            timestamp_format=timestamp_format,
+            async_query=async_query,
+        )
 
-        return response
+
+class Eth2DailyStatsResource(BaseMethodView):
+    post_schema = Eth2DailyStatsSchema()
+
+    @require_premium_user(active_check=False)
+    @use_kwargs(post_schema, location='json_and_query')
+    def post(
+            self,
+            filter_query: Eth2DailyStatsFilterQuery,
+            async_query: bool,
+            only_cache: bool,
+    ) -> Response:
+        return self.rest_api.get_eth2_daily_stats(
+            filter_query=filter_query,
+            async_query=async_query,
+            only_cache=only_cache,
+        )
 
 
-class Eth2StakeDepositsResource(BaseResource):
+class Eth2ValidatorsResource(BaseMethodView):
+
+    patch_schema = Eth2ValidatorPatchSchema()
+    put_schema = Eth2ValidatorPutSchema()
+    delete_schema = Eth2ValidatorDeleteSchema()
+
+    @require_loggedin_user()
+    def get(self) -> Response:
+        return self.rest_api.get_eth2_validators()
+
+    @require_loggedin_user()
+    @use_kwargs(put_schema, location='json')
+    def put(
+            self,
+            validator_index: Optional[int],
+            public_key: Optional[Eth2PubKey],
+            ownership_percentage: FVal,
+            async_query: bool,
+    ) -> Response:
+        return self.rest_api.add_eth2_validator(
+            validator_index=validator_index,
+            public_key=public_key,
+            ownership_proportion=ownership_percentage,
+            async_query=async_query,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, validators: List[Dict[str, Any]]) -> Response:
+        return self.rest_api.delete_eth2_validator(validators)
+
+    @require_loggedin_user()
+    @use_kwargs(patch_schema, location='json')
+    def patch(self, validator_index: int, ownership_percentage: FVal) -> Response:
+        return self.rest_api.edit_eth2_validator(
+            validator_index=validator_index,
+            ownership_proportion=ownership_percentage,
+        )
+
+
+class Eth2StakeDepositsResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_eth2_stake_deposits(async_query)
 
 
-class Eth2StakeDetailsResource(BaseResource):
+class Eth2StakeDetailsResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_eth2_stake_details(async_query)
 
 
-class DefiBalancesResource(BaseResource):
+class DefiBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_defi_balances(async_query)
 
 
-class NamedEthereumModuleDataResource(BaseResource):
+class NamedEthereumModuleDataResource(BaseMethodView):
     delete_schema = NamedEthereumModuleDataSchema()
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='view_args')
     def delete(self, module_name: ModuleName) -> Response:
         return self.rest_api.purge_module_data(module_name)
 
 
-class EthereumModuleDataResource(BaseResource):
+class EthereumModuleDataResource(BaseMethodView):
 
     def delete(self) -> Response:
         return self.rest_api.purge_module_data(module_name=None)
 
 
-class EthereumModuleResource(BaseResource):
+class EthereumModuleResource(BaseMethodView):
 
     def get(self) -> Response:
         return self.rest_api.supported_modules()
 
 
-class MakerdaoDSRBalanceResource(BaseResource):
+class MakerdaoDSRBalanceResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_makerdao_dsr_balance(async_query)
 
 
-class MakerdaoDSRHistoryResource(BaseResource):
+class MakerdaoDSRHistoryResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_makerdao_dsr_history(async_query)
 
 
-class MakerdaoVaultsResource(BaseResource):
+class MakerdaoVaultsResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_makerdao_vaults(async_query)
 
 
-class MakerdaoVaultDetailsResource(BaseResource):
+class MakerdaoVaultDetailsResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_makerdao_vault_details(async_query)
 
 
-class AaveBalancesResource(BaseResource):
+class AaveBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_aave_balances(async_query)
 
 
-class AaveHistoryResource(BaseResource):
+class AaveHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1282,19 +1606,21 @@ class AaveHistoryResource(BaseResource):
         )
 
 
-class AdexBalancesResource(BaseResource):
+class AdexBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_adex_balances(async_query=async_query)
 
 
-class AdexHistoryResource(BaseResource):
+class AdexHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1311,19 +1637,21 @@ class AdexHistoryResource(BaseResource):
         )
 
 
-class CompoundBalancesResource(BaseResource):
+class CompoundBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_compound_balances(async_query)
 
 
-class CompoundHistoryResource(BaseResource):
+class CompoundHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1340,28 +1668,31 @@ class CompoundHistoryResource(BaseResource):
         )
 
 
-class YearnVaultsBalancesResource(BaseResource):
+class YearnVaultsBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_yearn_vaults_balances(async_query)
 
 
-class YearnVaultsV2BalancesResource(BaseResource):
+class YearnVaultsV2BalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_yearn_vaults_v2_balances(async_query)
 
 
-class YearnVaultsHistoryResource(BaseResource):
+class YearnVaultsHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1378,10 +1709,11 @@ class YearnVaultsHistoryResource(BaseResource):
         )
 
 
-class YearnVaultsV2HistoryResource(BaseResource):
+class YearnVaultsV2HistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1398,19 +1730,21 @@ class YearnVaultsV2HistoryResource(BaseResource):
         )
 
 
-class UniswapBalancesResource(BaseResource):
+class UniswapBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_uniswap_balances(async_query=async_query)
 
 
-class UniswapEventsHistoryResource(BaseResource):
+class UniswapEventsHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1427,10 +1761,11 @@ class UniswapEventsHistoryResource(BaseResource):
         )
 
 
-class UniswapTradesHistoryResource(BaseResource):
+class UniswapTradesHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1447,19 +1782,21 @@ class UniswapTradesHistoryResource(BaseResource):
         )
 
 
-class SushiswapBalancesResource(BaseResource):
+class SushiswapBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_sushiswap_balances(async_query=async_query)
 
 
-class SushiswapEventsHistoryResource(BaseResource):
+class SushiswapEventsHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1476,10 +1813,11 @@ class SushiswapEventsHistoryResource(BaseResource):
         )
 
 
-class SushiswapTradesHistoryResource(BaseResource):
+class SushiswapTradesHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1496,16 +1834,17 @@ class SushiswapTradesHistoryResource(BaseResource):
         )
 
 
-class LoopringBalancesResource(BaseResource):
+class LoopringBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_loopring_balances(async_query=async_query)
 
 
-class LiquityTrovesResource(BaseResource):
+class LiquityTrovesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
@@ -1514,10 +1853,11 @@ class LiquityTrovesResource(BaseResource):
         return self.rest_api.get_liquity_troves(async_query=async_query)
 
 
-class LiquityTrovesHistoryResource(BaseResource):
+class LiquityTrovesHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
         self,
@@ -1534,10 +1874,11 @@ class LiquityTrovesHistoryResource(BaseResource):
         )
 
 
-class LiquityStakingHistoryResource(BaseResource):
+class LiquityStakingHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
         self,
@@ -1554,16 +1895,17 @@ class LiquityStakingHistoryResource(BaseResource):
         )
 
 
-class LiquityStakingResource(BaseResource):
+class LiquityStakingResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_liquity_staked(async_query=async_query)
 
 
-class PickleDillResource(BaseResource):
+class PickleDillResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
@@ -1572,19 +1914,21 @@ class PickleDillResource(BaseResource):
         return self.rest_api.get_dill_balance(async_query=async_query)
 
 
-class BalancerBalancesResource(BaseResource):
+class BalancerBalancesResource(BaseMethodView):
 
     get_schema = AsyncQueryArgumentSchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool) -> Response:
         return self.rest_api.get_balancer_balances(async_query=async_query)
 
 
-class BalancerEventsHistoryResource(BaseResource):
+class BalancerEventsHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1601,10 +1945,11 @@ class BalancerEventsHistoryResource(BaseResource):
         )
 
 
-class BalancerTradesHistoryResource(BaseResource):
+class BalancerTradesHistoryResource(BaseMethodView):
 
     get_schema = AsyncHistoricalQuerySchema()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(get_schema, location='json_and_query')
     def get(
             self,
@@ -1621,31 +1966,36 @@ class BalancerTradesHistoryResource(BaseResource):
         )
 
 
-class WatchersResource(BaseResource):
+class WatchersResource(BaseMethodView):
 
     put_schema = WatchersAddSchema
     patch_schema = WatchersEditSchema
     delete_schema = WatchersDeleteSchema
 
+    @require_premium_user(active_check=False)
     def get(self) -> Response:
         return self.rest_api.get_watchers()
 
+    @require_premium_user(active_check=False)
     @use_kwargs(put_schema, location='json')
     def put(self, watchers: List[Dict[str, Any]]) -> Response:
         return self.rest_api.add_watchers(watchers)
 
+    @require_premium_user(active_check=False)
     @use_kwargs(patch_schema, location='json')
     def patch(self, watchers: List[Dict[str, Any]]) -> Response:
         return self.rest_api.edit_watchers(watchers)
 
+    @require_premium_user(active_check=False)
     @use_kwargs(delete_schema, location='json')
     def delete(self, watchers: List[str]) -> Response:
         return self.rest_api.delete_watchers(watchers)
 
 
-class AssetIconsResource(BaseResource):
+class AssetIconsResource(BaseMethodView):
 
     get_schema = SingleAssetIdentifierSchema()
+    patch_schema = SingleAssetIdentifierSchema()
     upload_schema = AssetIconUploadSchema()
 
     @use_kwargs(get_schema, location='view_args')
@@ -1673,16 +2023,22 @@ class AssetIconsResource(BaseResource):
 
         return response
 
+    @use_kwargs(patch_schema, location='view_args')
+    def patch(self, asset: Asset) -> Response:
+        return self.rest_api.refresh_asset_icon(asset)
 
-class CurrentAssetsPriceResource(BaseResource):
+
+class CurrentAssetsPriceResource(BaseMethodView):
 
     put_schema = ManualPriceSchema
     post_schema = CurrentAssetsPriceSchema()
     delete_schema = SingleAssetIdentifierSchema()
 
+    @require_loggedin_user()
     def get(self) -> Response:
         return self.rest_api.get_nfts_with_price()
 
+    @require_loggedin_user()
     @use_kwargs(put_schema, location='json')
     def put(
             self,
@@ -1696,6 +2052,7 @@ class CurrentAssetsPriceResource(BaseResource):
             price=price,
         )
 
+    @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
     def post(
             self,
@@ -1711,12 +2068,13 @@ class CurrentAssetsPriceResource(BaseResource):
             async_query=async_query,
         )
 
+    @require_loggedin_user()
     @use_kwargs(delete_schema, location='json')
     def delete(self, asset: Asset) -> Response:
         return self.rest_api.delete_manual_current_price(asset)
 
 
-class HistoricalAssetsPriceResource(BaseResource):
+class HistoricalAssetsPriceResource(BaseMethodView):
 
     post_schema = HistoricalAssetsPriceSchema()
     put_schema = TimedManualPriceSchema()
@@ -1724,6 +2082,7 @@ class HistoricalAssetsPriceResource(BaseResource):
     get_schema = ManualPriceRegisteredSchema()
     delete_schema = ManualPriceDeleteSchema()
 
+    @require_loggedin_user()
     @use_kwargs(post_schema, location='json')
     def post(
             self,
@@ -1781,16 +2140,18 @@ class HistoricalAssetsPriceResource(BaseResource):
         return self.rest_api.delete_manual_price(from_asset, to_asset, timestamp)
 
 
-class NamedOracleCacheResource(BaseResource):
+class NamedOracleCacheResource(BaseMethodView):
 
     post_schema = NamedOracleCacheCreateSchema()
     delete_schema = NamedOracleCacheSchema()
     get_schema = NamedOracleCacheGetSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(self, oracle: HistoricalPriceOracle, async_query: bool) -> Response:
         return self.rest_api.get_oracle_cache(oracle=oracle, async_query=async_query)
 
+    @require_loggedin_user()
     @use_kwargs(post_schema, location='json_and_view_args')
     def post(
             self,
@@ -1822,27 +2183,32 @@ class NamedOracleCacheResource(BaseResource):
         )
 
 
-class OraclesResource(BaseResource):
+class OraclesResource(BaseMethodView):
 
     def get(self) -> Response:
         return self.rest_api.get_supported_oracles()
 
 
-class ERC20TokenInfo(BaseResource):
+class ERC20TokenInfo(BaseMethodView):
 
     get_schema = ERC20InfoSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, address: ChecksumEthAddress, async_query: bool) -> Response:
         return self.rest_api.get_token_information(address, async_query)
 
 
-class BinanceAvailableMarkets(BaseResource):
-    def get(self) -> Response:
-        return self.rest_api.get_all_binance_pairs()
+class BinanceAvailableMarkets(BaseMethodView):
+
+    get_schema = BinanceMarketsSchema()
+
+    @use_kwargs(get_schema, location='json_and_query')
+    def get(self, location: Location) -> Response:
+        return self.rest_api.get_all_binance_pairs(location)
 
 
-class BinanceUserMarkets(BaseResource):
+class BinanceUserMarkets(BaseMethodView):
 
     get_schema = BinanceMarketsUserSchema()
 
@@ -1851,59 +2217,15 @@ class BinanceUserMarkets(BaseResource):
         return self.rest_api.get_user_binance_pairs(name, location)
 
 
-class GitcoinEventsResource(BaseResource):
-    post_schema = GitcoinEventsQuerySchema()
-    delete_schema = GitcoinEventsDeleteSchema()
-
-    @use_kwargs(post_schema, location='json_and_query')
-    def post(
-            self,
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-            async_query: bool,
-            grant_id: Optional[int],
-            only_cache: bool,
-    ) -> Response:
-        return self.rest_api.get_gitcoin_events(
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            async_query=async_query,
-            grant_id=grant_id,
-            only_cache=only_cache,
-        )
-
-    @use_kwargs(delete_schema, location='json_and_query')
-    def delete(self, grant_id: Optional[int]) -> Response:
-        return self.rest_api.purge_gitcoin_grant_data(grant_id=grant_id)
-
-
-class GitcoinReportResource(BaseResource):
-    put_schema = GitcoinReportSchema()
-
-    @use_kwargs(put_schema, location='json_and_query')
-    def put(
-            self,
-            from_timestamp: Timestamp,
-            to_timestamp: Timestamp,
-            async_query: bool,
-            grant_id: Optional[int],
-    ) -> Response:
-        return self.rest_api.process_gitcoin(
-            from_timestamp=from_timestamp,
-            to_timestamp=to_timestamp,
-            async_query=async_query,
-            grant_id=grant_id,
-        )
-
-
-class AvalancheTransactionsResource(BaseResource):
+class AvalancheTransactionsResource(BaseMethodView):
     get_schema = AvalancheTransactionQuerySchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query_and_view_args')
     def get(
         self,
         async_query: bool,
-        address: Optional[ChecksumEthAddress],
+        address: ChecksumEthAddress,
         from_timestamp: Timestamp,
         to_timestamp: Timestamp,
     ) -> Response:
@@ -1915,33 +2237,158 @@ class AvalancheTransactionsResource(BaseResource):
         )
 
 
-class ERC20TokenInfoAVAX(BaseResource):
+class ERC20TokenInfoAVAX(BaseMethodView):
     get_schema = ERC20InfoSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, address: ChecksumEthAddress, async_query: bool) -> Response:
         return self.rest_api.get_avax_token_information(address, async_query)
 
 
-class NFTSResource(BaseResource):
+class NFTSResource(BaseMethodView):
     get_schema = AsyncIgnoreCacheQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool, ignore_cache: bool) -> Response:
         return self.rest_api.get_nfts(async_query=async_query, ignore_cache=ignore_cache)
 
 
-class NFTSBalanceResource(BaseResource):
+class NFTSBalanceResource(BaseMethodView):
     get_schema = AsyncIgnoreCacheQueryArgumentSchema()
 
+    @require_loggedin_user()
     @use_kwargs(get_schema, location='json_and_query')
     def get(self, async_query: bool, ignore_cache: bool) -> Response:
         return self.rest_api.get_nfts_balances(async_query=async_query, ignore_cache=ignore_cache)
 
 
-class LimitsCounterResetResource(BaseResource):
-    post_schema = LimitsCounterResetSchema()
+class StakingResource(BaseMethodView):
+    get_schema = StakingQuerySchema
 
-    @use_kwargs(post_schema, location='view_args')
-    def post(self, location: str) -> Response:
-        return self.rest_api.reset_limits_counter(location)
+    @require_loggedin_user()
+    @use_kwargs(get_schema, location='json_and_query')
+    def post(
+            self,
+            async_query: bool,
+            only_cache: bool,
+            query_filter: 'HistoryEventFilterQuery',
+            value_filter: 'HistoryEventFilterQuery',
+    ) -> Response:
+        return self.rest_api.query_kraken_staking_events(
+            async_query=async_query,
+            only_cache=only_cache,
+            query_filter=query_filter,
+            value_filter=value_filter,
+        )
+
+
+class UserAssetsResource(BaseMethodView):
+    importing_schema = AssetsImportingSchema
+    import_from_form = AssetsImportingFromFormSchema
+
+    @require_loggedin_user()
+    @use_kwargs(importing_schema, location='json')
+    def put(self, file: Optional[Path], destination: Optional[Path], action: str) -> Response:
+        if action == 'upload':
+            if file is None:
+                return api_response(wrap_in_fail_result(
+                    message='file is required for upload action.',
+                    status_code=HTTPStatus.BAD_REQUEST,
+                ))
+            return self.rest_api.import_user_assets(path=file)
+        return self.rest_api.get_user_added_assets(path=destination)
+
+    @require_loggedin_user()
+    @use_kwargs(import_from_form, location='form_and_file')
+    def post(self, file: FileStorage) -> Response:
+        with TemporaryDirectory() as temp_directory:
+            filename = file.filename if file.filename else 'assets.zip'
+            filepath = Path(temp_directory) / filename
+            file.save(str(filepath))
+            response = self.rest_api.import_user_assets(path=filepath)
+        return response
+
+
+class DBSnapshotExportingResource(BaseMethodView):
+    post_schema = SnapshotExportingSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, timestamp: Timestamp, path: Path) -> Response:
+        return self.rest_api.export_user_db_snapshot(timestamp=timestamp, path=path)
+
+
+class DBSnapshotDownloadingResource(BaseMethodView):
+    post_schema = SnapshotTimestampQuerySchema()
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(self, timestamp: Timestamp) -> Response:
+        return self.rest_api.download_user_db_snapshot(timestamp=timestamp)
+
+
+class DBSnapshotImportingResource(BaseMethodView):
+    upload_schema = SnapshotImportingSchema()
+
+    @require_loggedin_user()
+    @use_kwargs(upload_schema, location='json')
+    def put(self, balances_snapshot_file: Path, location_data_snapshot_file: Path) -> Response:
+        return self.rest_api.import_user_snapshot(
+            balances_snapshot_file=balances_snapshot_file,
+            location_data_snapshot_file=location_data_snapshot_file,
+        )
+
+    @require_loggedin_user()
+    @use_kwargs(upload_schema, location='form_and_file')
+    def post(
+        self,
+        balances_snapshot_file: FileStorage,
+        location_data_snapshot_file: FileStorage,
+    ) -> Response:
+        with TemporaryDirectory() as temp_directory:
+            balance_snapshot_filename = balances_snapshot_file.filename if balances_snapshot_file.filename else 'balances_snapshot_import.csv'  # noqa: 501
+            location_data_snapshot_filename = location_data_snapshot_file.filename if location_data_snapshot_file.filename else 'location_data_snapshot.csv'  # noqa: 501
+            balance_snapshot_filepath = Path(temp_directory) / balance_snapshot_filename
+            location_data_snapshot_filepath = Path(temp_directory) / location_data_snapshot_filename  # noqa: 501
+            balances_snapshot_file.save(str(balance_snapshot_filepath))
+            location_data_snapshot_file.save(str(location_data_snapshot_filepath))
+            response = self.rest_api.import_user_snapshot(
+                balances_snapshot_file=balance_snapshot_filepath,
+                location_data_snapshot_file=location_data_snapshot_filepath,
+            )
+
+        return response
+
+
+class DBSnapshotDeletingResource(BaseMethodView):
+    delete_schema = SnapshotTimestampQuerySchema()
+
+    @require_loggedin_user()
+    @use_kwargs(delete_schema, location='json')
+    def delete(self, timestamp: Timestamp) -> Response:
+        return self.rest_api.delete_user_db_snapshot(timestamp=timestamp)
+
+
+class ReverseEnsResource(BaseMethodView):
+    post_schema = ReverseEnsSchema
+
+    @require_loggedin_user()
+    @use_kwargs(post_schema, location='json')
+    def post(
+            self,
+            ethereum_addresses: List[ChecksumEthAddress],
+            ignore_cache: bool,
+            async_query: bool,
+    ) -> Response:
+        return self.rest_api.get_ens_mappings(
+            addresses=ethereum_addresses,
+            ignore_cache=ignore_cache,
+            async_query=async_query,
+        )
+
+
+class CounterpartiesResource(BaseMethodView):
+    def get(self) -> Response:
+        return self.rest_api.get_all_counterparties()

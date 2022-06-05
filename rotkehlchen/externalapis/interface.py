@@ -1,16 +1,15 @@
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from rotkehlchen.typing import ApiKey, ExternalService, Timestamp
+from rotkehlchen.types import ApiKey, ExternalService, Timestamp
 from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
     from rotkehlchen.db.dbhandler import DBHandler
 
 
-class ExternalServiceWithApiKey():
+class ExternalServiceWithApiKey:
 
     def __init__(self, database: Optional['DBHandler'], service_name: ExternalService) -> None:
-        super().__init__()
         self.db = database
         self.api_key: Optional[ApiKey] = None
         self.api_key_saved_ts = Timestamp(0)

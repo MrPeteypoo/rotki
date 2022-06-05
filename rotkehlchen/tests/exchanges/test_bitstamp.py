@@ -7,10 +7,11 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.converters import asset_from_bitstamp
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR, A_LINK, A_USD, A_USDC
-from rotkehlchen.errors import RemoteError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.exchanges.bitstamp import (
     API_ERR_AUTH_NONCE_CODE,
     API_ERR_AUTH_NONCE_MESSAGE,
@@ -29,7 +30,7 @@ from rotkehlchen.exchanges.data_structures import (
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.constants import A_GBP
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import Fee, Location, Timestamp
+from rotkehlchen.types import Fee, Location, Timestamp
 from rotkehlchen.utils.serialization import jsonloads_list
 
 
@@ -108,7 +109,7 @@ def test_validate_api_key_err_auth_nonce(mock_bitstamp):
         assert len(errors) == 1
         assert API_ERR_AUTH_NONCE_MESSAGE in errors[0]
 
-        trades = mock_bitstamp.query_online_trade_history(0, 1)
+        trades, _ = mock_bitstamp.query_online_trade_history(0, 1)
         assert trades == []
         errors = mock_bitstamp.msg_aggregator.consume_errors()
         assert len(errors) == 1
@@ -750,7 +751,7 @@ def test_api_query_paginated_trades_pagination(mock_bitstamp):
     assert result == expected_result
 
 
-@pytest.mark.parametrize('start_ts, since_id', [(0, 1), (1, 6)])
+@pytest.mark.parametrize('start_ts, since_id', [(0, 1), (1606995001, 6)])
 def test_query_online_trade_history(mock_bitstamp, start_ts, since_id):
     """Test `since_id` value will change depending on `start_ts` value.
     Also tests `db_trades` are sorted by `link` (as int) in ascending mode.
@@ -783,12 +784,12 @@ def test_query_online_trade_history(mock_bitstamp, start_ts, since_id):
             notes='',
         ),
     ]
-    database = MagicMock()
-    database.get_trades.return_value = trades
+    mock_bitstamp.db.add_trades(trades)
 
+    end_ts = Timestamp(1606995000)
     expected_call = call(
         start_ts=start_ts,
-        end_ts=2,
+        end_ts=end_ts,
         options={
             'since_id': since_id,
             'limit': 1000,
@@ -797,13 +798,12 @@ def test_query_online_trade_history(mock_bitstamp, start_ts, since_id):
         },
         case='trades',
     )
-    with patch.object(mock_bitstamp, 'db', new_callable=MagicMock(return_value=database)):
-        with patch.object(mock_bitstamp, '_api_query_paginated') as mock_api_query_paginated:
-            mock_bitstamp.query_online_trade_history(
-                start_ts=Timestamp(start_ts),
-                end_ts=Timestamp(2),
-            )
-            assert mock_api_query_paginated.call_args == expected_call
+    with patch.object(mock_bitstamp, '_api_query_paginated') as mock_api_query_paginated:
+        mock_bitstamp.query_online_trade_history(
+            start_ts=Timestamp(start_ts),
+            end_ts=end_ts,
+        )
+        assert mock_api_query_paginated.call_args == expected_call
 
 
 def test_deserialize_asset_movement_deposit(mock_bitstamp):
@@ -945,7 +945,7 @@ def test_deserialize_asset_movement_withdrawal(mock_bitstamp):
     assert movement == expected_movement
 
 
-@pytest.mark.parametrize('start_ts, since_id', [(0, 1), (1, 6)])
+@pytest.mark.parametrize('start_ts, since_id', [(0, 1), (1606901401, 6)])
 def test_query_online_deposits_withdrawals(mock_bitstamp, start_ts, since_id):
     """Test `since_id` value will change depending on `start_ts` value.
     Also tests `db_asset_movements` are sorted by `link` (as int) in ascending
@@ -967,7 +967,7 @@ def test_query_online_deposits_withdrawals(mock_bitstamp, start_ts, since_id):
             link='5',
         ),
         AssetMovement(
-            timestamp=1606901400,
+            timestamp=1606801400,
             location=Location.BITSTAMP,
             category=AssetMovementCategory.DEPOSIT,
             address=None,
@@ -979,12 +979,12 @@ def test_query_online_deposits_withdrawals(mock_bitstamp, start_ts, since_id):
             link='2',
         ),
     ]
-    database = MagicMock()
-    database.get_asset_movements.return_value = movements
+    mock_bitstamp.db.add_asset_movements(movements)
 
+    end_ts = Timestamp(1606901401)
     expected_call = call(
         start_ts=start_ts,
-        end_ts=2,
+        end_ts=end_ts,
         options={
             'since_id': since_id,
             'limit': 1000,
@@ -993,13 +993,12 @@ def test_query_online_deposits_withdrawals(mock_bitstamp, start_ts, since_id):
         },
         case='asset_movements',
     )
-    with patch.object(mock_bitstamp, 'db', new_callable=MagicMock(return_value=database)):
-        with patch.object(mock_bitstamp, '_api_query_paginated') as mock_api_query_paginated:
-            mock_bitstamp.query_online_deposits_withdrawals(
-                start_ts=Timestamp(start_ts),
-                end_ts=Timestamp(2),
-            )
-            assert mock_api_query_paginated.call_args == expected_call
+    with patch.object(mock_bitstamp, '_api_query_paginated') as mock_api_query_paginated:
+        mock_bitstamp.query_online_deposits_withdrawals(
+            start_ts=Timestamp(start_ts),
+            end_ts=end_ts,
+        )
+        assert mock_api_query_paginated.call_args == expected_call
 
 
 @pytest.mark.freeze_time(datetime(2020, 12, 3, 12, 0, 0))

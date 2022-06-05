@@ -21,7 +21,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, onMounted } from '@vue/composition-api';
+import { defineComponent, onMounted, watch } from '@vue/composition-api';
 import ActiveModules from '@/components/defi/ActiveModules.vue';
 import ModuleNotActive from '@/components/defi/ModuleNotActive.vue';
 import ProgressScreen from '@/components/helper/ProgressScreen.vue';
@@ -29,9 +29,9 @@ import NoPremiumPlaceholder from '@/components/premium/NoPremiumPlaceholder.vue'
 import LiquityStakingDetails from '@/components/staking/liquity/LiquityStakingDetails.vue';
 import { setupStatusChecking } from '@/composables/common';
 import { getPremium, setupModuleEnabled } from '@/composables/session';
-import { Module } from '@/services/session/consts';
 import { Section } from '@/store/const';
-import { useStore } from '@/store/utils';
+import { useLiquityStore } from '@/store/defi/liquity';
+import { Module } from '@/types/modules';
 
 export default defineComponent({
   name: 'LiquityPage',
@@ -44,15 +44,25 @@ export default defineComponent({
   },
   setup() {
     const { isModuleEnabled } = setupModuleEnabled();
-    const store = useStore();
-    onMounted(async () => {
-      await store.dispatch('defi/liquity/fetchStaking');
-      await store.dispatch('defi/liquity/fetchStakingEvents');
-    });
-    const modules = [Module.LIQUITY];
+    const { fetchStaking, fetchStakingEvents } = useLiquityStore();
+
+    async function load() {
+      await fetchStaking();
+      await fetchStakingEvents();
+    }
+
+    onMounted(async () => await load());
     const { shouldShowLoadingScreen } = setupStatusChecking();
+    const modules = [Module.LIQUITY];
+    const moduleEnabled = isModuleEnabled(modules[0]);
+
+    watch(moduleEnabled, async enabled => {
+      if (enabled) {
+        await load();
+      }
+    });
     return {
-      moduleEnabled: isModuleEnabled(modules[0]),
+      moduleEnabled: moduleEnabled,
       modules,
       loading: shouldShowLoadingScreen(Section.DEFI_LIQUITY_STAKING),
       premium: getPremium()

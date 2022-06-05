@@ -11,7 +11,7 @@
         class="mt-4 mb-2"
         contain
         max-width="72px"
-        :src="require('@/assets/images/rotkehlchen_no_text.png')"
+        src="/assets/images/rotkehlchen_no_text.png"
       />
       <div class="d-flex flex-row align-center about__version mt-4">
         <div class="font-weight-bold">{{ version.version }}</div>
@@ -22,7 +22,7 @@
           />
         </div>
         <v-spacer />
-        <update-indicator />
+        <app-update-indicator />
       </div>
       <v-divider class="mt-4 mb-2" />
       <div class="d-flex flex-row align-center">
@@ -105,58 +105,71 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue } from 'vue-property-decorator';
-import { mapState } from 'vuex';
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  ref,
+  toRefs
+} from '@vue/composition-api';
+import { get, set, useClipboard } from '@vueuse/core';
 import BaseExternalLink from '@/components/base/BaseExternalLink.vue';
-import UpdateIndicator from '@/components/status/UpdateIndicator.vue';
+import AppUpdateIndicator from '@/components/status/AppUpdateIndicator.vue';
+import { interop } from '@/electron-interop';
 import { SystemVersion } from '@/electron-main/ipc';
-import { Version } from '@/store/types';
+import { useMainStore } from '@/store/store';
 import { WebVersion } from '@/types';
 
-@Component({
+export default defineComponent({
   name: 'About',
-  components: { UpdateIndicator, BaseExternalLink },
-  computed: {
-    ...mapState(['version', 'dataDirectory'])
-  }
-})
-export default class About extends Vue {
-  version!: Version;
-  versionInfo: SystemVersion | WebVersion | null = null;
-  dataDirectory!: string;
+  components: { AppUpdateIndicator, BaseExternalLink },
+  setup() {
+    const store = useMainStore();
 
-  get web(): boolean {
-    return (this.versionInfo && 'userAgent' in this.versionInfo) ?? false;
-  }
+    const { version, dataDirectory } = toRefs(store);
+    const versionInfo = ref<SystemVersion | WebVersion | null>(null);
 
-  get packaged(): boolean {
-    return this.$interop.isPackaged;
-  }
+    const web = computed<boolean>(() => {
+      return (get(versionInfo) && 'userAgent' in get(versionInfo)!) ?? false;
+    });
 
-  get frontendVersion(): string {
-    return process.env.VERSION ?? '';
-  }
+    const frontendVersion = computed<string>(() => {
+      return process.env.VERSION ?? '';
+    });
 
-  async mounted() {
-    this.versionInfo = await this.$interop.version();
-  }
+    onMounted(async () => {
+      set(versionInfo, await interop.version());
+    });
 
-  copy() {
-    let version = '';
-    version += `App Version: ${this.version.version}\r\n`;
-    version += `Frontend Version: ${this.frontendVersion}\r\n`;
-    if (this.versionInfo) {
-      if ('userAgent' in this.versionInfo) {
-        version += `Platform: ${this.versionInfo.platform}\r\n`;
-        version += `User Agent: ${this.versionInfo.userAgent}\r\n`;
-      } else {
-        version += `Platform: ${this.versionInfo.os} ${this.versionInfo.arch} ${this.versionInfo.osVersion}\r\n`;
-        version += `Electron: ${this.versionInfo.electron}\r\n`;
+    const copy = () => {
+      let versionText = '';
+      versionText += `App Version: ${get(version).version}\r\n`;
+      versionText += `Frontend Version: ${get(frontendVersion)}\r\n`;
+      const versionInfoVal = get(versionInfo);
+      if (versionInfoVal) {
+        if ('userAgent' in versionInfoVal) {
+          versionText += `Platform: ${versionInfoVal.platform}\r\n`;
+          versionText += `User Agent: ${versionInfoVal.userAgent}\r\n`;
+        } else {
+          versionText += `Platform: ${versionInfoVal.os} ${versionInfoVal.arch} ${versionInfoVal.osVersion}\r\n`;
+          versionText += `Electron: ${versionInfoVal.electron}\r\n`;
+        }
       }
-    }
-    navigator.clipboard.writeText(version);
+
+      const { copy } = useClipboard({ source: versionText });
+      copy();
+    };
+
+    return {
+      version,
+      copy,
+      dataDirectory,
+      versionInfo,
+      web,
+      frontendVersion
+    };
   }
-}
+});
 </script>
 
 <style scoped lang="scss">

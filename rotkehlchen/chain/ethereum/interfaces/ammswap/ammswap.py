@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tupl
 
 from gevent.lock import Semaphore
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.assets.utils import get_or_create_ethereum_token
 from rotkehlchen.chain.ethereum.graph import (
@@ -24,7 +24,7 @@ from rotkehlchen.chain.ethereum.graph import (
     Graph,
     format_query_indentation,
 )
-from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
+from rotkehlchen.chain.ethereum.interfaces.ammswap.types import (
     AddressEventsBalances,
     AddressToLPBalances,
     AddressTrades,
@@ -41,13 +41,15 @@ from rotkehlchen.chain.ethereum.interfaces.ammswap.typing import (
 from rotkehlchen.chain.ethereum.interfaces.ammswap.utils import SUBGRAPH_REMOTE_ERROR_MSG
 from rotkehlchen.chain.ethereum.trades import AMMSwap, AMMTrade
 from rotkehlchen.constants import ZERO
-from rotkehlchen.errors import DeserializationError, ModuleInitializationFailure, RemoteError
+from rotkehlchen.db.ranges import DBQueryRanges
+from rotkehlchen.errors.misc import ModuleInitializationFailure, RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import (
+from rotkehlchen.types import (
     AssetAmount,
     ChecksumEthAddress,
     Location,
@@ -666,6 +668,7 @@ class AMMSwapPlatform(metaclass=abc.ABCMeta):
         if only_cache:
             return self._fetch_trades_from_db(addresses, from_timestamp, to_timestamp)
 
+        dbranges = DBQueryRanges(self.database)
         # Get addresses' last used query range for this AMM's trades
         for address in addresses:
             entry_name = f'{self.trades_prefix}_{address}'
@@ -690,10 +693,9 @@ class AMMSwapPlatform(metaclass=abc.ABCMeta):
             # Insert last used query range for new addresses
             for address in new_addresses:
                 entry_name = f'{self.trades_prefix}_{address}'
-                self.database.update_used_query_range(
-                    name=entry_name,
-                    start_ts=start_ts,
-                    end_ts=to_timestamp,
+                dbranges.update_used_query_range(
+                    location_string=entry_name,
+                    queried_ranges=[(start_ts, to_timestamp)],
                 )
 
         # Request existing DB addresses' trades
@@ -708,15 +710,14 @@ class AMMSwapPlatform(metaclass=abc.ABCMeta):
             # Update last used query range for existing addresses
             for address in existing_addresses:
                 entry_name = f'{self.trades_prefix}_{address}'
-                self.database.update_used_query_range(
-                    name=entry_name,
-                    start_ts=min_end_ts,
-                    end_ts=to_timestamp,
+                dbranges.update_used_query_range(
+                    location_string=entry_name,
+                    queried_ranges=[(min_end_ts, to_timestamp)],
                 )
 
         # Insert all unique swaps to the DB
         all_swaps = set()
-        for address in filter(lambda address: address in address_amm_trades, addresses):
+        for address in filter(lambda x: x in address_amm_trades, addresses):
             for trade in address_amm_trades[address]:
                 for swap in trade.swaps:
                     all_swaps.add(swap)

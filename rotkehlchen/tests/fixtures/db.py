@@ -10,6 +10,7 @@ from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.db.dbhandler import DBHandler
 from rotkehlchen.db.utils import BlockchainAccounts
 from rotkehlchen.tests.utils.database import (
+    _use_prepared_db,
     add_blockchain_accounts_to_db,
     add_manually_tracked_balances_to_test_db,
     add_settings_to_test_db,
@@ -114,7 +115,12 @@ def _init_database(
         include_cryptocompare_key: bool,
         tags: List[Dict[str, Any]],
         manually_tracked_balances: List[ManuallyTrackedBalance],
+        data_migration_version: int,
+        use_custom_database: Optional[str],
 ) -> DBHandler:
+    if use_custom_database is not None:
+        _use_prepared_db(data_dir, use_custom_database)
+
     db = DBHandler(
         user_data_dir=data_dir,
         password=password,
@@ -122,7 +128,7 @@ def _init_database(
         initial_settings=None,
     )
     # Make sure that the fixture provided data are included in the DB
-    add_settings_to_test_db(db, db_settings, ignored_assets)
+    add_settings_to_test_db(db, db_settings, ignored_assets, data_migration_version)
     add_blockchain_accounts_to_db(db, blockchain_accounts)
     maybe_include_etherscan_key(db, include_etherscan_key)
     maybe_include_cryptocompare_key(db, include_cryptocompare_key)
@@ -145,6 +151,8 @@ def database(
         include_cryptocompare_key,
         tags,
         manually_tracked_balances,
+        data_migration_version,
+        use_custom_database,
 ) -> Optional[DBHandler]:
     if not start_with_logged_in_user:
         return None
@@ -160,6 +168,8 @@ def database(
         include_cryptocompare_key=include_cryptocompare_key,
         tags=tags,
         manually_tracked_balances=manually_tracked_balances,
+        data_migration_version=data_migration_version,
+        use_custom_database=use_custom_database,
     )
 
 
@@ -175,6 +185,8 @@ def session_database(
         session_include_cryptocompare_key,
         session_tags,
         session_manually_tracked_balances,
+        data_migration_version,
+        session_use_custom_database,
 ) -> Optional[DBHandler]:
     if not session_start_with_logged_in_user:
         return None
@@ -192,6 +204,8 @@ def session_database(
         include_cryptocompare_key=session_include_cryptocompare_key,
         tags=session_tags,
         manually_tracked_balances=session_manually_tracked_balances,
+        data_migration_version=data_migration_version,
+        use_custom_database=session_use_custom_database,
     )
 
 
@@ -202,4 +216,14 @@ def fixture_db_settings() -> Optional[Dict[str, Any]]:
 
 @pytest.fixture(scope='session', name='session_db_settings')
 def fixture_session_db_settings() -> Optional[Dict[str, Any]]:
+    return None
+
+
+@pytest.fixture(name='use_custom_database')
+def fixture_use_custom_database() -> Optional[str]:
+    return None
+
+
+@pytest.fixture(scope='session', name='session_use_custom_database')
+def fixture_session_use_custom_database() -> Optional[str]:
     return None

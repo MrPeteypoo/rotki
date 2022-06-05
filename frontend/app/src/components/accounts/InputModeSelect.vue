@@ -1,12 +1,12 @@
 <template>
-  <fragment>
+  <div class="mb-5">
     <v-btn-toggle
       :value="value"
       class="input-mode-select"
       mandatory
       @change="input($event)"
     >
-      <v-btn :value="MANUAL_ADD">
+      <v-btn :value="MANUAL_ADD" data-cy="input-mode-manual">
         <v-icon>mdi-pencil-plus</v-icon>
         <span class="hidden-sm-and-down ml-1">
           {{ $t('input_mode_select.manual_add.label') }}
@@ -20,7 +20,7 @@
         <v-img
           contain
           max-width="24px"
-          :src="require(`@/assets/images/metamask-fox.svg`)"
+          :src="`/assets/images/metamask-fox.svg`"
         />
         <span class="hidden-sm-and-down ml-1">
           {{ $t('input_mode_select.metamask_import.label') }}
@@ -38,58 +38,151 @@
       class="mt-3 info--text text-caption"
       v-text="$t('input_mode_select.metamask_import.metamask')"
     />
-    <p
-      v-if="isEth && !isMetaMaskSupported()"
+    <div
+      v-if="isEth && !$interop.isPackaged && !isMetaMaskSupported()"
       class="mt-3 warning--text text-caption"
-      v-text="$t('input_mode_select.metamask_import.missing')"
-    />
-  </fragment>
+    >
+      {{ $t('input_mode_select.metamask_import.missing') }}
+
+      <v-menu open-on-hover right offset-x close-delay="400" max-width="300">
+        <template #activator="{ on }">
+          <v-icon class="px-1" small v-on="on">mdi-help-circle</v-icon>
+        </template>
+        <div class="pa-4 text-caption">
+          <div>
+            {{ $t('input_mode_select.metamask_import.missing_tooltip.title') }}
+          </div>
+          <ol>
+            <li>
+              <i18n
+                path="input_mode_select.metamask_import.missing_tooltip.metamask_is_not_installed"
+              >
+                <template #link>
+                  <a
+                    :class="$style.link"
+                    target="_blank"
+                    :href="metamaskDownloadLink"
+                  >
+                    {{
+                      $t(
+                        'input_mode_select.metamask_import.missing_tooltip.here'
+                      )
+                    }}
+                  </a>
+                </template>
+              </i18n>
+            </li>
+            <li>
+              {{
+                $t(
+                  'input_mode_select.metamask_import.missing_tooltip.metamask_is_not_enabled'
+                )
+              }}
+            </li>
+            <li>
+              <i18n
+                path="input_mode_select.metamask_import.missing_tooltip.metamask_is_not_supported_by_browser"
+              >
+                <template #link>
+                  <a
+                    :class="$style.link"
+                    target="_blank"
+                    :href="metamaskDownloadLink"
+                  >
+                    {{
+                      $t(
+                        'input_mode_select.metamask_import.missing_tooltip.here'
+                      )
+                    }}
+                  </a>
+                </template>
+
+                <template #copy>
+                  <a :class="$style.link" @click="copyPageUrl">
+                    {{
+                      $t(
+                        'input_mode_select.metamask_import.missing_tooltip.copy_url'
+                      )
+                    }}
+                  </a>
+                </template>
+              </i18n>
+            </li>
+          </ol>
+        </div>
+      </v-menu>
+    </div>
+  </div>
 </template>
 
 <script lang="ts">
 import { Blockchain } from '@rotki/common/lib/blockchain';
-import { Component, Emit, Prop, Vue } from 'vue-property-decorator';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get, useClipboard } from '@vueuse/core';
 import {
   MANUAL_ADD,
   METAMASK_IMPORT,
   XPUB_ADD
 } from '@/components/accounts/const';
 import { AccountInput } from '@/components/accounts/types';
-import Fragment from '@/components/helper/Fragment';
 import { isMetaMaskSupported } from '@/utils/metamask';
 
-@Component({
-  components: { Fragment }
-})
-export default class InputModeSelect extends Vue {
-  @Prop({
-    required: true,
-    type: String,
-    validator: (value: any) => Object.values(Blockchain).includes(value)
-  })
-  blockchain!: Blockchain;
+export default defineComponent({
+  props: {
+    blockchain: {
+      required: true,
+      type: String as PropType<Blockchain>,
+      validator: (value: any) => Object.values(Blockchain).includes(value)
+    },
+    value: { required: true, type: String as PropType<AccountInput> }
+  },
+  emits: ['input'],
+  setup(props, { emit }) {
+    const { blockchain, value } = toRefs(props);
 
-  @Prop({ required: true })
-  value!: AccountInput;
+    const input = (value: AccountInput) => emit('input', value);
 
-  readonly MANUAL_ADD = MANUAL_ADD;
-  readonly METAMASK_IMPORT = METAMASK_IMPORT;
-  readonly XPUB_ADD = XPUB_ADD;
-  readonly isMetaMaskSupported = isMetaMaskSupported;
+    const isEth = computed(() => get(blockchain) === Blockchain.ETH);
+    const isBtc = computed(() => get(blockchain) === Blockchain.BTC);
+    const isMetaMask = computed(() => get(value) === METAMASK_IMPORT);
 
-  get isEth(): boolean {
-    return this.blockchain === Blockchain.ETH;
+    const metamaskDownloadLink = 'https://metamask.io/download/';
+
+    const copyPageUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      params.set('add', 'true');
+      params.set('test', 'false');
+
+      const { origin, pathname } = window.location;
+
+      const pageUrl = `${origin}${pathname}?${params}`;
+      const { copy } = useClipboard({ source: pageUrl });
+      copy();
+    };
+
+    return {
+      MANUAL_ADD,
+      XPUB_ADD,
+      METAMASK_IMPORT,
+      isEth,
+      isBtc,
+      isMetaMask,
+      isMetaMaskSupported,
+      input,
+      metamaskDownloadLink,
+      copyPageUrl
+    };
   }
-
-  get isBtc(): boolean {
-    return this.blockchain === Blockchain.BTC;
-  }
-
-  get isMetaMask(): boolean {
-    return this.value === METAMASK_IMPORT;
-  }
-
-  @Emit()
-  input(_value: AccountInput) {}
-}
+});
 </script>
+<style lang="css" module>
+.link {
+  font-weight: bold;
+  text-decoration: none;
+}
+</style>

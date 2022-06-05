@@ -9,7 +9,7 @@
 
           <v-switch
             v-model="anonymousUsageAnalytics"
-            class="general-settings__fields__anonymous-usage-statistics"
+            class="general-settings__fields__anonymous-usage-statistics mb-4 mt-0"
             color="primary"
             :label="$t('general_settings.labels.anonymous_analytics')"
             :success-messages="
@@ -19,10 +19,47 @@
             @change="onAnonymousUsageAnalyticsChange($event)"
           />
 
+          <v-row>
+            <v-col class="grow">
+              <v-text-field
+                v-model="versionUpdateCheckFrequency"
+                outlined
+                :disabled="!versionUpdateCheckEnabled"
+                type="number"
+                min="30"
+                max="35000"
+                :label="$t('general_settings.labels.version_update_check')"
+                item-value="id"
+                item-text="label"
+                persistent-hint
+                :hint="$t('general_settings.version_update_check_hint')"
+                :success-messages="
+                  settingsMessages[VERSION_UPDATE_CHECK_FREQUENCY].success
+                "
+                :error-messages="
+                  settingsMessages[VERSION_UPDATE_CHECK_FREQUENCY].error
+                "
+                @change="onVersionUpdateCheckFrequencyChange($event)"
+              />
+            </v-col>
+            <v-col class="shrink">
+              <v-switch
+                v-model="versionUpdateCheckEnabled"
+                class="mt-3"
+                :label="
+                  $t('general_settings.labels.version_update_check_enabled')
+                "
+                @change="
+                  onVersionUpdateCheckFrequencyChange($event ? '24' : '-1')
+                "
+              />
+            </v-col>
+          </v-row>
+
           <v-text-field
             v-model="balanceSaveFrequency"
             outlined
-            class="general-settings__fields__balance-save-frequency"
+            class="mt-2 general-settings__fields__balance-save-frequency"
             :label="$t('general_settings.labels.balance_saving_frequency')"
             type="number"
             :success-messages="settingsMessages[BALANCE_SAVE_FREQUENCY].success"
@@ -36,12 +73,12 @@
             class="general-settings__fields__date-display-format"
             :label="$t('general_settings.labels.date_display_format')"
             type="text"
-            :rules="dateDisplayFormatRules"
+            :rules="dateFormatRules"
             :success-messages="settingsMessages[DATE_DISPLAY_FORMAT].success"
             :error-messages="settingsMessages[DATE_DISPLAY_FORMAT].error"
             :hint="
               $t('general_settings.date_display_format_hint', {
-                format: dateFormat
+                format: dateDisplayFormatExample
               })
             "
             persistent-hint
@@ -70,9 +107,19 @@
             </template>
           </v-text-field>
 
+          <date-input-format-selector
+            v-model="dateInputFormat"
+            :label="$t('general_settings.labels.date_input_format')"
+            class="pt-4 general-settings__fields__date-input-format"
+            :rules="dateFormatRules"
+            :success-messages="settingsMessages[DATE_INPUT_FORMAT].success"
+            :error-messages="settingsMessages[DATE_INPUT_FORMAT].error"
+            @change="onDateInputFormatChange($event)"
+          />
+
           <v-switch
             v-model="displayDateInLocaltime"
-            class="general-settings__fields__display-date-in-localtime"
+            class="general-settings__fields__display-date-in-localtime mb-4 mt-0"
             color="primary"
             :label="$t('general_settings.labels.display_date_in_localtime')"
             :success-messages="
@@ -94,6 +141,7 @@
             :error-messages="settingsMessages[BTC_DERIVATION_GAP_LIMIT].error"
             @change="onBtcDerivationGapLimitChanged($event)"
           />
+
           <date-format-help v-model="formatHelp" />
         </card>
         <card class="mt-8">
@@ -116,7 +164,7 @@
             outlined
             class="general-settings__fields__currency-selector"
             :label="$t('general_settings.amount.labels.main_currency')"
-            item-text="ticker_symbol"
+            item-text="tickerSymbol"
             return-object
             :items="currencies"
             :success-messages="settingsMessages[SELECTED_CURRENCY].success"
@@ -125,14 +173,14 @@
           >
             <template #item="{ item, attrs, on }">
               <v-list-item
-                :id="`currency__${item.ticker_symbol.toLocaleLowerCase()}`"
+                :id="`currency__${item.tickerSymbol.toLocaleLowerCase()}`"
                 v-bind="attrs"
                 v-on="on"
               >
                 <v-list-item-avatar
                   class="general-settings__currency-list primary--text"
                 >
-                  {{ item.unicode_symbol }}
+                  {{ item.unicodeSymbol }}
                 </v-list-item-avatar>
                 <v-list-item-content>
                   <v-list-item-title>
@@ -153,9 +201,11 @@
           <v-text-field
             v-model="thousandSeparator"
             outlined
+            maxlength="1"
             class="general-settings__fields__thousand-separator"
             :label="$t('general_settings.amount.label.thousand_separator')"
             type="text"
+            :rules="thousandSeparatorRules()"
             :success-messages="settingsMessages[THOUSAND_SEPARATOR].success"
             :error-messages="settingsMessages[THOUSAND_SEPARATOR].error"
             @change="onThousandSeparatorChange($event)"
@@ -164,9 +214,11 @@
           <v-text-field
             v-model="decimalSeparator"
             outlined
+            maxlength="1"
             class="general-settings__fields__decimal-separator"
             :label="$t('general_settings.amount.label.decimal_separator')"
             type="text"
+            :rules="decimalSeparatorRules()"
             :success-messages="settingsMessages[DECIMAL_SEPARATOR].success"
             :error-messages="settingsMessages[DECIMAL_SEPARATOR].error"
             @change="onDecimalSeparatorChange($event)"
@@ -261,6 +313,7 @@ import { mapGetters } from 'vuex';
 import AmountDisplay from '@/components/display/AmountDisplay.vue';
 import RoundingSettings from '@/components/settings/explorers/RoundingSettings.vue';
 import FrontendSettings from '@/components/settings/FrontendSettings.vue';
+import DateInputFormatSelector from '@/components/settings/general/DateInputFormatSelector.vue';
 import TimeFrameSettings from '@/components/settings/general/TimeFrameSettings.vue';
 import PriceOracleSettings from '@/components/settings/PriceOracleSettings.vue';
 import SettingCategory from '@/components/settings/SettingCategory.vue';
@@ -269,23 +322,25 @@ import {
   makeMessage,
   settingsMessages
 } from '@/components/settings/utils';
+import { Constraints } from '@/data/constraints';
 import { currencies } from '@/data/currencies';
 import { displayDateFormatter } from '@/data/date_formatter';
 import { Defaults } from '@/data/defaults';
 import SettingsMixin from '@/mixins/settings-mixin';
-import { Currency } from '@/model/currency';
+import { monitor } from '@/services/monitoring';
+import { ActionStatus } from '@/store/types';
+import { Currency } from '@/types/currency';
+import { CurrencyLocation } from '@/types/currency-location';
+import { DateFormat } from '@/types/date-format';
 import {
   CURRENCY_LOCATION,
+  DATE_INPUT_FORMAT,
   DECIMAL_SEPARATOR,
-  THOUSAND_SEPARATOR
-} from '@/store/settings/consts';
-import { FrontendSettingsPayload } from '@/store/settings/types';
-import { ActionStatus } from '@/store/types';
-import {
-  CURRENCY_AFTER,
-  CurrencyLocation,
-  SettingsUpdate
-} from '@/typing/types';
+  FrontendSettingsPayload,
+  THOUSAND_SEPARATOR,
+  VERSION_UPDATE_CHECK_FREQUENCY
+} from '@/types/frontend-settings';
+import { SettingsUpdate } from '@/types/user';
 import { bigNumberify } from '@/utils/bignumbers';
 import DateFormatHelp from '@/views/settings/DateFormatHelp.vue';
 
@@ -296,12 +351,14 @@ const SETTING_KSM_RPC_ENDPOINT = 'ksmRpcEndpoint';
 const SETTING_DOT_RPC_ENDPOINT = 'dotRpcEndpoint';
 const SETTING_BALANCE_SAVE_FREQUENCY = 'balanceSaveFrequency';
 const SETTING_DATE_DISPLAY_FORMAT = 'dateDisplayFormat';
+const SETTING_DATE_INPUT_FORMAT = 'dateInputFormat';
 const SETTING_THOUSAND_SEPARATOR = 'thousandSeparator';
 const SETTING_DECIMAL_SEPARATOR = 'decimalSeparator';
 const SETTING_CURRENCY_LOCATION = 'currencyLocation';
 const SETTING_SELECTED_CURRENCY = 'selectedCurrency';
 const SETTING_BTC_DERIVATION_GAP_LIMIT = 'btcDerivationGapLimit';
 const SETTING_DISPLAY_DATE_IN_LOCALTIME = 'displayDateInLocaltime';
+const SETTING_VERSION_UPDATE_CHECK_FREQUENCY = 'versionUpdateCheckFrequency';
 
 const SETTINGS = [
   SETTING_FLOATING_PRECISION,
@@ -311,18 +368,24 @@ const SETTINGS = [
   SETTING_DOT_RPC_ENDPOINT,
   SETTING_BALANCE_SAVE_FREQUENCY,
   SETTING_DATE_DISPLAY_FORMAT,
+  SETTING_DATE_INPUT_FORMAT,
   SETTING_THOUSAND_SEPARATOR,
   SETTING_DECIMAL_SEPARATOR,
   SETTING_CURRENCY_LOCATION,
   SETTING_SELECTED_CURRENCY,
   SETTING_BTC_DERIVATION_GAP_LIMIT,
-  SETTING_DISPLAY_DATE_IN_LOCALTIME
+  SETTING_DISPLAY_DATE_IN_LOCALTIME,
+  SETTING_VERSION_UPDATE_CHECK_FREQUENCY
 ] as const;
+
+const MAX_BALANCE_SAVE_FREQUENCY = Constraints.MAX_HOURS_DELAY;
+const MAX_VERSION_UPDATE_CHECK_FREQUENCY = Constraints.MAX_HOURS_DELAY;
 
 type SettingsEntries = typeof SETTINGS[number];
 
 @Component({
   components: {
+    DateInputFormatSelector,
     DateFormatHelp,
     RoundingSettings,
     FrontendSettings,
@@ -347,12 +410,15 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
   dotRpcEndpoint: string = Defaults.DOT_RPC_ENDPOINT;
   balanceSaveFrequency: string = '0';
   dateDisplayFormat: string = '';
+  dateInputFormat: string = '';
   thousandSeparator: string = '';
   decimalSeparator: string = '';
-  currencyLocation: CurrencyLocation = CURRENCY_AFTER;
+  currencyLocation: CurrencyLocation = CurrencyLocation.AFTER;
   selectedCurrency: Currency = currencies[0];
   btcDerivationGapLimit: string = '20';
   displayDateInLocaltime: boolean = true;
+  versionUpdateCheckFrequency: string = '';
+  versionUpdateCheckEnabled: boolean = false;
 
   formatHelp: boolean = false;
   readonly now = new Date();
@@ -364,18 +430,21 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
   readonly DOT_RPC_ENDPOINT = SETTING_DOT_RPC_ENDPOINT;
   readonly BALANCE_SAVE_FREQUENCY = SETTING_BALANCE_SAVE_FREQUENCY;
   readonly DATE_DISPLAY_FORMAT = SETTING_DATE_DISPLAY_FORMAT;
+  readonly DATE_INPUT_FORMAT = SETTING_DATE_INPUT_FORMAT;
   readonly THOUSAND_SEPARATOR = SETTING_THOUSAND_SEPARATOR;
   readonly DECIMAL_SEPARATOR = SETTING_DECIMAL_SEPARATOR;
   readonly CURRENCY_LOCATION = SETTING_CURRENCY_LOCATION;
   readonly SELECTED_CURRENCY = SETTING_SELECTED_CURRENCY;
   readonly BTC_DERIVATION_GAP_LIMIT = SETTING_BTC_DERIVATION_GAP_LIMIT;
   readonly DISPLAY_DATE_IN_LOCALTIME = SETTING_DISPLAY_DATE_IN_LOCALTIME;
+  readonly VERSION_UPDATE_CHECK_FREQUENCY =
+    SETTING_VERSION_UPDATE_CHECK_FREQUENCY;
 
   historicDateMenu: boolean = false;
   date: string = '';
   amountExample = bigNumberify(123456.789);
 
-  get dateFormat(): string {
+  get dateDisplayFormatExample(): string {
     return displayDateFormatter.format(this.now, this.dateDisplayFormat);
   }
 
@@ -384,7 +453,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     this.onDateDisplayFormatChange(this.dateDisplayFormat);
   }
 
-  readonly dateDisplayFormatRules = [
+  readonly dateFormatRules = [
     (v: string) => {
       if (!v) {
         return this.$t('general_settings.date_display.validation.empty');
@@ -409,10 +478,64 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     await this.update(
-      { btc_derivation_gap_limit: parseInt(limit) },
+      { btcDerivationGapLimit: parseInt(limit) },
       SETTING_BTC_DERIVATION_GAP_LIMIT,
       message
     );
+  }
+
+  async onVersionUpdateCheckFrequencyChange(frequency: string) {
+    const versionUpdateCheckFrequency = parseInt(frequency);
+    if (versionUpdateCheckFrequency > MAX_VERSION_UPDATE_CHECK_FREQUENCY) {
+      const message = `${this.$t(
+        'general_settings.validation.version_update_check_frequency.invalid_frequency',
+        {
+          start: 1,
+          end: MAX_VERSION_UPDATE_CHECK_FREQUENCY
+        }
+      )}`;
+
+      this.validateSettingChange(
+        SETTING_VERSION_UPDATE_CHECK_FREQUENCY,
+        'error',
+        message
+      );
+      this.versionUpdateCheckFrequency =
+        this.$store.state.settings![VERSION_UPDATE_CHECK_FREQUENCY].toString();
+      return;
+    }
+    const payload: FrontendSettingsPayload = {
+      [VERSION_UPDATE_CHECK_FREQUENCY]: versionUpdateCheckFrequency
+    };
+
+    const messages: BaseMessage = {
+      success:
+        versionUpdateCheckFrequency > 0
+          ? this.$t(
+              'general_settings.validation.version_update_check_frequency.success',
+              {
+                frequency
+              }
+            ).toString()
+          : this.$t(
+              'general_settings.validation.version_update_check_frequency.success_disabled'
+            ).toString(),
+      error: this.$t(
+        'general_settings.validation.version_update_check_frequency.error'
+      ).toString()
+    };
+
+    const { success } = await this.modifyFrontendSetting(
+      payload,
+      SETTING_VERSION_UPDATE_CHECK_FREQUENCY,
+      messages
+    );
+    if (success) {
+      this.versionUpdateCheckFrequency =
+        versionUpdateCheckFrequency > 0 ? frequency : '';
+      this.versionUpdateCheckEnabled = !!this.versionUpdateCheckFrequency;
+      monitor.restart();
+    }
   }
 
   async update(
@@ -420,18 +543,20 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     setting: SettingsEntries,
     baseMessage: BaseMessage
   ): Promise<boolean> {
-    const { message, success } = await this.settingsUpdate(update);
+    const result = await this.settingsUpdate(update);
 
     this.validateSettingChange(
       setting,
-      success ? 'success' : 'error',
-      success ? baseMessage.success : `${baseMessage.error}: ${message}`
+      result.success ? 'success' : 'error',
+      result.success
+        ? baseMessage.success
+        : `${baseMessage.error}: ${result.message}`
     );
-    return success;
+    return result.success;
   }
 
   async onSelectedCurrencyChange(currency: Currency) {
-    const symbol = currency.ticker_symbol;
+    const symbol = currency.tickerSymbol;
     const message = makeMessage(
       `${this.$t('general_settings.validation.currency.error')}`,
       `${this.$t('general_settings.validation.currency.success', {
@@ -439,7 +564,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
       })}`
     );
     await this.update(
-      { main_currency: symbol },
+      { mainCurrency: symbol },
       SETTING_SELECTED_CURRENCY,
       message
     );
@@ -461,7 +586,39 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     return result;
   }
 
+  private thousandSeparatorRules() {
+    return [
+      (v: string) => {
+        if (!v) {
+          return this.$t(
+            'general_settings.thousand_separator.validation.empty'
+          );
+        }
+        if (v === this.decimalSeparator) {
+          return this.$t(
+            'general_settings.thousand_separator.validation.cannot_be_the_same'
+          ).toString();
+        }
+        if (/[0-9]/.test(v)) {
+          return this.$t(
+            'general_settings.thousand_separator.validation.cannot_be_numeric_character'
+          ).toString();
+        }
+        return true;
+      }
+    ];
+  }
+
   async onThousandSeparatorChange(thousandSeparator: string) {
+    if (
+      thousandSeparator === this.decimalSeparator ||
+      /[0-9+e]/.test(thousandSeparator)
+    ) {
+      const state = this.$store.state;
+      this.thousandSeparator = state.settings![THOUSAND_SEPARATOR];
+      return;
+    }
+
     const messages = makeMessage(
       this.$t(
         'general_settings.validation.thousand_separator.error'
@@ -478,7 +635,37 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
   }
 
+  private decimalSeparatorRules() {
+    return [
+      (v: string) => {
+        if (!v) {
+          return this.$t('general_settings.decimal_separator.validation.empty');
+        }
+        if (v === this.thousandSeparator) {
+          return this.$t(
+            'general_settings.decimal_separator.validation.cannot_be_the_same'
+          ).toString();
+        }
+        if (/[0-9+e]/.test(v)) {
+          return this.$t(
+            'general_settings.decimal_separator.validation.cannot_be_numeric_character'
+          ).toString();
+        }
+        return true;
+      }
+    ];
+  }
+
   async onDecimalSeparatorChange(decimalSeparator: string) {
+    if (
+      decimalSeparator === this.thousandSeparator ||
+      /[0-9]/.test(decimalSeparator)
+    ) {
+      const state = this.$store.state;
+      this.decimalSeparator = state.settings![DECIMAL_SEPARATOR];
+      return;
+    }
+
     const message = makeMessage(
       `${this.$t('general_settings.validation.decimal_separator.error')}`,
       this.$t('general_settings.validation.decimal_separator.success', {
@@ -509,7 +696,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
   }
 
   async onFloatingPrecisionChange(precision: string) {
-    const previousValue = this.generalSettings.floatingPrecision.toString();
+    const previousValue = this.generalSettings.uiFloatingPrecision.toString();
 
     if (!this.notTheSame(precision, previousValue)) {
       return;
@@ -530,7 +717,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     const success = await this.update(
-      { ui_floating_precision: parseInt(precision) },
+      { uiFloatingPrecision: parseInt(precision) },
       SETTING_FLOATING_PRECISION,
       message
     );
@@ -546,7 +733,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     await this.update(
-      { submit_usage_analytics: enabled },
+      { submitUsageAnalytics: enabled },
       SETTING_ANONYMOUS_USAGE_ANALYTICS,
       message
     );
@@ -560,22 +747,42 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     await this.update(
-      { display_date_in_localtime: enabled },
+      { displayDateInLocaltime: enabled },
       SETTING_DISPLAY_DATE_IN_LOCALTIME,
       message
     );
   }
 
-  async onBalanceSaveFrequencyChange(frequency: string) {
-    const previousValue = this.generalSettings.balanceSaveFrequency;
+  async onBalanceSaveFrequencyChange(queryFrequency: string) {
+    const previousValue = this.generalSettings.balanceSaveFrequency.toString();
+    const frequency = parseInt(queryFrequency);
 
-    if (!this.notTheSame(frequency, previousValue.toString())) {
+    if (frequency < 1 || frequency > MAX_BALANCE_SAVE_FREQUENCY) {
+      const message = `${this.$t(
+        'general_settings.validation.balance_frequency.invalid_frequency',
+        {
+          start: 1,
+          end: MAX_BALANCE_SAVE_FREQUENCY
+        }
+      )}`;
+
+      this.validateSettingChange(
+        SETTING_BALANCE_SAVE_FREQUENCY,
+        'error',
+        message
+      );
+      this.balanceSaveFrequency = previousValue;
+      return;
+    }
+
+    if (!this.notTheSame(queryFrequency, previousValue)) {
       return;
     }
 
     const params = {
       frequency
     };
+
     const message = makeMessage(
       `${this.$t(
         'general_settings.validation.balance_frequency.error',
@@ -588,13 +795,13 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     const success = await this.update(
-      { balance_save_frequency: parseInt(frequency) },
+      { balanceSaveFrequency: frequency },
       SETTING_BALANCE_SAVE_FREQUENCY,
       message
     );
 
     if (!success) {
-      this.balanceSaveFrequency = previousValue.toString();
+      this.balanceSaveFrequency = previousValue;
     }
   }
 
@@ -604,16 +811,35 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     }
 
     const message = makeMessage(
-      `${this.$t('general_settings.validation.date_format.error')}`,
-      `${this.$t('general_settings.validation.date_format.success', {
+      `${this.$t('general_settings.validation.date_display_format.error')}`,
+      `${this.$t('general_settings.validation.date_display_format.success', {
         dateFormat
       })}`
     );
 
     await this.update(
-      { date_display_format: dateFormat },
+      { dateDisplayFormat: dateFormat },
       SETTING_DATE_DISPLAY_FORMAT,
       message
+    );
+  }
+
+  async onDateInputFormatChange(dateFormat: DateFormat) {
+    if (!displayDateFormatter.containsValidDirectives(dateFormat)) {
+      return;
+    }
+
+    const messages = makeMessage(
+      this.$t('general_settings.validation.date_input_format.error').toString(),
+      this.$t('general_settings.validation.date_input_format.success', {
+        dateFormat
+      }).toString()
+    );
+
+    await this.modifyFrontendSetting(
+      { [DATE_INPUT_FORMAT]: dateFormat },
+      SETTING_DATE_INPUT_FORMAT,
+      messages
     );
   }
 
@@ -634,7 +860,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     const success = await this.update(
-      { eth_rpc_endpoint: endpoint },
+      { ethRpcEndpoint: endpoint },
       SETTING_RPC_ENDPOINT,
       message
     );
@@ -663,7 +889,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     const success = await this.update(
-      { ksm_rpc_endpoint: endpoint },
+      { ksmRpcEndpoint: endpoint },
       SETTING_KSM_RPC_ENDPOINT,
       message
     );
@@ -692,7 +918,7 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     );
 
     const success = await this.update(
-      { dot_rpc_endpoint: endpoint },
+      { dotRpcEndpoint: endpoint },
       SETTING_DOT_RPC_ENDPOINT,
       message
     );
@@ -736,8 +962,8 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
   private loadFromState() {
     this.selectedCurrency = this.currency;
     const settings = this.generalSettings;
-    this.floatingPrecision = settings.floatingPrecision.toString();
-    this.anonymousUsageAnalytics = settings.anonymousUsageAnalytics;
+    this.floatingPrecision = settings.uiFloatingPrecision.toString();
+    this.anonymousUsageAnalytics = settings.submitUsageAnalytics;
     this.rpcEndpoint = settings.ethRpcEndpoint;
     this.ksmRpcEndpoint = settings.ksmRpcEndpoint;
     this.balanceSaveFrequency = settings.balanceSaveFrequency.toString();
@@ -747,6 +973,13 @@ export default class General extends Mixins<SettingsMixin<SettingsEntries>>(
     this.thousandSeparator = state.settings![THOUSAND_SEPARATOR];
     this.decimalSeparator = state.settings![DECIMAL_SEPARATOR];
     this.currencyLocation = state.settings![CURRENCY_LOCATION];
+    this.dateInputFormat = state.settings![DATE_INPUT_FORMAT];
+    const versionUpdateCheckFrequency =
+      state.settings![VERSION_UPDATE_CHECK_FREQUENCY];
+    this.versionUpdateCheckEnabled = versionUpdateCheckFrequency > 0;
+    this.versionUpdateCheckFrequency = this.versionUpdateCheckEnabled
+      ? versionUpdateCheckFrequency.toString()
+      : '';
   }
 
   notTheSame<T>(value: T, oldValue: T): T | undefined {

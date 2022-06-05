@@ -18,11 +18,7 @@
           >
             <template #link>
               <router-link
-                class="
-                  module-not-active__link
-                  font-weight-regular
-                  text-body-1 text-decoration-none
-                "
+                class="module-not-active__link font-weight-regular text-body-1 text-decoration-none"
                 text
                 to="/settings/modules"
                 small
@@ -54,7 +50,7 @@
 <script lang="ts">
 import { Component, Prop, Vue } from 'vue-property-decorator';
 import { SUPPORTED_MODULES } from '@/components/defi/wizard/consts';
-import { Module } from '@/services/session/consts';
+import { Module } from '@/types/modules';
 
 @Component({})
 export default class ModuleNotActive extends Vue {

@@ -1,18 +1,36 @@
 from contextlib import ExitStack
 from http import HTTPStatus
+from unittest.mock import patch
 
 import pytest
 import requests
 
-from rotkehlchen.accounting.structures import BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
+from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants.assets import A_EUR
 from rotkehlchen.fval import FVal
-from rotkehlchen.tests.utils.api import api_url_for, assert_error_response, assert_proper_response
+from rotkehlchen.tests.utils.api import (
+    api_url_for,
+    assert_error_response,
+    assert_proper_response,
+    assert_proper_response_with_result,
+)
 from rotkehlchen.tests.utils.constants import A_GNO, A_RDN
 from rotkehlchen.tests.utils.factories import UNIT_BTC_ADDRESS1, UNIT_BTC_ADDRESS2
+from rotkehlchen.tests.utils.mock import MockResponse
 from rotkehlchen.tests.utils.rotkehlchen import setup_balances
-from rotkehlchen.typing import Location
+from rotkehlchen.types import Location
+
+KICK_TOKEN = EthereumToken('0x824a50dF33AC1B41Afc52f4194E2e8356C17C3aC')
+
+
+def mock_cryptoscamdb_request():
+    def mock_requests_get(url, *args, **kwargs):  # pylint: disable=unused-argument
+        response = 'Error generating response'
+        return MockResponse(200, response)
+
+    return patch('requests.get', side_effect=mock_requests_get)
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [2])
@@ -32,6 +50,7 @@ def test_query_owned_assets(
         ethereum_accounts=ethereum_accounts,
         btc_accounts=btc_accounts,
         manually_tracked_balances=[ManuallyTrackedBalance(
+            id=-1,
             asset=A_EUR,
             label='My EUR bank',
             amount=FVal('1550'),
@@ -61,71 +80,86 @@ def test_query_owned_assets(
                 "ownedassetsresource",
             ),
         )
-    assert_proper_response(response)
-    data = response.json()
-    assert data['message'] == ''
-    assert set(data['result']) == {'ETH', 'BTC', 'EUR', A_RDN.identifier}
+    result = assert_proper_response_with_result(response)
+    assert set(result) == {'ETH', 'BTC', 'EUR', A_RDN.identifier}
 
 
+@pytest.mark.parametrize('perform_migrations_at_unlock', [True])
 def test_ignored_assets_modification(rotkehlchen_api_server_with_exchanges):
     """Test that using the ignored assets endpoint to modify the ignored assets list works fine"""
     rotki = rotkehlchen_api_server_with_exchanges.rest_api.rotkehlchen
 
     # add three assets to ignored assets
+    kick_token_id = KICK_TOKEN.identifier
     ignored_assets = [A_GNO.identifier, A_RDN.identifier, 'XMR']
     response = requests.put(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': ignored_assets},
     )
-    assert_proper_response(response)
-    data = response.json()
-    assert data['message'] == ''
-    assert set(data['result']) == set(ignored_assets)
+    result = assert_proper_response_with_result(response)
+    expected_ignored_assets = set(ignored_assets + [KICK_TOKEN.identifier])
+    assert expected_ignored_assets <= set(result)
 
     # check they are there
-    assert set(rotki.data.db.get_ignored_assets()) == set(ignored_assets)
+    assert set(rotki.data.db.get_ignored_assets()) >= expected_ignored_assets
     # Query for ignored assets and check that the response returns them
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ),
     )
-    assert_proper_response(response)
-    data = response.json()
-    assert data['message'] == ''
-    assert set(data['result']) == set(ignored_assets)
+    result = assert_proper_response_with_result(response)
+    assert expected_ignored_assets <= set(result)
 
-    # remove two assets from ignored assets
+    # remove 3 assets from ignored assets
     response = requests.delete(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
-        ), json={'assets': [A_GNO.identifier, 'XMR']},
+            'ignoredassetsresource',
+        ), json={'assets': [A_GNO.identifier, 'XMR', kick_token_id]},
     )
-    assets_after_deletion = [A_RDN.identifier]
-    assert_proper_response(response)
-    data = response.json()
-    assert data['message'] == ''
-    assert data['result'] == assets_after_deletion
+    assets_after_deletion = {A_RDN.identifier}
+    result = assert_proper_response_with_result(response)
+    assert assets_after_deletion <= set(result)
 
     # check that the changes are reflected
-    assert rotki.data.db.get_ignored_assets() == assets_after_deletion
+    assert set(rotki.data.db.get_ignored_assets()) >= assets_after_deletion
     # Query for ignored assets and check that the response returns them
     response = requests.get(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ),
     )
-    assert_proper_response(response)
-    data = response.json()
-    assert data['message'] == ''
-    assert data['result'] == assets_after_deletion
+    result = assert_proper_response_with_result(response)
+    assert assets_after_deletion <= set(result)
+
+    # Fetch remote assets to be ignored
+    response = requests.post(
+        api_url_for(
+            rotkehlchen_api_server_with_exchanges,
+            'ignoredassetsresource',
+        ),
+    )
+    result = assert_proper_response_with_result(response)
+    assert result >= 1
+    assert len(rotki.data.db.get_ignored_assets()) > len(assets_after_deletion)
+
+    # Simulate remote error from cryptoscamdb
+    with mock_cryptoscamdb_request():
+        response = requests.post(
+            api_url_for(
+                rotkehlchen_api_server_with_exchanges,
+                'ignoredassetsresource',
+            ),
+        )
+        assert response.status_code == HTTPStatus.BAD_GATEWAY
 
 
+@pytest.mark.parametrize('perform_migrations_at_unlock', [True])
 @pytest.mark.parametrize('method', ['put', 'delete'])
 def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, method):
     """Test errors are handled properly at the ignored assets endpoint"""
@@ -136,7 +170,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = requests.put(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': ignored_assets},
     )
     assert_proper_response(response)
@@ -145,7 +179,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = getattr(requests, method)(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ),
     )
     assert_error_response(
@@ -158,7 +192,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = getattr(requests, method)(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': 'foo'},
     )
     assert_error_response(
@@ -171,7 +205,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = getattr(requests, method)(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': ['notanasset']},
     )
     assert_error_response(
@@ -189,7 +223,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = getattr(requests, method)(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': [asset, 'notanasset']},
     )
     assert_error_response(
@@ -198,7 +232,11 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
         status_code=HTTPStatus.BAD_REQUEST,
     )
     # Check that assets did not get modified
-    assert set(rotki.data.db.get_ignored_assets()) == set(ignored_assets)
+    expected_tokens = set(
+        ignored_assets +
+        [KICK_TOKEN],
+    )
+    assert set(rotki.data.db.get_ignored_assets()) >= expected_tokens
 
     # Test the adding an already existing asset or removing a non-existing asset is an error
     if method == 'put':
@@ -210,7 +248,7 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
     response = getattr(requests, method)(
         api_url_for(
             rotkehlchen_api_server_with_exchanges,
-            "ignoredassetsresource",
+            'ignoredassetsresource',
         ), json={'assets': [asset]},
     )
     assert_error_response(
@@ -219,4 +257,4 @@ def test_ignored_assets_endpoint_errors(rotkehlchen_api_server_with_exchanges, m
         status_code=HTTPStatus.CONFLICT,
     )
     # Check that assets did not get modified
-    assert set(rotki.data.db.get_ignored_assets()) == set(ignored_assets)
+    assert set(rotki.data.db.get_ignored_assets()) >= expected_tokens

@@ -1,4 +1,3 @@
-import { BigNumber } from '@rotki/common/';
 import {
   DARK_MODE_ENABLED,
   DARK_THEME,
@@ -9,36 +8,42 @@ import {
   TimeFramePeriod,
   TimeFrameSetting
 } from '@rotki/common/lib/settings/graphs';
-import {
-  TIMEFRAME_SETTING,
-  DEFI_SETUP_DONE,
-  LAST_KNOWN_TIMEFRAME,
-  QUERY_PERIOD,
-  PROFIT_LOSS_PERIOD,
-  THOUSAND_SEPARATOR,
-  DECIMAL_SEPARATOR,
-  CURRENCY_LOCATION,
-  REFRESH_PERIOD,
-  EXPLORERS,
-  ITEMS_PER_PAGE,
-  AMOUNT_ROUNDING_MODE,
-  VALUE_ROUNDING_MODE,
-  GRAPH_ZERO_BASED
-} from '@/store/settings/consts';
-import { defaultState } from '@/store/settings/state';
-import {
-  SettingsState,
-  ProfitLossTimeframe,
-  RefreshPeriod,
-  ExplorersSettings
-} from '@/store/settings/types';
+import { defaultState, SettingsState } from '@/store/settings/state';
 import { Writeable } from '@/types';
-import { CurrencyLocation } from '@/typing/types';
-import RoundingMode = BigNumber.RoundingMode;
+import { CurrencyLocation } from '@/types/currency-location';
+import { DateFormat } from '@/types/date-format';
+import {
+  AMOUNT_ROUNDING_MODE,
+  CURRENCY_LOCATION,
+  DECIMAL_SEPARATOR,
+  DEFI_SETUP_DONE,
+  EXPLORERS,
+  ExplorersSettings,
+  GRAPH_ZERO_BASED,
+  ITEMS_PER_PAGE,
+  LAST_KNOWN_TIMEFRAME,
+  PROFIT_LOSS_PERIOD,
+  ProfitLossTimeframe,
+  QUERY_PERIOD,
+  REFRESH_PERIOD,
+  RefreshPeriod,
+  RoundingMode,
+  THOUSAND_SEPARATOR,
+  TIMEFRAME_SETTING,
+  VALUE_ROUNDING_MODE,
+  NFTS_IN_NET_VALUE,
+  DASHBOARD_TABLES_VISIBLE_COLUMNS,
+  DashboardTablesVisibleColumns,
+  DATE_INPUT_FORMAT,
+  VISIBLE_TIMEFRAMES,
+  VERSION_UPDATE_CHECK_FREQUENCY,
+  ENABLE_ENS
+} from '@/types/frontend-settings';
 
 type Mutations<S = SettingsState> = {
   [DEFI_SETUP_DONE](state: S, done: boolean): void;
   [TIMEFRAME_SETTING](state: S, timeframe: TimeFrameSetting): void;
+  [VISIBLE_TIMEFRAMES](state: S, timeframes: TimeFrameSetting[]): void;
   [LAST_KNOWN_TIMEFRAME](state: S, timeframe: TimeFramePeriod): void;
   [QUERY_PERIOD](state: S, period: number): void;
   [PROFIT_LOSS_PERIOD](state: S, period: ProfitLossTimeframe): void;
@@ -54,6 +59,14 @@ type Mutations<S = SettingsState> = {
   [LIGHT_THEME](state: S, theme: ThemeColors): void;
   [DARK_THEME](state: S, theme: ThemeColors): void;
   [GRAPH_ZERO_BASED](state: S, enabled: Boolean): void;
+  [NFTS_IN_NET_VALUE](state: S, enabled: Boolean): void;
+  [DASHBOARD_TABLES_VISIBLE_COLUMNS](
+    state: Writeable<SettingsState>,
+    tablesVisibleColumns: DashboardTablesVisibleColumns
+  ): void;
+  [DATE_INPUT_FORMAT](state: S, format: DateFormat): void;
+  [VERSION_UPDATE_CHECK_FREQUENCY](state: S, period: number): void;
+  [ENABLE_ENS](state: S, enable: boolean): void;
   restore(state: S, persisted: S): void;
   reset(state: S): void;
 };
@@ -67,6 +80,12 @@ export const mutations: Mutations = {
     timeframe: TimeFrameSetting
   ) {
     state[TIMEFRAME_SETTING] = timeframe;
+  },
+  [VISIBLE_TIMEFRAMES](
+    state: Writeable<SettingsState>,
+    timeframes: TimeFrameSetting[]
+  ) {
+    state[VISIBLE_TIMEFRAMES] = timeframes;
   },
   [LAST_KNOWN_TIMEFRAME](
     state: Writeable<SettingsState>,
@@ -127,6 +146,27 @@ export const mutations: Mutations = {
   },
   [GRAPH_ZERO_BASED](state: Writeable<SettingsState>, enabled: boolean) {
     state[GRAPH_ZERO_BASED] = enabled;
+  },
+  [NFTS_IN_NET_VALUE](state: Writeable<SettingsState>, enabled: boolean) {
+    state[NFTS_IN_NET_VALUE] = enabled;
+  },
+  [DASHBOARD_TABLES_VISIBLE_COLUMNS](
+    state: Writeable<SettingsState>,
+    tablesVisibleColumns: DashboardTablesVisibleColumns
+  ) {
+    state[DASHBOARD_TABLES_VISIBLE_COLUMNS] = tablesVisibleColumns;
+  },
+  [DATE_INPUT_FORMAT](state: Writeable<SettingsState>, format: DateFormat) {
+    state[DATE_INPUT_FORMAT] = format;
+  },
+  [VERSION_UPDATE_CHECK_FREQUENCY](
+    state: Writeable<SettingsState>,
+    period: number
+  ) {
+    state[VERSION_UPDATE_CHECK_FREQUENCY] = period;
+  },
+  [ENABLE_ENS](state: Writeable<SettingsState>, enable: boolean) {
+    state[ENABLE_ENS] = enable;
   },
   restore(state: SettingsState, persisted: SettingsState) {
     Object.assign(state, persisted);

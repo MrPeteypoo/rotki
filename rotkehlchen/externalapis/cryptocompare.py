@@ -3,11 +3,10 @@ import os
 from collections import deque
 from json.decoder import JSONDecodeError
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Deque, Dict, Iterable, Iterator, List, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Deque, Dict, List, Literal, NamedTuple, Optional
 
 import gevent
 import requests
-from typing_extensions import Literal
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants import ZERO
@@ -31,7 +30,6 @@ from rotkehlchen.constants.assets import (
     A_SAI,
     A_STAKE,
     A_UNI,
-    A_USD,
     A_USDC,
     A_USDT,
     A_WBTC,
@@ -41,21 +39,19 @@ from rotkehlchen.constants.assets import (
 )
 from rotkehlchen.constants.resolver import strethaddress_to_identifier
 from rotkehlchen.constants.timing import DEFAULT_TIMEOUT_TUPLE
-from rotkehlchen.errors import (
-    DeserializationError,
-    NoPriceForGivenTimestamp,
-    PriceQueryUnsupportedAsset,
-    RemoteError,
-    UnsupportedAsset,
-)
+from rotkehlchen.errors.asset import UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.price import NoPriceForGivenTimestamp, PriceQueryUnsupportedAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.interface import ExternalServiceWithApiKey
 from rotkehlchen.fval import FVal
 from rotkehlchen.globaldb.handler import GlobalDBHandler
 from rotkehlchen.history.deserialization import deserialize_price
-from rotkehlchen.history.typing import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.history.types import HistoricalPrice, HistoricalPriceOracle
+from rotkehlchen.interfaces import HistoricalPriceOracleInterface
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ExternalService, Price, Timestamp
-from rotkehlchen.utils.misc import timestamp_to_date, ts_now
+from rotkehlchen.types import ExternalService, Price, Timestamp
+from rotkehlchen.utils.misc import pairwise, ts_now
 from rotkehlchen.utils.serialization import jsonloads_dict, rlk_jsondumps
 
 if TYPE_CHECKING:
@@ -169,25 +165,9 @@ class HistoHourAssetData(NamedTuple):
     usd_price: Price
 
 
-# Safest starting timestamp for requesting an asset price via histohour avoiding
-# 0 price. Be aware `usd_price` is from the 'close' price in USD.
-CRYPTOCOMPARE_SPECIAL_HISTOHOUR_CASES: Dict[Asset, HistoHourAssetData] = {
-    A_COMP: HistoHourAssetData(
-        timestamp=Timestamp(1592629200),
-        usd_price=Price(FVal('239.13')),
-    ),
-}
-
-
 def _multiply_str_nums(a: str, b: str) -> str:
     """Multiplies two string numbers and returns the result as a string"""
     return str(FVal(a) * FVal(b))
-
-
-def pairwise(iterable: Iterable[Any]) -> Iterator:
-    "s -> (s0, s1), (s2, s3), (s4, s5), ..."
-    a = iter(iterable)
-    return zip(a, a)
 
 
 def _check_hourly_data_sanity(
@@ -213,9 +193,14 @@ def _check_hourly_data_sanity(
         index += 2
 
 
-class Cryptocompare(ExternalServiceWithApiKey):
+class Cryptocompare(ExternalServiceWithApiKey, HistoricalPriceOracleInterface):
     def __init__(self, data_directory: Path, database: Optional['DBHandler']) -> None:
-        super().__init__(database=database, service_name=ExternalService.CRYPTOCOMPARE)
+        HistoricalPriceOracleInterface.__init__(self, oracle_name='cryptocompare')
+        ExternalServiceWithApiKey.__init__(
+            self,
+            database=database,
+            service_name=ExternalService.CRYPTOCOMPARE,
+        )
         self.data_directory = data_directory
         self.session = requests.session()
         self.session.headers.update({'User-Agent': 'rotkehlchen'})
@@ -227,7 +212,7 @@ class Cryptocompare(ExternalServiceWithApiKey):
             from_asset: Asset,
             to_asset: Asset,
             timestamp: Timestamp,
-            seconds: int = CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME,
+            seconds: Optional[int] = CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME,
     ) -> bool:
         """Checks if it's okay to query cryptocompare historical price. This is determined by:
 
@@ -250,8 +235,14 @@ class Cryptocompare(ExternalServiceWithApiKey):
         )
         return can_query
 
-    def rate_limited_in_last(self, seconds: int = CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME) -> bool:
+    def rate_limited_in_last(
+        self,
+        seconds: Optional[int] = CRYPTOCOMPARE_RATE_LIMIT_WAIT_TIME,
+    ) -> bool:
         """Checks when we were last rate limited by CC and if it was within the given seconds"""
+        if seconds is None:
+            return False
+
         return ts_now() - self.last_rate_limit <= seconds
 
     def set_database(self, database: 'DBHandler') -> None:
@@ -746,42 +737,6 @@ class Cryptocompare(ExternalServiceWithApiKey):
         GlobalDBHandler().add_historical_prices(prices)
         self.last_histohour_query_ts = ts_now()  # also save when last query finished
 
-    @staticmethod
-    def _check_and_get_special_histohour_price(
-            from_asset: Asset,
-            to_asset: Asset,
-            timestamp: Timestamp,
-    ) -> Price:
-        """For the given timestamp, check whether the from..to asset price
-        (or viceversa) is a special histohour API case. If so, return the price
-        based on the assets pair, otherwise return zero.
-
-        NB: special histohour API cases are the ones where this Cryptocompare
-        API returns zero prices per hour.
-        """
-        price = Price(ZERO)
-        if (
-            from_asset in CRYPTOCOMPARE_SPECIAL_HISTOHOUR_CASES and to_asset == A_USD or
-            from_asset == A_USD and to_asset in CRYPTOCOMPARE_SPECIAL_HISTOHOUR_CASES
-        ):
-            asset_data = (
-                CRYPTOCOMPARE_SPECIAL_HISTOHOUR_CASES[from_asset]
-                if to_asset == A_USD
-                else CRYPTOCOMPARE_SPECIAL_HISTOHOUR_CASES[to_asset]
-            )
-            if timestamp <= asset_data.timestamp:
-                price = (
-                    asset_data.usd_price
-                    if to_asset == A_USD
-                    else Price(FVal('1') / asset_data.usd_price)
-                )
-                log.warning(
-                    f'Query price of: {from_asset.identifier} in {to_asset.identifier} '
-                    f'at timestamp {timestamp} may return zero price. '
-                    f'Setting price to {price}, from timestamp {asset_data.timestamp}.',
-                )
-        return price
-
     def query_historical_price(
             self,
             from_asset: Asset,
@@ -804,20 +759,6 @@ class Cryptocompare(ExternalServiceWithApiKey):
         - RemoteError if there is a problem reaching the cryptocompare server
         or with reading the response returned by the server
         """
-        # TODO: Figure out a better way to log and return. Only thing I can imagine
-        # is nested ifs (ugly af) or a different function (meh + performance).
-
-        # NB: check if the from..to asset price (or viceversa) is a special
-        # histohour API case.
-        price = self._check_and_get_special_histohour_price(
-            from_asset=from_asset,
-            to_asset=to_asset,
-            timestamp=timestamp,
-        )
-        if price != Price(ZERO):
-            log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price)  # noqa: E501
-            return price
-
         # check DB cache
         price_cache_entry = GlobalDBHandler().get_historical_price(
             from_asset=from_asset,
@@ -827,7 +768,7 @@ class Cryptocompare(ExternalServiceWithApiKey):
             source=HistoricalPriceOracle.CRYPTOCOMPARE,
         )
         if price_cache_entry and price_cache_entry.price != Price(ZERO):
-            log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price)  # noqa: E501
+            log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price_cache_entry.price)  # noqa: E501
             return price_cache_entry.price
 
         # else
@@ -841,14 +782,17 @@ class Cryptocompare(ExternalServiceWithApiKey):
             raise NoPriceForGivenTimestamp(
                 from_asset=from_asset,
                 to_asset=to_asset,
-                date=timestamp_to_date(
-                    timestamp,
-                    formatstr='%d/%m/%Y, %H:%M:%S',
-                    treat_as_local=True,
-                ),
+                time=timestamp,
             )
 
         log.debug('Got historical price from cryptocompare', from_asset=from_asset, to_asset=to_asset, timestamp=timestamp, price=price)  # noqa: E501
+        GlobalDBHandler().add_historical_prices(entries=[HistoricalPrice(
+            from_asset=from_asset,
+            to_asset=to_asset,
+            source=HistoricalPriceOracle.CRYPTOCOMPARE,
+            timestamp=timestamp,
+            price=price,
+        )])
         return price
 
     def all_coins(self) -> Dict[str, Any]:

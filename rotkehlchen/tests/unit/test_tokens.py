@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from rotkehlchen.chain.ethereum.constants import ZERO_ADDRESS
 from rotkehlchen.chain.ethereum.tokens import EthTokens
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.constants.assets import A_BAT, A_MKR
@@ -30,7 +31,7 @@ def test_detect_tokens_for_addresses(ethtokens, inquirer):  # pylint: disable=un
 
 
     """
-    addr1 = '0x0000000000000000000000000000000000000000'
+    addr1 = ZERO_ADDRESS
     addr2 = '0xD3A962916a19146D658de0ab62ee237ed3115873'
     result, token_usd_prices = ethtokens.query_tokens_for_addresses([addr1, addr2], False)
 

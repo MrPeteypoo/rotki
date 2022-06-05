@@ -2,7 +2,7 @@ import logging
 import random
 from typing import Tuple
 
-from rotkehlchen.accounting.structures import BalanceType
+from rotkehlchen.accounting.structures.balance import BalanceType
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.balances.manual import ManuallyTrackedBalance
 from rotkehlchen.constants.assets import A_BTC, A_EUR, A_USD
@@ -10,7 +10,7 @@ from rotkehlchen.exchanges.data_structures import Trade, TradeType
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import PriceHistorian
 from rotkehlchen.serialization.deserialize import pair_get_assets
-from rotkehlchen.typing import Location, Timestamp, TradePair
+from rotkehlchen.types import Location, Timestamp, TradePair
 
 STARTING_TIMESTAMP = 1464739200  # 01/06/2016
 NUMBER_OF_TRADES = 5
@@ -54,6 +54,7 @@ class ActionWriter():
         for asset, value in self.funds.items():
             if asset.is_fiat():
                 self.rotki.data.db.add_manually_tracked_balances([ManuallyTrackedBalance(
+                    id=-1,
                     asset=asset,
                     label=f'{asset.identifier} balance',
                     amount=value,
@@ -80,6 +81,7 @@ class ActionWriter():
                     )
                 if asset.is_fiat():
                     self.rotki.data.db.add_manually_tracked_balances([ManuallyTrackedBalance(
+                        id=-1,
                         asset=asset,
                         label=f'{asset.identifier} balance {timestamp}',
                         amount=value,

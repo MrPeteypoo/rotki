@@ -4,7 +4,8 @@ import pytest
 
 from rotkehlchen.assets.asset import Asset
 from rotkehlchen.constants.assets import A_BTC, A_ETH, A_EUR
-from rotkehlchen.errors import DeserializationError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.exchanges.bitcoinde import (
     BITCOINDE_TRADING_PAIRS,
     Bitcoinde,
@@ -12,7 +13,7 @@ from rotkehlchen.exchanges.bitcoinde import (
 )
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import Location, TradeType
+from rotkehlchen.types import Location, TradeType
 
 BITCOINDE_BALANCES_RESPONSE = """{"data":{"balances":{"btc":{"total_amount":"0.5","available_amount":"0.5","reserved_amount":"0"},"bch":{"total_amount":"0.00000000000000000000","available_amount":"0","reserved_amount":"0"},"btg":{"total_amount":"0.00000000000000000000","available_amount":"0","reserved_amount":"0"},"eth":{"total_amount":"32.0","available_amount":"32.0","reserved_amount":"0"},"bsv":{"total_amount":"0.00000000000000000000","available_amount":"0","reserved_amount":"0"},"ltc":{"total_amount":"0.00000000000000000000","available_amount":"0","reserved_amount":"0"}},"encrypted_information":{"uid":"X","bic_short":"Y","bic_full":"Z"}},"errors":[],"credits":23}"""  # noqa: E501
 

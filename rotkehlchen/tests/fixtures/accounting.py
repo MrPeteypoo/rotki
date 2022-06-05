@@ -7,12 +7,16 @@ from typing import Optional
 import pytest
 
 from rotkehlchen.accounting.accountant import Accountant
+from rotkehlchen.chain.ethereum.accounting.aggregator import EVMAccountingAggregator
+from rotkehlchen.chain.ethereum.oracles.saddle import SaddleOracle
+from rotkehlchen.chain.ethereum.oracles.uniswap import UniswapV2Oracle, UniswapV3Oracle
 from rotkehlchen.config import default_data_directory
 from rotkehlchen.externalapis.coingecko import Coingecko
 from rotkehlchen.externalapis.cryptocompare import Cryptocompare
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import DEFAULT_CURRENT_PRICE_ORACLES_ORDER, Inquirer
 from rotkehlchen.premium.premium import Premium
+from rotkehlchen.types import Timestamp
 
 
 @pytest.fixture(name='use_clean_caching_directory')
@@ -37,16 +41,17 @@ def fixture_data_dir(use_clean_caching_directory, tmpdir_factory) -> Path:
 
     # do not keep pull github assets between tests. Can really confuse test results
     # as we may end up with different set of assets in tests
-    try:
-        (data_directory / 'assets').unlink()
-    except FileNotFoundError:  # TODO: In python 3.8 we can add missing_ok=True to unlink
-        pass
+    (data_directory / 'assets').unlink(missing_ok=True)
 
     # Remove any old accounts. The only reason we keep this directory around is for
     # cached price queries, not for user DBs
     for x in data_directory.iterdir():
-        if x.is_dir() and (x / 'rotkehlchen.db').exists():
-            shutil.rmtree(x)
+        directory_with_db = (
+            x.is_dir() and
+            (x / 'rotkehlchen.db').exists() or (x / 'rotkehlchen_transient.db').exists()
+        )
+        if directory_with_db:
+            shutil.rmtree(x, ignore_errors=True)
 
     return data_directory
 
@@ -73,14 +78,6 @@ def mocked_price_queries():
     return defaultdict(defaultdict)
 
 
-@pytest.fixture(name='accounting_create_csv')
-def fixture_accounting_create_csv():
-    # TODO: The whole create_csv argument should be deleted.
-    # Or renamed. Since it's not about actually creating the CSV
-    # but keeping the events in memory
-    return True
-
-
 @pytest.fixture(name='accounting_initialize_parameters')
 def fixture_accounting_initialize_parameters():
     """
@@ -92,15 +89,25 @@ def fixture_accounting_initialize_parameters():
     return False
 
 
+@pytest.fixture(name='evm_accounting_aggregator')
+def fixture_evm_accounting_aggregator(
+        ethereum_manager,
+        function_scope_messages_aggregator,
+) -> EVMAccountingAggregator:
+    return EVMAccountingAggregator(
+        ethereum_manager=ethereum_manager,
+        msg_aggregator=function_scope_messages_aggregator,
+    )
+
+
 @pytest.fixture(name='accountant')
 def fixture_accountant(
         price_historian,  # pylint: disable=unused-argument
         database,
-        data_dir,
-        accounting_create_csv,
         function_scope_messages_aggregator,
         start_with_logged_in_user,
         accounting_initialize_parameters,
+        evm_accounting_aggregator,
         start_with_valid_premium,
         rotki_premium_credentials,
 ) -> Optional[Accountant]:
@@ -113,15 +120,21 @@ def fixture_accountant(
 
     accountant = Accountant(
         db=database,
-        user_directory=data_dir,
+        evm_accounting_aggregator=evm_accounting_aggregator,
         msg_aggregator=function_scope_messages_aggregator,
-        create_csv=accounting_create_csv,
         premium=premium,
     )
 
     if accounting_initialize_parameters:
         db_settings = accountant.db.get_settings()
-        accountant._customize(db_settings)
+        for pot in accountant.pots:
+            pot.reset(
+                settings=db_settings,
+                start_ts=Timestamp(0),
+                end_ts=Timestamp(0),
+                report_id=1,
+            )
+        accountant.csvexporter.reset(start_ts=Timestamp(0), end_ts=Timestamp(0))
 
     return accountant
 
@@ -166,6 +179,7 @@ def create_inquirer(
         should_mock_current_price_queries,
         mocked_prices,
         current_price_oracles_order,
+        ethereum_manager,
         ignore_mocked_prices_for=None,
 ) -> Inquirer:
     # Since this is a singleton and we want it initialized everytime the fixture
@@ -180,6 +194,16 @@ def create_inquirer(
         cryptocompare=cryptocompare,
         coingecko=gecko,
     )
+    if ethereum_manager is not None:
+        inquirer.inject_ethereum(ethereum_manager)
+        uniswap_v2_oracle = UniswapV2Oracle(ethereum_manager)
+        uniswap_v3_oracle = UniswapV3Oracle(ethereum_manager)
+        saddle_oracle = SaddleOracle(ethereum_manager)
+        Inquirer().add_defi_oracles(
+            uniswap_v2=uniswap_v2_oracle,
+            uniswap_v3=uniswap_v3_oracle,
+            saddle=saddle_oracle,
+        )
     inquirer.set_oracles_order(current_price_oracles_order)
 
     if not should_mock_current_price_queries:
@@ -230,11 +254,17 @@ def fixture_inquirer(
         current_price_oracles_order,
         ignore_mocked_prices_for,
 ):
+    """This version of the inquirer doesn't make use of the defi oracles and is initialized
+    with ethereum_manager as None. To make use of the defi oracles use `inquirer_defi`.
+    The reason is that some tests became really slow because they exhausted the coingecko/cc
+    oracles and used the defi ones.
+    """
     return create_inquirer(
         data_directory=data_dir,
         should_mock_current_price_queries=should_mock_current_price_queries,
         mocked_prices=mocked_current_prices,
         current_price_oracles_order=current_price_oracles_order,
+        ethereum_manager=None,
         ignore_mocked_prices_for=ignore_mocked_prices_for,
     )
 
@@ -246,9 +276,36 @@ def session_inquirer(
         session_mocked_current_prices,
         session_current_price_oracles_order,
 ):
+    """
+    The ethereum_manager argument is defined as None for the reasons explained in the
+    `inquirer` fixture
+    """
     return create_inquirer(
         data_directory=session_data_dir,
         should_mock_current_price_queries=session_should_mock_current_price_queries,
         mocked_prices=session_mocked_current_prices,
         current_price_oracles_order=session_current_price_oracles_order,
+        ethereum_manager=None,
+    )
+
+
+@pytest.fixture(name='inquirer_defi')
+def fixture_inquirer_defi(
+        data_dir,
+        should_mock_current_price_queries,
+        mocked_current_prices,
+        current_price_oracles_order,
+        ignore_mocked_prices_for,
+        ethereum_manager,
+):
+    """This fixture is different from `inquirer` just in the use of defi oracles to query
+    prices. If you don't need to use the defi oracles it is faster to use the `inquirer` fixture.
+    """
+    return create_inquirer(
+        data_directory=data_dir,
+        should_mock_current_price_queries=should_mock_current_price_queries,
+        mocked_prices=mocked_current_prices,
+        current_price_oracles_order=current_price_oracles_order,
+        ethereum_manager=ethereum_manager,
+        ignore_mocked_prices_for=ignore_mocked_prices_for,
     )

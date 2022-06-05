@@ -1,15 +1,30 @@
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, DefaultDict, List, Optional, Tuple
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
 
+import gevent
+from gevent.lock import Semaphore
+
+from rotkehlchen.api.websockets.typedefs import TransactionStatusStep, WSMessageType
+from rotkehlchen.chain.ethereum.constants import (
+    RANGE_PREFIX_ETHINTERNALTX,
+    RANGE_PREFIX_ETHTOKENTX,
+    RANGE_PREFIX_ETHTX,
+)
 from rotkehlchen.db.ethtx import DBEthTx
 from rotkehlchen.db.filtering import ETHTransactionsFilterQuery
 from rotkehlchen.db.ranges import DBQueryRanges
-from rotkehlchen.errors import RemoteError
+from rotkehlchen.errors.misc import RemoteError
 from rotkehlchen.logging import RotkehlchenLogsAdapter
-from rotkehlchen.typing import ChecksumEthAddress, EthereumTransaction, Timestamp
-from rotkehlchen.utils.misc import hexstring_to_bytes, ts_now
-from rotkehlchen.utils.mixins.lockable import LockableQueryMixIn, protect_with_lock
+from rotkehlchen.types import (
+    ChecksumEthAddress,
+    EthereumTransaction,
+    EVMTxHash,
+    Timestamp,
+    deserialize_evm_tx_hash,
+)
+from rotkehlchen.utils.misc import ts_now
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager
@@ -20,10 +35,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 log = RotkehlchenLogsAdapter(logger)
 
-FREE_ETH_TX_LIMIT = 250
 
-
-class EthTransactions(LockableQueryMixIn):
+class EthTransactions:
 
     def __init__(
             self,
@@ -33,39 +46,23 @@ class EthTransactions(LockableQueryMixIn):
         super().__init__()
         self.ethereum = ethereum
         self.database = database
+        self.address_tx_locks: Dict[ChecksumEthAddress, Semaphore] = defaultdict(Semaphore)
+        self.missing_receipts_lock = Semaphore()
+        self.msg_aggregator = database.msg_aggregator
 
-    def reset_count(self) -> None:
-        """Reset the limit counter for ethereum transactions
+    @contextmanager
+    def wait_until_no_query_for(self, addresses: List[ChecksumEthAddress]) -> Iterator[None]:
+        """Will acquire all locks relevant to an address and yield to the caller"""
+        locks = []
+        for address in addresses:
+            lock = self.address_tx_locks[address]
+            lock.acquire()
+            locks.append(lock)
 
-        This should be done by the frontend for non-premium users at the start
-        of any batch of transaction queries.
-        """
-        self.ethereum.tx_per_address = defaultdict(int)
+        yield  # yield to caller since all locks are now acquired
 
-    def _return_transactions_maybe_limit(
-            self,
-            requested_addresses: Optional[List[ChecksumEthAddress]],
-            transactions: List[EthereumTransaction],
-            with_limit: bool,
-    ) -> List[EthereumTransaction]:
-        if with_limit is False:
-            return transactions
-
-        count_map: DefaultDict[ChecksumEthAddress, int] = defaultdict(int)
-        for tx in transactions:
-            count_map[tx.from_address] += 1
-
-        for address, count in count_map.items():
-            self.ethereum.tx_per_address[address] = count
-
-        if requested_addresses is not None:
-            transactions_for_other_addies = sum(x for addy, x in self.ethereum.tx_per_address.items() if addy not in requested_addresses)  # noqa: E501
-            remaining_num_tx = FREE_ETH_TX_LIMIT - transactions_for_other_addies
-            returning_tx_length = min(remaining_num_tx, len(transactions))
-        else:
-            returning_tx_length = min(FREE_ETH_TX_LIMIT, len(transactions))
-
-        return transactions[:returning_tx_length]
+        for lock in locks:  # clean up
+            lock.release()
 
     def single_address_query_transactions(
             self,
@@ -73,57 +70,53 @@ class EthTransactions(LockableQueryMixIn):
             start_ts: Timestamp,
             end_ts: Timestamp,
     ) -> None:
-        """Only queries new transactions and adds them to the DB"""
-        ranges = DBQueryRanges(self.database)
-        ranges_to_query = ranges.get_location_query_ranges(
-            location_string=f'ethtxs_{address}',
-            start_ts=start_ts,
-            end_ts=end_ts,
+        """Only queries new transactions and adds them to the DB
+
+        This is our attempt to identify as many transactions related to the address
+        as possible. This unfortunately at the moment depends on etherscan as it's
+        the only open indexing service for "appearances" of an address.
+
+        Trueblocks ... we need you.
+        """
+        lock = self.address_tx_locks[address]
+        with lock:
+            self.msg_aggregator.add_message(
+                message_type=WSMessageType.ETHEREUM_TRANSACTION_STATUS,
+                data={
+                    'address': address,
+                    'period': [start_ts, end_ts],
+                    'status': str(TransactionStatusStep.QUERYING_TRANSACTIONS_STARTED),
+                },
+            )
+            self._get_transactions_for_range(address=address, start_ts=start_ts, end_ts=end_ts)
+            self._get_internal_transactions_for_ranges(
+                address=address,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
+            self._get_erc20_transfers_for_ranges(
+                address=address,
+                start_ts=start_ts,
+                end_ts=end_ts,
+            )
+        self.msg_aggregator.add_message(
+            message_type=WSMessageType.ETHEREUM_TRANSACTION_STATUS,
+            data={
+                'address': address,
+                'period': [start_ts, end_ts],
+                'status': str(TransactionStatusStep.QUERYING_TRANSACTIONS_FINISHED),
+            },
         )
-        new_transactions = []
-        dbethtx = DBEthTx(self.database)
-        for query_start_ts, query_end_ts in ranges_to_query:
-            try:
-                new_transactions.extend(self.ethereum.etherscan.get_transactions(
-                    account=address,
-                    from_ts=query_start_ts,
-                    to_ts=query_end_ts,
-                ))
-            except RemoteError as e:
-                self.ethereum.msg_aggregator.add_error(
-                    f'Got error "{str(e)}" while querying ethereum transactions '
-                    f'from Etherscan. Transactions not added to the DB '
-                    f'from_ts: {query_start_ts} '
-                    f'to_ts: {query_end_ts} ',
-                )
 
-        # add new transactions to the DB
-        if new_transactions != []:
-            dbethtx.add_ethereum_transactions(new_transactions)
-
-        # and also set the last queried timestamps for the address
-        ranges.update_used_query_range(
-            location_string=f'ethtxs_{address}',
-            start_ts=start_ts,
-            end_ts=end_ts,
-            ranges_to_query=ranges_to_query,
-        )
-
-    @protect_with_lock()
     def query(
             self,
             filter_query: ETHTransactionsFilterQuery,
-            with_limit: bool = False,
+            has_premium: bool = False,
             only_cache: bool = False,
     ) -> Tuple[List[EthereumTransaction], int]:
-        """Queries for all transactions (normal AND internal) of an ethereum
-        address or of all addresses.
+        """Queries for all transactions of an ethereum address or of all addresses.
+
         Returns a list of all transactions filtered and sorted according to the parameters.
-
-        If `with_limit` is true then the api limit is applied
-
-        if `recent_first` is true then the transactions are returned with the most
-        recent first on the list
 
         May raise:
         - RemoteError if etherscan is used and there is a problem with reaching it or
@@ -151,22 +144,231 @@ class EthTransactions(LockableQueryMixIn):
                 )
 
         dbethtx = DBEthTx(self.database)
-        transactions, total_filter_count = dbethtx.get_ethereum_transactions(filter_=filter_query)
-        return (
-            self._return_transactions_maybe_limit(
-                requested_addresses=query_addresses,
-                transactions=transactions,
-                with_limit=with_limit,
-            ),
-            total_filter_count,
+        return dbethtx.get_ethereum_transactions_and_limit_info(
+            filter_=filter_query,
+            has_premium=has_premium,
+        )
+
+    def _get_transactions_for_range(
+            self,
+            address: ChecksumEthAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+    ) -> None:
+        """Queries etherscan for all ethereum transactions of address in the given ranges.
+
+        If any transactions are found, they are added in the DB
+        """
+        location_string = f'{RANGE_PREFIX_ETHTX}_{address}'
+        ranges = DBQueryRanges(self.database)
+        ranges_to_query = ranges.get_location_query_ranges(
+            location_string=location_string,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        dbethtx = DBEthTx(self.database)
+        for query_start_ts, query_end_ts in ranges_to_query:
+            log.debug(f'Querying Transactions for {address} -> {query_start_ts} - {query_end_ts}')
+            try:
+                for new_transactions in self.ethereum.etherscan.get_transactions(
+                    account=address,
+                    from_ts=query_start_ts,
+                    to_ts=query_end_ts,
+                    action='txlist',
+                ):
+                    # add new transactions to the DB
+                    if len(new_transactions) != 0:
+                        dbethtx.add_ethereum_transactions(
+                            ethereum_transactions=new_transactions,
+                            relevant_address=address,
+                        )
+                        ranges.update_used_query_range(  # update last queried time for the address
+                            location_string=location_string,
+                            queried_ranges=[(query_start_ts, new_transactions[-1].timestamp)],
+                        )
+                        self.msg_aggregator.add_message(
+                            message_type=WSMessageType.ETHEREUM_TRANSACTION_STATUS,
+                            data={
+                                'address': address,
+                                'period': [query_start_ts, new_transactions[-1].timestamp],
+                                'status': str(TransactionStatusStep.QUERYING_TRANSACTIONS),
+                            },
+                        )
+
+            except RemoteError as e:
+                self.ethereum.msg_aggregator.add_error(
+                    f'Got error "{str(e)}" while querying ethereum transactions '
+                    f'from Etherscan. Some transactions not added to the DB '
+                    f'address: {address} '
+                    f'from_ts: {query_start_ts} '
+                    f'to_ts: {query_end_ts} ',
+                )
+                return
+
+        log.debug(f'Transactions done for {address}. Update range {start_ts} - {end_ts}')
+        ranges.update_used_query_range(  # entire range is now considered queried
+            location_string=location_string,
+            queried_ranges=[(start_ts, end_ts)],
+        )
+
+    def _get_internal_transactions_for_ranges(
+            self,
+            address: ChecksumEthAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+    ) -> None:
+        """Queries etherscan for all internal transactions of address in the given ranges.
+
+        If any internal transactions are found, they are added in the DB
+        """
+        location_string = f'{RANGE_PREFIX_ETHINTERNALTX}_{address}'
+        ranges = DBQueryRanges(self.database)
+        ranges_to_query = ranges.get_location_query_ranges(
+            location_string=location_string,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        dbethtx = DBEthTx(self.database)
+        new_internal_txs = []
+        for query_start_ts, query_end_ts in ranges_to_query:
+            log.debug(f'Querying Internal Transactions for {address} -> {query_start_ts} - {query_end_ts}')  # noqa: E501
+            try:
+                for new_internal_txs in self.ethereum.etherscan.get_transactions(
+                    account=address,
+                    from_ts=query_start_ts,
+                    to_ts=query_end_ts,
+                    action='txlistinternal',
+                ):
+                    if len(new_internal_txs) != 0:
+                        for internal_tx in new_internal_txs:
+                            # make sure all internal transaction parent transactions are in the DB
+                            gevent.sleep(0)
+                            result = dbethtx.get_ethereum_transactions(
+                                ETHTransactionsFilterQuery.make(tx_hash=internal_tx.parent_tx_hash),  # noqa: E501
+                                has_premium=True,  # ignore limiting here
+                            )
+                            if len(result) == 0:  # parent transaction is not in the DB. Get it
+                                transaction = self.ethereum.get_transaction_by_hash(internal_tx.parent_tx_hash)  # noqa: E501
+                                gevent.sleep(0)
+                                dbethtx.add_ethereum_transactions(
+                                    ethereum_transactions=[transaction],
+                                    relevant_address=address,
+                                )
+                                timestamp = transaction.timestamp
+                            else:
+                                timestamp = result[0].timestamp
+
+                            dbethtx.add_ethereum_internal_transactions(
+                                transactions=[internal_tx],
+                                relevant_address=address,
+                            )
+                            log.debug(f'Internal Transactions for {address} -> update range {query_start_ts} - {timestamp}')  # noqa: E501
+                            ranges.update_used_query_range(  # update last queried time for address
+                                location_string=location_string,
+                                queried_ranges=[(query_start_ts, timestamp)],
+                            )
+                            self.msg_aggregator.add_message(
+                                message_type=WSMessageType.ETHEREUM_TRANSACTION_STATUS,
+                                data={
+                                    'address': address,
+                                    'period': [query_start_ts, timestamp],
+                                    'status': str(TransactionStatusStep.QUERYING_INTERNAL_TRANSACTIONS),  # noqa: E501
+                                },
+                            )
+
+            except RemoteError as e:
+                self.ethereum.msg_aggregator.add_error(
+                    f'Got error "{str(e)}" while querying internal ethereum transactions '
+                    f'from Etherscan. Transactions not added to the DB '
+                    f'address: {address} '
+                    f'from_ts: {query_start_ts} '
+                    f'to_ts: {query_end_ts} ',
+                )
+                return
+
+        log.debug(f'Internal Transactions for address {address} done. Update range {start_ts} - {end_ts}')  # noqa: E501
+        ranges.update_used_query_range(  # entire range is now considered queried
+            location_string=location_string,
+            queried_ranges=[(start_ts, end_ts)],
+        )
+
+    def _get_erc20_transfers_for_ranges(
+            self,
+            address: ChecksumEthAddress,
+            start_ts: Timestamp,
+            end_ts: Timestamp,
+    ) -> None:
+        """Queries etherscan for all erc20 transfers of address in the given ranges.
+
+        If any transfers are found, they are added in the DB
+        """
+        location_string = f'{RANGE_PREFIX_ETHTOKENTX}_{address}'
+        dbethtx = DBEthTx(self.database)
+        ranges = DBQueryRanges(self.database)
+        ranges_to_query = ranges.get_location_query_ranges(
+            location_string=location_string,
+            start_ts=start_ts,
+            end_ts=end_ts,
+        )
+        for query_start_ts, query_end_ts in ranges_to_query:
+            log.debug(f'Querying ERC20 Transfers for {address} -> {query_start_ts} - {query_end_ts}')  # noqa: E501
+            try:
+                for erc20_tx_hashes in self.ethereum.etherscan.get_token_transaction_hashes(
+                    account=address,
+                    from_ts=query_start_ts,
+                    to_ts=query_end_ts,
+                ):
+                    for tx_hash in erc20_tx_hashes:
+                        tx_hash_bytes = deserialize_evm_tx_hash(tx_hash)
+                        result = dbethtx.get_ethereum_transactions(
+                            ETHTransactionsFilterQuery.make(tx_hash=tx_hash_bytes),
+                            has_premium=True,  # ignore limiting here
+                        )
+                        if len(result) == 0:  # if transaction is not there add it
+                            gevent.sleep(0)
+                            transaction = self.ethereum.get_transaction_by_hash(tx_hash_bytes)
+                            dbethtx.add_ethereum_transactions(
+                                [transaction],
+                                relevant_address=address,
+                            )
+                            timestamp = transaction.timestamp
+                        else:
+                            timestamp = result[0].timestamp
+
+                        log.debug(f'ERC20 Transfers for {address} -> update range {query_start_ts} - {timestamp}')  # noqa: E501
+                        ranges.update_used_query_range(  # update last queried time for the address
+                            location_string=location_string,
+                            queried_ranges=[(query_start_ts, timestamp)],
+                        )
+                        self.msg_aggregator.add_message(
+                            message_type=WSMessageType.ETHEREUM_TRANSACTION_STATUS,
+                            data={
+                                'address': address,
+                                'period': [query_start_ts, timestamp],
+                                'status': str(TransactionStatusStep.QUERYING_ETHEREUM_TOKENS_TRANSACTIONS),  # noqa: E501
+                            },
+                        )
+            except RemoteError as e:
+                self.ethereum.msg_aggregator.add_error(
+                    f'Got error "{str(e)}" while querying token transactions'
+                    f'from Etherscan. Transactions not added to the DB '
+                    f'address: {address} '
+                    f'from_ts: {query_start_ts} '
+                    f'to_ts: {query_end_ts} ',
+                )
+
+        log.debug(f'ERC20 Transfers done for address {address}. Update range {start_ts} - {end_ts}')  # noqa: E501
+        ranges.update_used_query_range(  # entire range is now considered queried
+            location_string=location_string,
+            queried_ranges=[(start_ts, end_ts)],
         )
 
     def get_or_query_transaction_receipt(
             self,
-            tx_hash: str,
-    ) -> Optional['EthereumTxReceipt']:
+            tx_hash: EVMTxHash,
+    ) -> 'EthereumTxReceipt':
         """
-        Gets the receipt from the DB if it exist. If not queries the chain for it,
+        Gets the receipt from the DB if it exists. If not queries the chain for it,
         saves it in the DB and then returns it.
 
         Also if the actual transaction does not exist in the DB it queries it and saves it there.
@@ -174,25 +376,56 @@ class EthTransactions(LockableQueryMixIn):
         May raise:
 
         - DeserializationError
-        - RemoteError
+        - RemoteError if the transaction hash can't be found in any of the connected nodes
         """
-        tx_hash_b = hexstring_to_bytes(tx_hash)
         dbethtx = DBEthTx(self.database)
         # If the transaction is not in the DB then query it and add it
-        result, _ = dbethtx.get_ethereum_transactions(ETHTransactionsFilterQuery.make(tx_hash=tx_hash_b))  # noqa: E501
+        result = dbethtx.get_ethereum_transactions(
+            filter_=ETHTransactionsFilterQuery.make(tx_hash=tx_hash),
+            has_premium=True,  # we don't need any limiting here
+        )
         if len(result) == 0:
             transaction = self.ethereum.get_transaction_by_hash(tx_hash)
-            if transaction is None:
-                return None  # hash does not correspond to a transaction
+            dbethtx.add_ethereum_transactions([transaction], relevant_address=None)
+            self._get_internal_transactions_for_ranges(
+                address=transaction.from_address,
+                start_ts=transaction.timestamp,
+                end_ts=transaction.timestamp,
+            )
+            self._get_erc20_transfers_for_ranges(
+                address=transaction.from_address,
+                start_ts=transaction.timestamp,
+                end_ts=transaction.timestamp,
+            )
 
-            dbethtx.add_ethereum_transactions([transaction])
-
-        tx_receipt = dbethtx.get_receipt(tx_hash_b)
+        tx_receipt = dbethtx.get_receipt(tx_hash)
         if tx_receipt is not None:
             return tx_receipt
 
         # not in the DB, so we need to query the chain for it
         tx_receipt_data = self.ethereum.get_transaction_receipt(tx_hash=tx_hash)
         dbethtx.add_receipt_data(tx_receipt_data)
-        tx_receipt = dbethtx.get_receipt(tx_hash_b)
-        return tx_receipt
+        tx_receipt = dbethtx.get_receipt(tx_hash)
+        return tx_receipt  # type: ignore  # tx_receipt was just added in the DB so should be there  # noqa: E501
+
+    def get_receipts_for_transactions_missing_them(self, limit: Optional[int] = None) -> None:
+        """
+        Searches the database for up to `limit` transactions that have no corresponding receipt
+        and for each one of them queries the receipt and saves it in the DB.
+
+        It's protected by a lock to not enter the same code twice
+        (i.e. from periodic tasks and from pnl report history events gathering)
+        """
+        with self.missing_receipts_lock:
+            dbethtx = DBEthTx(self.database)
+            hash_results = dbethtx.get_transaction_hashes_no_receipt(
+                tx_filter_query=None,
+                limit=limit,
+            )
+
+            if len(hash_results) == 0:
+                return  # nothing to do
+
+            for entry in hash_results:
+                tx_receipt_data = self.ethereum.get_transaction_receipt(tx_hash=entry)
+                dbethtx.add_receipt_data(tx_receipt_data)

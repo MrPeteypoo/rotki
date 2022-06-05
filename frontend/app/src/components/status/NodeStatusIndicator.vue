@@ -3,13 +3,12 @@
     data-cy="status-indicator"
     transition="slide-y-transition"
     offset-y
-    bottom
     z-index="215"
   >
     <template #activator="{ on }">
       <menu-tooltip-button
         tooltip="Ethereum Node Status"
-        class-name="secondary--text text--lighten-2"
+        class-name="secondary--text text--lighten-4"
         :on-menu="on"
       >
         <v-icon v-if="nodeConnection">mdi-link</v-icon>

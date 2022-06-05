@@ -12,7 +12,7 @@ from rotkehlchen.tests.utils.api import (
     assert_error_response,
     assert_proper_response_with_result,
 )
-from rotkehlchen.typing import Location
+from rotkehlchen.types import Location
 
 
 def _populate_ignored_actions(rotkehlchen_api_server) -> List[Tuple[str, List[str]]]:
@@ -157,8 +157,9 @@ def test_remove_ignored_actions(rotkehlchen_api_server):
 
 
 @pytest.mark.parametrize('number_of_eth_accounts', [0])
-def test_ignore_ledger_actions_in_accountant(rotkehlchen_api_server, accountant):
+def test_ignore_ledger_actions_in_accountant(rotkehlchen_api_server):
     """Test that ignored ledger actions are correctly ignored by the accountant"""
+    accountant = rotkehlchen_api_server.rest_api.rotkehlchen.accountant
     ledger_actions_list = [
         LedgerAction(
             identifier=1,
@@ -200,11 +201,7 @@ def test_ignore_ledger_actions_in_accountant(rotkehlchen_api_server, accountant)
     ignored = []
     # Call the should_ignore method used in the accountant
     for action in ledger_actions_list:
-        should_ignore, _ = accountant._should_ignore_action(
-            action=action,
-            action_type='ledger_action',
-            ignored_actionids_mapping=ignored_actions,
-        )
+        should_ignore = action.should_ignore(ignored_actions)
         ignored.append(should_ignore)
 
     assert ignored == [False, True]

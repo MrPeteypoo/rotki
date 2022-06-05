@@ -4,7 +4,7 @@
     color="primary"
     :loading="refreshing"
     :disabled="refreshing || loadingData"
-    @click="refreshPrices(true)"
+    @click="refreshPrices({ ignoreCache: true })"
   >
     <v-icon left>mdi-refresh</v-icon>
     {{ $t('price_refresh.button') }}
@@ -12,34 +12,33 @@
 </template>
 
 <script lang="ts">
-import { Component, Mixins } from 'vue-property-decorator';
-import { mapActions, mapGetters } from 'vuex';
-import StatusMixin from '@/mixins/status-mixin';
-import { TaskType } from '@/model/task-type';
+import { computed, defineComponent } from '@vue/composition-api';
+import { get } from '@vueuse/core';
+import { setupGeneralBalances } from '@/composables/balances';
+import { setupStatusChecking } from '@/composables/common';
 import { Section } from '@/store/const';
+import { useTasks } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
 
-@Component({
-  computed: {
-    ...mapGetters('tasks', ['isTaskRunning'])
-  },
-  methods: {
-    ...mapActions('balances', ['refreshPrices'])
-  }
-})
-export default class PriceRefresh extends Mixins(StatusMixin) {
-  readonly section = Section.PRICES;
-  isTaskRunning!: (type: TaskType) => boolean;
-  refreshPrices!: (ignoreCache: boolean) => Promise<void>;
+export default defineComponent({
+  name: 'PriceRefresh',
+  setup() {
+    const { isTaskRunning } = useTasks();
+    const { refreshPrices } = setupGeneralBalances();
+    const { isSectionRefreshing } = setupStatusChecking();
 
-  get loadingData(): boolean {
-    return (
-      this.isTaskRunning(TaskType.QUERY_BALANCES) ||
-      this.isTaskRunning(TaskType.QUERY_BLOCKCHAIN_BALANCES) ||
-      this.isTaskRunning(TaskType.QUERY_EXCHANGE_BALANCES) ||
-      this.isTaskRunning(TaskType.MANUAL_BALANCES)
-    );
+    const refreshing = isSectionRefreshing(Section.PRICES);
+
+    const loadingData = computed<boolean>(() => {
+      return (
+        get(isTaskRunning(TaskType.QUERY_BALANCES)) ||
+        get(isTaskRunning(TaskType.QUERY_BLOCKCHAIN_BALANCES)) ||
+        get(isTaskRunning(TaskType.QUERY_EXCHANGE_BALANCES)) ||
+        get(isTaskRunning(TaskType.MANUAL_BALANCES))
+      );
+    });
+
+    return { refreshing, loadingData, refreshPrices };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

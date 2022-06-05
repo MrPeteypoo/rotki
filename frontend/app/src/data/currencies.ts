@@ -1,5 +1,5 @@
 import i18n from '@/i18n';
-import { Currency } from '@/model/currency';
+import { Currency } from '@/types/currency';
 
 export const CURRENCY_USD = 'USD';
 const CURRENCY_EUR = 'EUR';
@@ -23,6 +23,7 @@ const CURRENCY_TWD = 'TWD';
 const CURRENCY_NOK = 'NOK';
 const CURRENCY_INR = 'INR';
 const CURRENCY_DKK = 'DKK';
+const CURRENCY_PLN = 'PLN';
 
 const SUPPORTED_CURRENCIES = [
   CURRENCY_USD,
@@ -46,7 +47,8 @@ const SUPPORTED_CURRENCIES = [
   CURRENCY_BTC,
   CURRENCY_ETH,
   CURRENCY_INR,
-  CURRENCY_DKK
+  CURRENCY_DKK,
+  CURRENCY_PLN
 ] as const;
 
 export type SupportedCurrency = typeof SUPPORTED_CURRENCIES[number];
@@ -72,6 +74,17 @@ export const currencies: Currency[] = [
   new Currency(i18n.t('currencies.nok').toString(), CURRENCY_NOK, 'kr'),
   new Currency(i18n.t('currencies.inr').toString(), CURRENCY_INR, '₹'),
   new Currency(i18n.t('currencies.dkk').toString(), CURRENCY_DKK, 'kr'),
+  new Currency(i18n.t('currencies.pln').toString(), CURRENCY_PLN, 'zł'),
   new Currency('Bitcoin', CURRENCY_BTC, '₿'),
   new Currency('Ether', CURRENCY_ETH, 'Ξ')
 ];
+
+export const findCurrency = (currencySymbol: string) => {
+  const currency: Currency | undefined = currencies.find(
+    currency => currency.tickerSymbol === currencySymbol
+  );
+  if (!currency) {
+    throw new Error(`Could not find ${currencySymbol}`);
+  }
+  return currency;
+};

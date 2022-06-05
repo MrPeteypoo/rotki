@@ -2,64 +2,125 @@ from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional
 
 from gevent.lock import Semaphore
 
-from rotkehlchen.accounting.structures import AssetBalance, Balance, DefiEvent, DefiEventType
+from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
+from rotkehlchen.accounting.structures.defi import DefiEvent, DefiEventType
 from rotkehlchen.assets.asset import Asset, EthereumToken
-from rotkehlchen.chain.ethereum.structures import YearnVault, YearnVaultEvent
+from rotkehlchen.chain.ethereum.constants import ZERO_ADDRESS
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
 from rotkehlchen.constants.assets import (
     A_ALINK_V1,
     A_CRV_3CRV,
+    A_CRV_3CRVSUSD,
+    A_CRV_GUSD,
+    A_CRV_RENWBTC,
     A_CRVP_DAIUSDCTBUSD,
     A_CRVP_DAIUSDCTTUSD,
     A_CRVP_RENWSBTC,
     A_DAI,
     A_GUSD,
+    A_MUSD,
+    A_PSLP,
     A_TUSD,
     A_USDC,
     A_USDT,
     A_WETH,
     A_YFI,
     A_YV1_3CRV,
+    A_YV1_A3CRV,
     A_YV1_ALINK,
+    A_YV1_ASUSD_CRV,
+    A_YV1_BBTC_CRV,
+    A_YV1_CDAI_CUSD,
     A_YV1_DAI,
     A_YV1_DAIUSDCTBUSD,
     A_YV1_DAIUSDCTTUSD,
+    A_YV1_DUSD_3CRV,
+    A_YV1_ETH_ANKER,
+    A_YV1_EURS_CRV,
     A_YV1_GUSD,
+    A_YV1_GUSD_CRV,
+    A_YV1_HBTC_CRV,
+    A_YV1_HUSD_CRV,
+    A_YV1_MSUD_CRV,
+    A_YV1_MUSD_VAULT,
+    A_YV1_OBTC_CRV,
+    A_YV1_PSLP,
+    A_YV1_RENBT_CRV,
     A_YV1_RENWSBTC,
+    A_YV1_SUSD_CRV,
+    A_YV1_TBTC_CRV,
     A_YV1_TUSD,
     A_YV1_USDC,
+    A_YV1_USDN_CRV,
+    A_YV1_USDP_CRV,
     A_YV1_USDT,
+    A_YV1_UST_CRV,
     A_YV1_WETH,
     A_YV1_YFI,
+    CRV_ADAI_ASUSD,
+    CRV_AETH,
+    CRV_BBTC_SBTC,
+    CRV_CDAI_CUSDC,
+    CRV_DUSD,
+    CRV_EURS,
+    CRV_HBTC,
+    CRV_HUSD,
+    CRV_MUSD,
+    CRV_OBTC_SBTC,
+    CRV_TBTC_SBTC,
+    CRV_USDN,
+    CRV_USDP,
+    CRV_UST,
 )
 from rotkehlchen.constants.ethereum import (
     ERC20TOKEN_ABI,
     MAX_BLOCKTIME_CACHE,
     YEARN_3CRV_VAULT,
+    YEARN_A3CRV_VAULT,
     YEARN_ALINK_VAULT,
+    YEARN_ASUSD_VAULT,
+    YEARN_BBTC_SBTC_VAULT,
     YEARN_BCURVE_VAULT,
+    YEARN_CDAI_CUSDC_VAULT,
     YEARN_DAI_VAULT,
+    YEARN_DUSD_3CRV_VAULT,
+    YEARN_ETH_ANKER_VAULT,
+    YEARN_EURS_VAULT,
+    YEARN_GUSD_3CRV_VAULT,
     YEARN_GUSD_VAULT,
+    YEARN_HBTC_WBTC_VAULT,
+    YEARN_HUSD_3CRV_VAULT,
+    YEARN_MUSD_3CRV_VAULT,
+    YEARN_MUSD_VAULT,
+    YEARN_OBTC_SBTC_VAULT,
+    YEARN_PSLP_VAULT,
+    YEARN_RENBTC_WBTC_VAULT,
     YEARN_SRENCURVE_VAULT,
+    YEARN_SUSD_3CRV_VAULT,
+    YEARN_TBTC_SBTC_VAULT,
     YEARN_TUSD_VAULT,
     YEARN_USDC_VAULT,
+    YEARN_USDN_3CRV_VAULT,
+    YEARN_USDP_3CRV_VAULT,
     YEARN_USDT_VAULT,
+    YEARN_UST_3CRV_VAULT,
     YEARN_VAULTS_PREFIX,
     YEARN_WETH_VAULT,
     YEARN_YCRV_VAULT,
     YEARN_YFI_VAULT,
-    ZERO_ADDRESS,
 )
-from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.constants.misc import EXP18, ZERO
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import query_usd_price_zero_if_error
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import YEARN_VAULTS_V2_PROTOCOL, ChecksumEthAddress, Price, Timestamp
+from rotkehlchen.types import YEARN_VAULTS_V2_PROTOCOL, ChecksumEthAddress, Price, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.interfaces import EthereumModule
 from rotkehlchen.utils.misc import address_to_bytes32, hexstr_to_int, ts_now
+
+from .structures import YearnVault, YearnVaultEvent
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.defi.structures import (
@@ -145,6 +206,126 @@ YEARN_VAULTS = {
         underlying_token=A_CRV_3CRV,
         token=A_YV1_3CRV,
     ),
+    'pSLP': YearnVault(
+        name='pickling SushiSwap LP Token Vault',
+        contract=YEARN_PSLP_VAULT,
+        underlying_token=A_PSLP,
+        token=A_YV1_PSLP,
+    ),
+    'yvcDAI+cUSDC': YearnVault(
+        name='curve.fi/compound Vault',
+        contract=YEARN_CDAI_CUSDC_VAULT,
+        underlying_token=CRV_CDAI_CUSDC,
+        token=A_YV1_CDAI_CUSD,
+    ),
+    'yvmusd3CRV': YearnVault(
+        name='curve.fi/musd Vault',
+        contract=YEARN_MUSD_3CRV_VAULT,
+        underlying_token=CRV_MUSD,
+        token=A_YV1_MSUD_CRV,
+    ),
+    'yvgusd3CRV': YearnVault(
+        name='curve.fi/gusd Vault',
+        contract=YEARN_GUSD_3CRV_VAULT,
+        underlying_token=A_CRV_GUSD,
+        token=A_YV1_GUSD_CRV,
+    ),
+    'yveursCRV': YearnVault(
+        name='curve.fi/eurs Vault',
+        contract=YEARN_EURS_VAULT,
+        underlying_token=CRV_EURS,
+        token=A_YV1_EURS_CRV,
+    ),
+    'yvmUSD': YearnVault(
+        name='mUSD Vault',
+        contract=YEARN_MUSD_VAULT,
+        underlying_token=A_MUSD,
+        token=A_YV1_MUSD_VAULT,
+    ),
+    'yvcrvRenWBTC': YearnVault(
+        name='curve.fi/renbtc Vault',
+        contract=YEARN_RENBTC_WBTC_VAULT,
+        underlying_token=A_CRV_RENWBTC,
+        token=A_YV1_RENBT_CRV,
+    ),
+    'yvusdn3CRV': YearnVault(
+        name='curve.fi/usdn Vault',
+        contract=YEARN_USDN_3CRV_VAULT,
+        underlying_token=CRV_USDN,
+        token=A_YV1_USDN_CRV,
+    ),
+    'yvust3CRV': YearnVault(
+        name='curve.fi/ust Vault',
+        contract=YEARN_UST_3CRV_VAULT,
+        underlying_token=CRV_UST,
+        token=A_YV1_UST_CRV,
+    ),
+    'yvbBTC/sbtcCRV': YearnVault(
+        name='curve.fi/bbtc Vault',
+        contract=YEARN_BBTC_SBTC_VAULT,
+        underlying_token=CRV_BBTC_SBTC,
+        token=A_YV1_BBTC_CRV,
+    ),
+    'yvtbtc/sbtcCrv': YearnVault(
+        name='curve.fi/tbtc Vault',
+        contract=YEARN_TBTC_SBTC_VAULT,
+        underlying_token=CRV_TBTC_SBTC,
+        token=A_YV1_TBTC_CRV,
+    ),
+    'yvoBTC/sbtcCRV': YearnVault(
+        name='curve.fi/obtc Vault',
+        contract=YEARN_OBTC_SBTC_VAULT,
+        underlying_token=CRV_OBTC_SBTC,
+        token=A_YV1_OBTC_CRV,
+    ),
+    'yvhCRV': YearnVault(
+        name='curve.fi/hbtc Vault',
+        contract=YEARN_HBTC_WBTC_VAULT,
+        underlying_token=CRV_HBTC,
+        token=A_YV1_HBTC_CRV,
+    ),
+    'yvcrvPlain3andSUSD': YearnVault(
+        name='curve.fi/susd Vault',
+        contract=YEARN_SUSD_3CRV_VAULT,
+        underlying_token=A_CRV_3CRVSUSD,
+        token=A_YV1_SUSD_CRV,
+    ),
+    'yvhusd3CRV': YearnVault(
+        name='curve.fi/husd Vault',
+        contract=YEARN_HUSD_3CRV_VAULT,
+        underlying_token=CRV_HUSD,
+        token=A_YV1_HUSD_CRV,
+    ),
+    'yvdusd3CRV': YearnVault(
+        name='curve.fi/dusd Vault',
+        contract=YEARN_DUSD_3CRV_VAULT,
+        underlying_token=CRV_DUSD,
+        token=A_YV1_DUSD_3CRV,
+    ),
+    'yva3CRV': YearnVault(
+        name='curve.fi/aave Vault',
+        contract=YEARN_A3CRV_VAULT,
+        underlying_token=A_CRV_3CRV,
+        token=A_YV1_A3CRV,
+    ),
+    'yvankrCRV': YearnVault(
+        name='curve.fi/ankreth Vault',
+        contract=YEARN_ETH_ANKER_VAULT,
+        underlying_token=CRV_AETH,
+        token=A_YV1_ETH_ANKER,
+    ),
+    'yvsaCRV': YearnVault(
+        name='curve.fi/saave Vault',
+        contract=YEARN_ASUSD_VAULT,
+        underlying_token=CRV_ADAI_ASUSD,
+        token=A_YV1_ASUSD_CRV,
+    ),
+    'yvusdp3CRV': YearnVault(
+        name='curve.fi/usdp Vault',
+        contract=YEARN_USDP_3CRV_VAULT,
+        underlying_token=CRV_USDP,
+        token=A_YV1_USDP_CRV,
+    ),
 }
 
 
@@ -227,9 +408,9 @@ class YearnVaults(EthereumModule):
             abi=YEARN_DAI_VAULT.abi,  # Any vault ABI will do
             method_name='getPricePerFullShare',
         )
-        nominator = price_per_full_share - (10**18)
+        nominator = price_per_full_share - EXP18
         denonimator = now_block_number - vault.contract.deployed_block
-        return FVal(nominator) / FVal(denonimator) * BLOCKS_PER_YEAR / 10**18
+        return FVal(nominator) / FVal(denonimator) * BLOCKS_PER_YEAR / EXP18
 
     def _get_single_addr_balance(
             self,
@@ -459,6 +640,10 @@ class YearnVaults(EthereumModule):
         """Process the events for a single vault and returns total profit/loss after all events"""
         total = Balance()
         profit_so_far = Balance()
+
+        if len(events) < 2:
+            return total
+
         for event in events:
             if event.event_type == 'deposit':
                 total -= event.from_value
@@ -660,9 +845,6 @@ class YearnVaults(EthereumModule):
         return events
 
     # -- Methods following the EthereumModule interface -- #
-    def on_startup(self) -> None:
-        pass
-
     def on_account_addition(self, address: ChecksumEthAddress) -> Optional[List[AssetBalance]]:
         pass
 

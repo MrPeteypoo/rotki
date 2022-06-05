@@ -1,18 +1,18 @@
 <template>
-  <v-card class="mx-auto">
+  <v-card class="mx-auto overflow-hidden">
     <base-external-link :href="item.externalLink">
       <video
         v-if="isVideo"
         controls
         width="auto"
-        aspect-ration="1"
+        aspect-ratio="1"
         :src="imageUrl"
         :style="{
           'background-color': `#${item.backgroundColor}`
         }"
       />
       <v-img
-        v-if="!isVideo"
+        v-else
         :src="imageUrl"
         contain
         aspect-ratio="1"
@@ -90,11 +90,11 @@ import {
   PropType,
   toRefs
 } from '@vue/composition-api';
+import { get } from '@vueuse/core';
 import BaseExternalLink from '@/components/base/BaseExternalLink.vue';
 import IconLink from '@/components/base/IconLink.vue';
 import { GalleryNft } from '@/store/session/types';
-
-let videoExtensions = ['mp4', 'mov', 'webm', 'ogg'];
+import { isVideo } from '@/utils/nft';
 
 export default defineComponent({
   name: 'NftGalleryItem',
@@ -108,19 +108,18 @@ export default defineComponent({
   setup(props) {
     const { item } = toRefs(props);
     const name = computed(() =>
-      item.value.name ? item.value.name : item.value.collection.name
+      get(item).name ? get(item).name : get(item).collection.name
     );
+
     const imageUrl = computed(() => {
-      return item.value.imageUrl ?? require('@/assets/images/placeholder.svg');
+      return get(item).imageUrl ?? '/assets/images/placeholder.svg';
     });
-    const isVideo = computed(() => {
-      return videoExtensions.some(
-        extension =>
-          item.value.imageUrl !== null &&
-          item.value.imageUrl.endsWith(extension)
-      );
+
+    const isMediaVideo = computed(() => {
+      return isVideo(get(item).imageUrl);
     });
-    return { name, imageUrl, isVideo };
+
+    return { name, imageUrl, isVideo: isMediaVideo };
   }
 });
 </script>

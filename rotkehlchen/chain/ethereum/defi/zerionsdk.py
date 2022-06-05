@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.assets.utils import get_asset_by_symbol
 from rotkehlchen.chain.ethereum.contracts import EthereumContract
@@ -11,17 +11,19 @@ from rotkehlchen.chain.ethereum.defi.structures import (
     DefiProtocol,
     DefiProtocolBalances,
 )
-from rotkehlchen.chain.ethereum.typing import NodeName, string_to_ethereum_address
+from rotkehlchen.chain.ethereum.types import NodeName, string_to_ethereum_address
 from rotkehlchen.chain.ethereum.utils import token_normalized_value_decimals
 from rotkehlchen.constants.assets import A_DAI, A_USDC
-from rotkehlchen.constants.ethereum import ZERION_ABI
+from rotkehlchen.constants.ethereum import ETH_SPECIAL_ADDRESS, ZERION_ABI
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import DeserializationError, RemoteError, UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.inquirer import Inquirer, get_underlying_asset_price
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
-from rotkehlchen.typing import ChecksumEthAddress, Price
+from rotkehlchen.types import ChecksumEthAddress, Price
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import get_chunks
 
@@ -148,7 +150,7 @@ def _is_token_non_standard(symbol: str, address: ChecksumEthAddress) -> bool:
 
     if address in (
             '0xCb2286d9471cc185281c4f763d34A962ED212962',  # Sushi LP token
-            '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE',  # Special ETH address for aave v1, compound and Chi gas token  # noqa: E501
+            ETH_SPECIAL_ADDRESS,
     ):
         return True
 

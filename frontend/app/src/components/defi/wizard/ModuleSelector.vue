@@ -1,5 +1,6 @@
 <template>
   <v-autocomplete
+    ref="autocomplete"
     :value="selectedModules"
     :search-input.sync="search"
     :items="supportedModules"
@@ -26,8 +27,19 @@
         pill
         @click:close="unselect(data.item.identifier)"
       >
-        <v-avatar left>
-          <v-img width="26px" contain max-height="24px" :src="data.item.icon" />
+        <v-avatar left class="d-flex">
+          <adaptive-wrapper
+            class="d-flex align-center"
+            width="100%"
+            height="100%"
+          >
+            <v-img
+              width="26px"
+              contain
+              max-height="24px"
+              :src="data.item.icon"
+            />
+          </adaptive-wrapper>
         </v-avatar>
         <span> {{ data.item.name }}</span>
       </v-chip>
@@ -50,10 +62,11 @@
 <script lang="ts">
 import { Component, Mixins } from 'vue-property-decorator';
 import { SUPPORTED_MODULES } from '@/components/defi/wizard/consts';
+import AdaptiveWrapper from '@/components/display/AdaptiveWrapper.vue';
 import ModuleMixin from '@/mixins/module-mixin';
-import { Module } from '@/services/session/consts';
 import { BalanceActions } from '@/store/balances/action-types';
 import { BalanceMutations } from '@/store/balances/mutation-types';
+import { Module } from '@/types/modules';
 
 const wasActivated = (
   active: Module[],
@@ -67,7 +80,9 @@ const wasDeactivated = (
   module: Module
 ) => !active.includes(module) && previouslyActive.includes(module);
 
-@Component({})
+@Component({
+  components: { AdaptiveWrapper }
+})
 export default class ModuleSelector extends Mixins(ModuleMixin) {
   readonly supportedModules = SUPPORTED_MODULES;
   selectedModules: Module[] = [];
@@ -85,14 +100,23 @@ export default class ModuleSelector extends Mixins(ModuleMixin) {
       return;
     }
     this.selectedModules.splice(selectionIndex, 1);
-    this.update(this.selectedModules);
+    this.update(this.selectedModules, false);
 
     if (wasDeactivated(this.selectedModules, previouslyActive, Module.NFTS)) {
       this.clearNfBalances();
     }
   }
 
-  async update(activeModules: Module[]) {
+  async update(activeModules: Module[], clearSearch: boolean = true) {
+    if (clearSearch) {
+      this.search = '';
+      setTimeout(() => {
+        const autocomplete = this.$refs.autocomplete as any;
+        if (autocomplete) {
+          autocomplete.focus();
+        }
+      }, 10);
+    }
     this.loading = true;
     await this.activateModules(activeModules);
     this.onModuleActivation(activeModules);

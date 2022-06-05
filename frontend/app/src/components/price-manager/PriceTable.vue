@@ -20,7 +20,8 @@
       <template #item.price="{ item }">
         <amount-display :value="item.price" />
       </template>
-      <template #item.join>{{ $t('price_table.join_text') }}</template>
+      <template #item.wasWorth>{{ $t('price_table.was_worth') }}</template>
+      <template #item.on>{{ $t('price_table.on') }}</template>
       <template #item.actions="{ item }">
         <row-actions
           :disabled="loading"
@@ -42,16 +43,17 @@
 </template>
 
 <script lang="ts">
+import { NotificationPayload, Severity } from '@rotki/common/lib/messages';
 import {
   computed,
   defineComponent,
-  inject,
   onMounted,
   PropType,
   ref,
   toRef,
   watch
 } from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import { DataTableHeader } from 'vuetify';
 import { Store } from 'vuex';
 import RowActions from '@/components/helper/RowActions.vue';
@@ -61,21 +63,22 @@ import {
   HistoricalPricePayload
 } from '@/services/assets/types';
 import { api } from '@/services/rotkehlchen-api';
-import { Severity } from '@/store/notifications/consts';
-import { NotificationPayload } from '@/store/notifications/types';
+import { useNotifications } from '@/store/notifications';
 import { RotkehlchenState } from '@/store/types';
+import { useStore } from '@/store/utils';
 import { Nullable } from '@/types';
-import { assert } from '@/utils/assertions';
 import { nonNullProperties } from '@/utils/data';
 
-const priceRetrieval = (store: Store<RotkehlchenState>) => {
+const priceRetrieval = () => {
   const prices = ref<HistoricalPrice[]>([]);
   const loading = ref(false);
 
+  const { notify } = useNotifications();
+
   const fetchPrices = async (payload?: Partial<HistoricalPricePayload>) => {
-    loading.value = true;
+    set(loading, true);
     try {
-      prices.value = await api.assets.historicalPrices(payload);
+      set(prices, await api.assets.historicalPrices(payload));
     } catch (e: any) {
       const notification: NotificationPayload = {
         title: i18n.t('price_table.fetch.failure.title').toString(),
@@ -85,9 +88,9 @@ const priceRetrieval = (store: Store<RotkehlchenState>) => {
         display: true,
         severity: Severity.ERROR
       };
-      await store.dispatch('notifications/notify', notification);
+      notify(notification);
     } finally {
-      loading.value = false;
+      set(loading, false);
     }
   };
   onMounted(fetchPrices);
@@ -103,15 +106,17 @@ const priceDeletion = (
   refresh: () => Promise<void>
 ) => {
   const pending = ref<Nullable<HistoricalPrice>>(null);
-  const showConfirmation = computed(() => !!pending.value);
+  const showConfirmation = computed(() => !!get(pending));
 
   const dismiss = () => {
-    pending.value = null;
+    set(pending, null);
   };
 
+  const { notify } = useNotifications();
+
   const deletePrice = async () => {
-    const { price, ...payload } = pending.value!;
-    pending.value = null;
+    const { price, ...payload } = get(pending)!;
+    set(pending, null);
     try {
       await api.assets.deleteHistoricalPrice(payload);
       await refresh();
@@ -124,7 +129,7 @@ const priceDeletion = (
         display: true,
         severity: Severity.ERROR
       };
-      await store.dispatch('notifications/notify', notification);
+      notify(notification);
     }
   };
   return {
@@ -134,6 +139,37 @@ const priceDeletion = (
     dismiss
   };
 };
+
+const headers: DataTableHeader[] = [
+  {
+    text: i18n.t('price_table.headers.from_asset').toString(),
+    value: 'fromAsset'
+  },
+  {
+    text: '',
+    value: 'wasWorth'
+  },
+  {
+    text: i18n.t('price_table.headers.price').toString(),
+    value: 'price'
+  },
+  {
+    text: i18n.t('price_table.headers.to_asset').toString(),
+    value: 'toAsset'
+  },
+  {
+    text: '',
+    value: 'on'
+  },
+  {
+    text: i18n.t('price_table.headers.date').toString(),
+    value: 'timestamp'
+  },
+  {
+    text: '',
+    value: 'actions'
+  }
+];
 
 export default defineComponent({
   name: 'PriceTable',
@@ -149,10 +185,10 @@ export default defineComponent({
       default: false
     }
   },
+  emits: ['edit', 'refreshed'],
   setup(props, { emit }) {
-    const store = inject<Store<RotkehlchenState>>('vuex-store');
-    assert(store);
-    const { fetchPrices, prices, loading } = priceRetrieval(store);
+    const store = useStore();
+    const { fetchPrices, prices, loading } = priceRetrieval();
     watch(props.filter, async payload => {
       await fetchPrices(nonNullProperties(payload));
     });
@@ -169,47 +205,16 @@ export default defineComponent({
 
     const filter = toRef(props, 'filter');
     const refresh = async () => {
-      await fetchPrices(filter.value);
+      await fetchPrices(get(filter));
     };
 
     return {
       fetchPrices,
       ...priceDeletion(store, refresh),
+      headers,
       prices,
       loading
-    };
-  },
-  data() {
-    return {
-      headers: [
-        {
-          text: this.$t('price_table.headers.from_asset').toString(),
-          value: 'fromAsset'
-        },
-        {
-          text: '',
-          value: 'join'
-        },
-        {
-          text: this.$t('price_table.headers.price').toString(),
-          value: 'price'
-        },
-        {
-          text: this.$t('price_table.headers.to_asset').toString(),
-          value: 'toAsset'
-        },
-        {
-          text: this.$t('price_table.headers.date').toString(),
-          value: 'timestamp'
-        },
-        {
-          text: '',
-          value: 'actions'
-        }
-      ] as DataTableHeader[]
     };
   }
 });
 </script>
-
-<style scoped></style>

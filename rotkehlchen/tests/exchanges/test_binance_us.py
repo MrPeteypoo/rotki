@@ -2,11 +2,12 @@ import warnings as test_warnings
 from unittest.mock import patch
 
 import pytest
+import requests
 
 from rotkehlchen.assets.converters import UNSUPPORTED_BINANCE_ASSETS, asset_from_binance
 from rotkehlchen.constants.assets import A_BNB, A_BTC
-from rotkehlchen.errors import UnknownAsset, UnsupportedAsset
-from rotkehlchen.exchanges.binance import Binance, BINANCEUS_BASE_URL
+from rotkehlchen.errors.asset import UnknownAsset, UnsupportedAsset
+from rotkehlchen.exchanges.binance import BINANCEUS_BASE_URL, Binance
 from rotkehlchen.exchanges.data_structures import Trade, TradeType
 from rotkehlchen.fval import FVal
 from rotkehlchen.tests.utils.exchanges import (
@@ -15,10 +16,8 @@ from rotkehlchen.tests.utils.exchanges import (
     BINANCE_WITHDRAWALS_HISTORY_RESPONSE,
     assert_binance_asset_movements_result,
 )
-from rotkehlchen.tests.utils.factories import make_api_key, make_api_secret
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import Location, Timestamp
-from rotkehlchen.user_messages import MessagesAggregator
+from rotkehlchen.types import Location, Timestamp
 
 
 def test_name():
@@ -27,25 +26,12 @@ def test_name():
     assert exchange.name == 'binanceus1'
 
 
-def test_binance_assets_are_known(
-        database,
-        inquirer,  # pylint: disable=unused-argument
-):
-    # use a real binance instance so that we always get the latest data
-    binance = Binance(
-        name='binance1',
-        api_key=make_api_key(),
-        secret=make_api_secret(),
-        database=database,
-        msg_aggregator=MessagesAggregator(),
-        uri=BINANCEUS_BASE_URL,
-    )
-
-    mapping = binance.symbols_to_pair
+def test_binance_assets_are_known(inquirer):  # pylint: disable=unused-argument
+    exchange_data = requests.get('https://api.binance.us/api/v3/exchangeInfo').json()
     binance_assets = set()
-    for _, pair in mapping.items():
-        binance_assets.add(pair.binance_base_asset)
-        binance_assets.add(pair.binance_quote_asset)
+    for pair_symbol in exchange_data['symbols']:
+        binance_assets.add(pair_symbol['baseAsset'])
+        binance_assets.add(pair_symbol['quoteAsset'])
 
     sorted_assets = sorted(binance_assets)
     for binance_asset in sorted_assets:
@@ -126,4 +112,8 @@ def test_binanceus_deposits_withdrawals_location(function_scope_binance):
     assert len(warnings) == 0
 
     assert len(movements) == 4
-    assert_binance_asset_movements_result(movements=movements, location=Location.BINANCEUS)
+    assert_binance_asset_movements_result(
+        movements=movements,
+        location=Location.BINANCEUS,
+        got_fiat=False,
+    )

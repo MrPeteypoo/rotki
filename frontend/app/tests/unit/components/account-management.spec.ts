@@ -1,39 +1,49 @@
 import { mount, Wrapper } from '@vue/test-utils';
 import flushPromises from 'flush-promises/index';
+import { createPinia, setActivePinia } from 'pinia';
 import Vue from 'vue';
 import Vuetify from 'vuetify';
+import { VDialog } from 'vuetify/lib/components';
 import AccountManagement from '@/components/AccountManagement.vue';
-import { interop } from '@/electron-interop';
+import { interop, useInterop } from '@/electron-interop';
 import { Api } from '@/plugins/api';
 import { Interop } from '@/plugins/interop';
-import store from '@/store/store';
+import store, { useMainStore } from '@/store/store';
 import '../i18n';
 
-jest.mock('@/electron-interop');
-jest.mock('@/services/rotkehlchen-api');
+vi.mock('@/electron-interop');
+vi.mock('@/services/rotkehlchen-api');
 
 Vue.use(Vuetify);
 Vue.use(Api);
 Vue.use(Interop);
 
+// This is workaround used because stubs is somehow not working,
+// Eager prop will render the <slot /> immediately
+// @ts-ignore
+VDialog.options.props.eager.default = true;
+
 describe('AccountManagement.vue', () => {
-  let wrapper: Wrapper<AccountManagement>;
+  let wrapper: Wrapper<any>;
 
   beforeEach(() => {
     document.body.setAttribute('data-app', 'true');
-    store.commit('setConnected', true);
     const vuetify = new Vuetify();
+    const pinia = createPinia();
+    setActivePinia(pinia);
+
+    (useInterop as any).mockImplementation(() => interop);
+    interop.premiumUserLoggedIn = vi.fn();
+
+    useMainStore().setConnected(true);
+
     wrapper = mount(AccountManagement, {
       store,
-      vuetify,
-      stubs: {
-        VDialog: {
-          template: '<span v-if="value"><slot></slot></span>',
-          props: {
-            value: { type: Boolean }
-          }
-        }
+      pinia,
+      provide: {
+        'vuex-store': store
       },
+      vuetify,
       propsData: {
         logged: true
       }
@@ -46,11 +56,10 @@ describe('AccountManagement.vue', () => {
 
   describe('existing account', () => {
     test('non premium users should see the premium dialog', async () => {
-      interop.premiumUserLoggedIn = jest.fn();
-      store.dispatch = jest.fn().mockResolvedValue({ success: true });
+      store.dispatch = vi.fn().mockResolvedValue({ success: true });
       expect.assertions(4);
       // @ts-ignore
-      await wrapper.vm.login({ username: '1234', password: '1234' });
+      await wrapper.vm.userLogin({ username: '1234', password: '1234' });
       await flushPromises();
       await wrapper.vm.$nextTick();
 
@@ -66,12 +75,11 @@ describe('AccountManagement.vue', () => {
     });
 
     test('premium users should not see the premium dialog', async () => {
-      interop.premiumUserLoggedIn = jest.fn();
       store.commit('session/premium', true);
-      store.dispatch = jest.fn().mockResolvedValue({ success: true });
+      store.dispatch = vi.fn().mockResolvedValue({ success: true });
       expect.assertions(4);
       // @ts-ignore
-      await wrapper.vm.login({ username: '1234', password: '1234' });
+      await wrapper.vm.userLogin({ username: '1234', password: '1234' });
       await flushPromises();
       await wrapper.vm.$nextTick();
 
@@ -85,11 +93,10 @@ describe('AccountManagement.vue', () => {
 
   describe('new account', () => {
     test('non premium users should only see menu', async () => {
-      interop.premiumUserLoggedIn = jest.fn();
-      store.dispatch = jest.fn().mockResolvedValue({ success: true });
+      store.dispatch = vi.fn().mockResolvedValue({ success: true });
       expect.assertions(4);
       // @ts-ignore
-      await wrapper.vm.createAccount({ username: '1234', password: '1234' });
+      await wrapper.vm.createNewAccount({ username: '1234', password: '1234' });
       await wrapper.vm.$nextTick();
 
       expect(wrapper.find('.premium-reminder').exists()).toBe(false);
@@ -100,12 +107,11 @@ describe('AccountManagement.vue', () => {
 
     test('premium users should not see the premium menu entry', async () => {
       expect.assertions(4);
-      interop.premiumUserLoggedIn = jest.fn();
-      store.dispatch = jest.fn().mockResolvedValue({ success: true });
+      store.dispatch = vi.fn().mockResolvedValue({ success: true });
 
       store.commit('session/premium', true);
       // @ts-ignore
-      await wrapper.vm.createAccount({ username: '1234', password: '1234' });
+      await wrapper.vm.createNewAccount({ username: '1234', password: '1234' });
       await wrapper.vm.$nextTick();
 
       expect(wrapper.find('.premium-reminder').exists()).toBe(false);

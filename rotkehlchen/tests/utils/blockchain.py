@@ -10,7 +10,8 @@ from rotkehlchen.chain.ethereum.defi.zerionsdk import ZERION_ADAPTER_ADDRESS
 from rotkehlchen.constants.assets import A_BTC
 from rotkehlchen.constants.ethereum import ETH_MULTICALL, ETH_SCAN, ZERION_ABI
 from rotkehlchen.constants.misc import ZERO
-from rotkehlchen.errors import DeserializationError, UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.externalapis.beaconchain import BeaconChain
 from rotkehlchen.externalapis.etherscan import Etherscan
 from rotkehlchen.fval import FVal
@@ -18,7 +19,7 @@ from rotkehlchen.rotkehlchen import Rotkehlchen
 from rotkehlchen.serialization.deserialize import deserialize_ethereum_address
 from rotkehlchen.tests.utils.eth_tokens import CONTRACT_ADDRESS_TO_TOKEN
 from rotkehlchen.tests.utils.mock import MockResponse
-from rotkehlchen.typing import BTCAddress, ChecksumEthAddress
+from rotkehlchen.types import BTCAddress, ChecksumEthAddress
 from rotkehlchen.utils.misc import from_wei, satoshis_to_btc
 
 
@@ -321,12 +322,16 @@ def mock_etherscan_query(
             contract = web3.eth.contract(address=ETH_MULTICALL.address, abi=ETH_MULTICALL.abi)
             if 'b6456b57f03352be48bf101b46c1752a0813491a' in url:
                 multicall_purpose = 'adex_staking'
+            elif 'c2cb1040220768554cf699b0d863a3cd4324ce3' in url:
+                multicall_purpose = 'ds_proxy'
+            elif '2bdded18e2ca464355091266b7616956944ee7e' in url:
+                multicall_purpose = 'compound_balances'
             elif '5f3b5dfeb7b28cdbd7faba78963ee202a494e2a2' in url:
                 multicall_purpose = 'vecrv'
             else:
                 raise AssertionError('Unknown multicall in mocked tests')
             if 'data=0x252dba42' in url:  # aggregate
-                if multicall_purpose == 'adex_staking':
+                if multicall_purpose in ('adex_staking', 'ds_proxy', 'compound_balances'):
                     if 'adex_staking' in original_queries:
                         return original_requests_get(url, *args, **kwargs)
 

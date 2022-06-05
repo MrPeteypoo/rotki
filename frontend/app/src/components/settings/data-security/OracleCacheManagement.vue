@@ -2,87 +2,75 @@
   <fragment>
     <v-card class="mt-8">
       <v-card-title>
-        <card-title>{{ $t('oracle_cache_management.title') }}</card-title>
+        <card-title>{{ $tc('oracle_cache_management.title') }}</card-title>
       </v-card-title>
       <v-card-subtitle>
-        {{ $t('oracle_cache_management.subtitle') }}
+        {{ $tc('oracle_cache_management.subtitle') }}
       </v-card-subtitle>
       <v-card-text>
-        <v-row no-gutters align="center">
-          <v-col>
-            <v-autocomplete
-              v-model="selection"
-              :label="$t('oracle_cache_management.select_oracle')"
-              prepend-inner-icon="mdi-magnify"
-              outlined
-              :items="oracles"
-            >
-              <template #selection="{ item }">
-                <oracle-entry :identifier="item" />
-              </template>
-              <template #item="{ item }">
-                <oracle-entry :identifier="item" />
-              </template>
-            </v-autocomplete>
-          </v-col>
-          <v-col cols="auto" />
-        </v-row>
-        <v-row align="center">
-          <v-col>
-            <asset-select
-              v-model="fromAsset"
-              :disabled="pending"
-              outlined
-              :label="$t('oracle_cache_management.from_asset')"
-            />
-          </v-col>
-          <v-col>
-            <asset-select
-              v-model="toAsset"
-              :disabled="pending"
-              outlined
-              :label="$t('oracle_cache_management.to_asset')"
-            />
-          </v-col>
-          <v-col cols="auto">
-            <v-tooltip open-delay="400" top>
-              <template #activator="{ on, attrs }">
-                <div class="pb-7">
-                  <v-btn
-                    v-bind="attrs"
-                    text
-                    :loading="pending"
-                    color="primary"
-                    :disabled="!fromAsset || !toAsset || pending"
-                    v-on="on"
-                    @click="fetchPrices()"
-                  >
-                    {{ $t('oracle_cache_management.create_cache') }}
-                  </v-btn>
-                </div>
-              </template>
-              <span>{{ $t('oracle_cache_management.create_tooltip') }}</span>
-            </v-tooltip>
-          </v-col>
-        </v-row>
-        <v-divider class="mb-4" />
-        <v-row justify="end">
-          <v-col cols="auto">
-            <v-text-field
-              v-model="search"
-              outlined
-              dense
-              prepend-inner-icon="mdi-magnify"
-              :label="$t('oracle_cache_management.filter')"
-            />
-          </v-col>
-        </v-row>
+        <v-autocomplete
+          v-model="selection"
+          :label="$t('oracle_cache_management.select_oracle')"
+          prepend-inner-icon="mdi-magnify"
+          outlined
+          :items="oracles"
+        >
+          <template #selection="{ item }">
+            <oracle-entry :identifier="item" />
+          </template>
+          <template #item="{ item }">
+            <oracle-entry :identifier="item" />
+          </template>
+        </v-autocomplete>
+        <div class="pb-8">
+          <v-row align="center">
+            <v-col>
+              <asset-select
+                v-model="fromAsset"
+                clearable
+                :disabled="pending"
+                outlined
+                :label="$tc('oracle_cache_management.from_asset')"
+              />
+            </v-col>
+            <v-col>
+              <asset-select
+                v-model="toAsset"
+                clearable
+                :disabled="pending"
+                outlined
+                :label="$tc('oracle_cache_management.to_asset')"
+              />
+            </v-col>
+            <v-col cols="auto" class="pb-10 pr-8">
+              <v-btn icon large @click="clearFilter">
+                <v-icon>mdi-close</v-icon>
+              </v-btn>
+            </v-col>
+          </v-row>
+          <v-tooltip open-delay="400" top>
+            <template #activator="{ on, attrs }">
+              <v-btn
+                v-bind="attrs"
+                :loading="pending"
+                large
+                color="primary"
+                :disabled="!fromAsset || !toAsset || pending"
+                v-on="on"
+                @click="fetchPrices()"
+              >
+                <v-icon class="mr-2">mdi-plus-circle</v-icon>
+                {{ $t('oracle_cache_management.create_cache') }}
+              </v-btn>
+            </template>
+            <span>{{ $t('oracle_cache_management.create_tooltip') }}</span>
+          </v-tooltip>
+        </div>
         <v-sheet outlined rounded>
           <data-table
-            :search.sync="search"
             :headers="headers"
             :loading="loading"
-            :items="cacheData"
+            :items="filteredData"
           >
             <template #item.fromAsset="{ item }">
               <asset-details opens-details :asset="item.fromAsset" />
@@ -118,13 +106,13 @@
     </v-card>
     <confirm-dialog
       :display="confirmClear"
-      :title="$t('oracle_cache_management.delete_confirmation.title')"
+      :title="$tc('oracle_cache_management.delete_confirmation.title')"
       :message="
         $t('oracle_cache_management.delete_confirmation.message', {
           selection,
           fromAsset: deleteFromAsset,
           toAsset: deleteToAsset
-        })
+        }).toString()
       "
       @confirm="clearCache"
       @cancel="confirmClear = false"
@@ -133,181 +121,221 @@
 </template>
 
 <script lang="ts">
-import { Component, Vue, Watch } from 'vue-property-decorator';
+import { Severity } from '@rotki/common/lib/messages';
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  ref,
+  watch
+} from '@vue/composition-api';
+import { get, set } from '@vueuse/core';
 import { DataTableHeader } from 'vuetify';
-import { mapActions, mapGetters } from 'vuex';
 import ConfirmDialog from '@/components/dialogs/ConfirmDialog.vue';
-import ActionStatusIndicator from '@/components/error/ActionStatusIndicator.vue';
 import DataTable from '@/components/helper/DataTable.vue';
 import Fragment from '@/components/helper/Fragment';
 import OracleEntry from '@/components/settings/OracleEntry.vue';
-import { PriceOracles } from '@/model/action-result';
-import { TaskType } from '@/model/task-type';
+import { usePrices } from '@/composables/balances';
+import i18n from '@/i18n';
 import { OracleCacheMeta } from '@/services/balances/types';
-import { OracleCachePayload } from '@/store/balances/types';
-import { Severity } from '@/store/notifications/consts';
-import { notify } from '@/store/notifications/utils';
-import { ActionStatus } from '@/store/types';
+import { useAssetInfoRetrieval } from '@/store/assets';
+import { useNotifications } from '@/store/notifications';
+import { useTasks } from '@/store/tasks';
+import { TaskType } from '@/types/task-type';
+import { PriceOracle } from '@/types/user';
 import { assert } from '@/utils/assertions';
 
-@Component({
+const headers: DataTableHeader[] = [
+  {
+    text: i18n.t('oracle_cache_management.headers.from').toString(),
+    value: 'fromAsset'
+  },
+  {
+    text: i18n.t('oracle_cache_management.headers.to').toString(),
+    value: 'toAsset'
+  },
+  {
+    text: i18n.t('oracle_cache_management.headers.from_date').toString(),
+    value: 'fromTimestamp'
+  },
+  {
+    text: i18n.t('oracle_cache_management.headers.to_date').toString(),
+    value: 'toTimestamp'
+  },
+  {
+    text: '',
+    value: 'actions'
+  }
+];
+
+export default defineComponent({
+  name: 'OracleCacheManagement',
   components: {
     DataTable,
-    ActionStatusIndicator,
     ConfirmDialog,
     Fragment,
     OracleEntry
   },
-  computed: {
-    ...mapGetters('tasks', ['isTaskRunning'])
-  },
-  methods: {
-    ...mapActions('balances', ['createOracleCache'])
-  }
-})
-export default class OracleCacheManagement extends Vue {
-  readonly headers: DataTableHeader[] = [
-    {
-      text: this.$t('oracle_cache_management.headers.from').toString(),
-      value: 'fromAsset'
-    },
-    {
-      text: this.$t('oracle_cache_management.headers.to').toString(),
-      value: 'toAsset'
-    },
-    {
-      text: this.$t('oracle_cache_management.headers.from_date').toString(),
-      value: 'fromTimestamp'
-    },
-    {
-      text: this.$t('oracle_cache_management.headers.to_date').toString(),
-      value: 'toTimestamp'
-    },
-    {
-      text: '',
-      value: 'actions'
-    }
-  ];
-  readonly oracles: PriceOracles[] = ['cryptocompare'];
+  setup() {
+    const { isTaskRunning } = useTasks();
+    const { createOracleCache, getPriceCache, deletePriceCache } = usePrices();
 
-  loading: boolean = false;
-  confirmClear: boolean = false;
-  cacheData: OracleCacheMeta[] = [];
-  fromAsset: string = '';
-  toAsset: string = '';
-  search: string = '';
-  selection: PriceOracles = 'cryptocompare';
-  deleteEntry: OracleCacheMeta | null = null;
-  createOracleCache!: (payload: OracleCachePayload) => Promise<ActionStatus>;
-  isTaskRunning!: (type: TaskType) => boolean;
+    const oracles: PriceOracle[] = ['cryptocompare'];
 
-  @Watch('selection')
-  async onSelectionChanged() {
-    await this.load();
-  }
+    const loading = ref<boolean>(false);
+    const confirmClear = ref<boolean>(false);
+    const cacheData = ref<OracleCacheMeta[]>([]);
+    const fromAsset = ref<string>('');
+    const toAsset = ref<string>('');
+    const selection = ref<PriceOracle>('cryptocompare');
+    const deleteEntry = ref<OracleCacheMeta | null>(null);
 
-  get deleteFromAsset(): string {
-    if (this.deleteEntry) {
-      return this.deleteEntry.fromAsset;
-    }
-    return '';
-  }
+    const load = async () => {
+      set(loading, true);
+      set(cacheData, await getPriceCache('cryptocompare'));
+      set(loading, false);
+    };
 
-  get deleteToAsset(): string {
-    if (this.deleteEntry) {
-      return this.deleteEntry.toAsset;
-    }
-    return '';
-  }
+    const filteredData = computed<OracleCacheMeta[]>(() => {
+      const from = get(fromAsset);
+      const to = get(toAsset);
 
-  get pending(): boolean {
-    return this.isTaskRunning(TaskType.CREATE_PRICE_CACHE);
-  }
-
-  async mounted() {
-    await this.load();
-  }
-
-  private async load() {
-    this.loading = true;
-    this.cacheData = await this.$api.balances.getPriceCache('cryptocompare');
-    this.loading = false;
-  }
-
-  confirmDelete(entry: OracleCacheMeta) {
-    this.confirmClear = true;
-    this.deleteEntry = entry;
-  }
-
-  async clearCache() {
-    assert(this.deleteEntry);
-    const { fromAsset, toAsset } = this.deleteEntry;
-    this.confirmClear = false;
-    this.deleteEntry = null;
-    try {
-      await this.$api.balances.deletePriceCache(
-        this.selection,
-        fromAsset,
-        toAsset
-      );
-      await this.load();
-    } catch (e: any) {
-      const title = this.$t(
-        'oracle_cache_management.notification.title'
-      ).toString();
-
-      const message = this.$t('oracle_cache_management.clear_error', {
-        fromAsset,
-        toAsset,
-        error: e.message
-      }).toString();
-
-      notify(message, title, Severity.ERROR, true);
-    }
-  }
-
-  async fetchPrices() {
-    const fromAsset = this.fromAsset;
-    const toAsset = this.toAsset;
-    const source = this.selection;
-    this.fromAsset = '';
-    this.toAsset = '';
-
-    const status = await this.createOracleCache({
-      purgeOld: false,
-      fromAsset: fromAsset,
-      toAsset: toAsset,
-      source: source
+      return get(cacheData).filter(item => {
+        const fromAssetMatch = !from || from === item.fromAsset;
+        const toAssetMatch = !to || to === item.toAsset;
+        return fromAssetMatch && toAssetMatch;
+      });
     });
 
-    if (status.success) {
-      await this.load();
-    }
+    onMounted(async () => {
+      await load();
+    });
 
-    const message = status.success
-      ? this.$t('oracle_cache_management.notification.success', {
-          fromAsset,
-          toAsset,
-          source
-        })
-      : this.$t('oracle_cache_management.notification.error', {
-          fromAsset,
-          toAsset,
-          source,
-          error: status.message
+    watch(selection, async () => {
+      await load();
+    });
+
+    const deleteFromAsset = computed<string>(() => {
+      const deleteEntryVal = get(deleteEntry);
+      if (deleteEntryVal?.fromAsset) {
+        return getAssetSymbol(deleteEntryVal.fromAsset);
+      }
+      return '';
+    });
+
+    const deleteToAsset = computed<string>(() => {
+      const deleteEntryVal = get(deleteEntry);
+      if (deleteEntryVal?.toAsset) {
+        return getAssetSymbol(deleteEntryVal.toAsset);
+      }
+      return '';
+    });
+
+    const pending = isTaskRunning(TaskType.CREATE_PRICE_CACHE);
+
+    const confirmDelete = (entry: OracleCacheMeta) => {
+      set(confirmClear, true);
+      set(deleteEntry, entry);
+    };
+
+    const { notify } = useNotifications();
+    const { getAssetSymbol } = useAssetInfoRetrieval();
+
+    const clearCache = async () => {
+      const deleteEntryVal = get(deleteEntry);
+      assert(deleteEntryVal);
+      const { fromAsset, toAsset } = deleteEntryVal;
+      set(confirmClear, false);
+      set(deleteEntry, null);
+      try {
+        await deletePriceCache(get(selection), fromAsset, toAsset);
+        await load();
+      } catch (e: any) {
+        const title = i18n
+          .t('oracle_cache_management.notification.title')
+          .toString();
+
+        const message = i18n
+          .t('oracle_cache_management.clear_error', {
+            fromAsset: getAssetSymbol(fromAsset),
+            toAsset: getAssetSymbol(toAsset),
+            error: e.message
+          })
+          .toString();
+
+        notify({
+          title,
+          message,
+          severity: Severity.ERROR,
+          display: true
         });
-    const title = this.$t(
-      'oracle_cache_management.notification.title'
-    ).toString();
+      }
+    };
 
-    notify(
-      message.toString(),
-      title,
-      status.success ? Severity.INFO : Severity.ERROR,
-      true
-    );
+    const fetchPrices = async () => {
+      const fromAssetVal = get(fromAsset);
+      const toAssetVal = get(toAsset);
+      const source = get(selection);
+
+      const status = await createOracleCache({
+        purgeOld: false,
+        fromAsset: fromAssetVal,
+        toAsset: toAssetVal,
+        source
+      });
+
+      if (!status.message) {
+        await load();
+      }
+
+      const message = status.success
+        ? i18n.t('oracle_cache_management.notification.success', {
+            fromAsset: getAssetSymbol(fromAssetVal),
+            toAsset: getAssetSymbol(toAssetVal),
+            source
+          })
+        : i18n.t('oracle_cache_management.notification.error', {
+            fromAsset: getAssetSymbol(fromAssetVal),
+            toAsset: getAssetSymbol(toAssetVal),
+            source,
+            error: status.message
+          });
+      const title = i18n
+        .t('oracle_cache_management.notification.title')
+        .toString();
+
+      notify({
+        title,
+        message: message.toString(),
+        severity: status.success ? Severity.INFO : Severity.ERROR,
+        display: true
+      });
+    };
+
+    const clearFilter = () => {
+      set(fromAsset, '');
+      set(toAsset, '');
+    };
+
+    return {
+      headers,
+      selection,
+      oracles,
+      fromAsset,
+      toAsset,
+      filteredData,
+      pending,
+      loading,
+      cacheData,
+      confirmClear,
+      deleteFromAsset,
+      deleteToAsset,
+      clearCache,
+      confirmDelete,
+      fetchPrices,
+      clearFilter,
+      getAssetSymbol
+    };
   }
-}
+});
 </script>
-
-<style scoped lang="scss"></style>

@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "vuetify",
+      "vitest/globals"
+    ]
+  },
+  "include": ["**/*.ts", ".eslintrc.js"],
+  "compileOnSave": false
+}

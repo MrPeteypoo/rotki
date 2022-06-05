@@ -1,20 +1,20 @@
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional
 
 from eth_utils import to_checksum_address
-from typing_extensions import Literal
 
-from rotkehlchen.accounting.structures import Balance
+from rotkehlchen.accounting.structures.balance import Balance
 from rotkehlchen.assets.asset import EthereumToken
 from rotkehlchen.chain.ethereum.graph import Graph, format_query_indentation
 from rotkehlchen.chain.ethereum.modules.yearn.vaults import get_usd_price_zero_if_error
-from rotkehlchen.chain.ethereum.structures import YearnVaultEvent
 from rotkehlchen.chain.ethereum.utils import token_normalized_value
-from rotkehlchen.errors import UnknownAsset
+from rotkehlchen.errors.asset import UnknownAsset
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import ChecksumEthAddress, EthAddress, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, EthAddress, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
+
+from .structures import YearnVaultEvent
 
 if TYPE_CHECKING:
     from rotkehlchen.chain.ethereum.manager import EthereumManager

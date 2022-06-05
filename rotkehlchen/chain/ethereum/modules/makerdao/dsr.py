@@ -1,25 +1,26 @@
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, NamedTuple, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, NamedTuple, Optional, Union
 
 from gevent.lock import Semaphore
-from typing_extensions import Literal
 
-from rotkehlchen.accounting.structures import AssetBalance, Balance, DefiEvent, DefiEventType
+from rotkehlchen.accounting.structures.balance import AssetBalance, Balance
+from rotkehlchen.accounting.structures.defi import DefiEvent, DefiEventType
+from rotkehlchen.chain.ethereum.defi.defisaver_proxy import HasDSProxy
 from rotkehlchen.constants import ZERO
 from rotkehlchen.constants.assets import A_DAI
 from rotkehlchen.constants.ethereum import MAKERDAO_DAI_JOIN, MAKERDAO_POT
-from rotkehlchen.errors import DeserializationError, RemoteError
+from rotkehlchen.errors.misc import RemoteError
+from rotkehlchen.errors.serialization import DeserializationError
 from rotkehlchen.fval import FVal
 from rotkehlchen.history.price import query_usd_price_or_use_default
 from rotkehlchen.inquirer import Inquirer
 from rotkehlchen.logging import RotkehlchenLogsAdapter
 from rotkehlchen.premium.premium import Premium
-from rotkehlchen.typing import ChecksumEthAddress, Price, Timestamp
+from rotkehlchen.types import ChecksumEthAddress, Price, Timestamp
 from rotkehlchen.user_messages import MessagesAggregator
 from rotkehlchen.utils.misc import hexstr_to_int, ts_now
 
-from .common import MakerdaoCommon
 from .constants import MAKERDAO_REQUERY_PERIOD, RAD, RAY
 
 if TYPE_CHECKING:
@@ -94,7 +95,7 @@ def _dsrdai_to_dai(value: Union[int, FVal]) -> FVal:
     return FVal(value / FVal(RAD))
 
 
-class MakerdaoDsr(MakerdaoCommon):
+class MakerdaoDsr(HasDSProxy):
 
     def __init__(
             self,
@@ -130,7 +131,7 @@ class MakerdaoDsr(MakerdaoCommon):
         queries fail for some reason
         """
         with self.lock:
-            proxy_mappings = self._get_accounts_having_maker_proxy()
+            proxy_mappings = self._get_accounts_having_proxy()
             balances = {}
             try:
                 current_dai_price = Inquirer().find_usd_price(A_DAI)
@@ -398,7 +399,7 @@ class MakerdaoDsr(MakerdaoCommon):
             return self.historical_dsr_reports
 
         with self.lock:
-            proxy_mappings = self._get_accounts_having_maker_proxy()
+            proxy_mappings = self._get_accounts_having_proxy()
             reports = {}
             for account, proxy in proxy_mappings.items():
                 report = self._historical_dsr_for_account(account, proxy)

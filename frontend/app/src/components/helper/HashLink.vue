@@ -1,17 +1,23 @@
 ﻿<template>
   <div class="d-flex flex-row shrink align-center">
+    <v-avatar v-if="showIcon" size="24" class="mr-2">
+      <v-img :src="makeBlockie(displayText)" />
+    </v-avatar>
     <span v-if="!linkOnly & !buttons">
-      <span v-if="fullAddress" :class="privacyMode ? 'blur-content' : null">
+      <span v-if="fullAddress" :class="{ 'blur-content': !shouldShowAmount }">
         {{ displayText }}
       </span>
       <v-tooltip v-else top open-delay="400">
         <template #activator="{ on, attrs }">
           <span
-            :class="privacyMode ? 'blur-content' : null"
+            :class="{ 'blur-content': !shouldShowAmount }"
             v-bind="attrs"
             v-on="on"
           >
-            {{ truncateAddress(displayText) }}
+            <span v-if="ensName">{{ ensName }}</span>
+            <span v-else>
+              {{ truncateAddress(displayText, truncateLength) }}
+            </span>
           </span>
         </template>
         <span> {{ displayText }} </span>
@@ -36,7 +42,7 @@
       </template>
       <span>{{ $t('hash_link.copy') }}</span>
     </v-tooltip>
-    <v-tooltip v-if="!noLink || buttons" top open-delay="600" max-width="400">
+    <v-tooltip v-if="!noLink || buttons" top open-delay="600" max-width="550">
       <template #activator="{ on, attrs }">
         <v-btn
           v-if="!!base"
@@ -63,114 +69,140 @@
 
 <script lang="ts">
 import { Blockchain } from '@rotki/common/lib/blockchain';
-import { Component, Mixins, Prop } from 'vue-property-decorator';
-import { mapState } from 'vuex';
-import { explorerUrls } from '@/components/helper/asset-urls';
+import {
+  computed,
+  defineComponent,
+  PropType,
+  toRefs
+} from '@vue/composition-api';
+import { get, useClipboard } from '@vueuse/core';
+import makeBlockie from 'ethereum-blockies-base64';
+import {
+  Chains,
+  ExplorerUrls,
+  explorerUrls
+} from '@/components/helper/asset-urls';
+import { setupThemeCheck } from '@/composables/common';
+import { setupDisplayData } from '@/composables/session';
+import { setupSettings } from '@/composables/settings';
+import { interop } from '@/electron-interop';
 import { truncateAddress } from '@/filters';
-import ScrambleMixin from '@/mixins/scramble-mixin';
-import ThemeMixin from '@/mixins/theme-mixin';
-import { ExplorersSettings } from '@/store/settings/types';
-import { randomHex } from '@/typing/utils';
+import { useEnsNamesStore } from '@/store/balances';
+import { randomHex } from '@/utils/data';
 
-@Component({
-  computed: {
-    ...mapState('session', ['privacyMode']),
-    ...mapState('settings', ['explorers'])
-  }
-})
-export default class HashLink extends Mixins(ScrambleMixin, ThemeMixin) {
-  @Prop({ required: true, type: String })
-  text!: string;
-  @Prop({ required: false, type: Boolean, default: false })
-  fullAddress!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  linkOnly!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  noLink!: boolean;
-  @Prop({ required: false, type: String, default: '' })
-  baseUrl!: string;
-  @Prop({ required: false, type: String, default: Blockchain.ETH })
-  chain!: Blockchain | 'ETC' | 'zksync';
-  @Prop({ required: false, type: Boolean, default: false })
-  tx!: Boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  buttons!: boolean;
-  @Prop({ required: false, type: Boolean, default: false })
-  small!: boolean;
+export default defineComponent({
+  name: 'HashLink',
+  props: {
+    showIcon: { required: false, type: Boolean, default: false },
+    text: { required: false, type: String, default: '' },
+    fullAddress: { required: false, type: Boolean, default: false },
+    linkOnly: { required: false, type: Boolean, default: false },
+    noLink: { required: false, type: Boolean, default: false },
+    baseUrl: { required: false, type: String, default: '' },
+    chain: {
+      required: false,
+      type: String as PropType<Chains>,
+      default: Blockchain.ETH
+    },
+    tx: { required: false, type: Boolean, default: false },
+    buttons: { required: false, type: Boolean, default: false },
+    small: { required: false, type: Boolean, default: false },
+    truncateLength: { required: false, type: Number, default: 4 }
+  },
+  setup(props) {
+    const { text, baseUrl, chain, tx } = toRefs(props);
 
-  readonly truncateAddress = truncateAddress;
+    const { scrambleData, shouldShowAmount } = setupDisplayData();
+    const { explorers } = setupSettings();
+    const { dark } = setupThemeCheck();
 
-  get displayText(): string {
-    if (!this.scrambleData) {
-      return this.text;
-    }
-    const length = this.tx ? 64 : 40;
-    return randomHex(length);
-  }
+    const { ensNameSelector } = useEnsNamesStore();
 
-  privacyMode!: boolean;
-  explorers!: ExplorersSettings;
-
-  get base(): string {
-    if (this.baseUrl) {
-      return this.baseUrl;
-    }
-
-    const defaultSetting = explorerUrls[this.chain];
-    let baseUrl: string;
-    if (this.chain === 'zksync') {
-      baseUrl = this.tx ? defaultSetting.transaction : defaultSetting.address;
-    } else {
-      const explorersSetting = this.explorers[this.chain];
-      baseUrl = this.tx
-        ? explorersSetting?.transaction ?? defaultSetting.transaction
-        : explorersSetting?.address ?? defaultSetting.address;
-    }
-
-    return baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-  }
-
-  copyText(text: string) {
-    if (!navigator.clipboard) {
-      const textArea = document.createElement('textarea');
-      textArea.value = text;
-      textArea.style.position = 'fixed'; //avoid scrolling to bottom
-      document.body.appendChild(textArea);
-      textArea.focus();
-      textArea.select();
-      try {
-        document.execCommand('copy');
-      } finally {
-        document.body.removeChild(textArea);
+    const ensName = computed<string | null>(() => {
+      if (!get(scrambleData) || get(tx)) {
+        return get(ensNameSelector(get(text)));
       }
-    } else {
-      navigator.clipboard.writeText(text);
-    }
-  }
 
-  get url(): string {
-    return this.base + this.text;
-  }
+      return null;
+    });
 
-  get href(): string | undefined {
-    if (this.$interop.isPackaged) {
-      return undefined;
-    }
+    const displayText = computed<string>(() => {
+      if (!get(scrambleData)) {
+        return get(text);
+      }
+      const length = get(tx) ? 64 : 40;
+      return randomHex(length);
+    });
 
-    return this.url;
-  }
+    const base = computed<string>(() => {
+      if (get(baseUrl)) {
+        return get(baseUrl);
+      }
 
-  get target(): string | undefined {
-    if (this.$interop.isPackaged) {
-      return undefined;
-    }
-    return '_blank';
-  }
+      const defaultSetting: ExplorerUrls = explorerUrls[get(chain)];
+      let formattedBaseUrl: string;
+      if (get(chain) === 'zksync') {
+        formattedBaseUrl = get(tx)
+          ? defaultSetting.transaction
+          : defaultSetting.address;
+      } else {
+        const explorersSetting =
+          get(explorers)[get(chain) as Exclude<Chains, 'zksync'>];
+        formattedBaseUrl = get(tx)
+          ? explorersSetting?.transaction ?? defaultSetting.transaction
+          : explorersSetting?.address ?? defaultSetting.address;
+      }
 
-  openLink() {
-    this.$interop.openUrl(this.url);
+      return formattedBaseUrl.endsWith('/')
+        ? formattedBaseUrl
+        : `${formattedBaseUrl}/`;
+    });
+
+    const copyText = (text: string) => {
+      const { copy } = useClipboard({ source: text });
+      copy();
+    };
+
+    const url = computed<string>(() => {
+      return get(base) + get(text);
+    });
+
+    const href = computed<string | undefined>(() => {
+      if (interop.isPackaged) {
+        return undefined;
+      }
+
+      return get(url);
+    });
+
+    const target = computed<string | undefined>(() => {
+      if (interop.isPackaged) {
+        return undefined;
+      }
+
+      return '_blank';
+    });
+
+    const openLink = () => {
+      interop.openUrl(get(url));
+    };
+
+    return {
+      ensName,
+      makeBlockie,
+      url,
+      truncateAddress,
+      shouldShowAmount,
+      base,
+      displayText,
+      copyText,
+      href,
+      target,
+      openLink,
+      dark
+    };
   }
-}
+});
 </script>
 
 <style scoped lang="scss">
